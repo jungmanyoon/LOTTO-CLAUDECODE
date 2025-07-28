@@ -1,0 +1,352 @@
+import os
+from typing import Dict, List, Optional, Tuple, Any
+import logging
+import sqlite3
+import json
+from .db_structure import DatabasePaths
+from .specialized_databases import (
+    LottoNumbersDB,
+    CombinationsDB,
+    FilterDB,
+    PatternsDB
+)
+from ..utils.constants import LottoConstants
+
+class DatabaseManager:
+    """통합 데이터베이스 관리자"""
+    
+    def __init__(self, base_dir: str = 'data'):
+        self.paths = DatabasePaths(base_dir)
+        
+        # 각 데이터베이스 초기화
+        self.lotto_db = LottoNumbersDB(self.paths.lotto_numbers)
+        self.combinations_db = CombinationsDB(self.paths.combinations)
+        self.patterns_db = PatternsDB(self.paths.patterns)
+        
+        # 기존 필터 데이터베이스 초기화
+        self.filter_dbs: Dict[str, FilterDB] = {
+            filter_type: FilterDB(path)
+            for filter_type, path in self.paths.filter_paths.items()
+        }
+        
+        # 새로운 필터 데이터베이스 초기화 - 수정된 부분
+        self._initialize_new_filter_dbs()
+        logging.info("데이터베이스 매니저 초기화 완료")
+
+    def _initialize_new_filter_dbs(self):
+        """새로운 필터 데이터베이스 초기화"""
+        try:
+            # filters 디렉토리 확인 및 생성
+            if not os.path.exists(self.paths.filters_dir):
+                os.makedirs(self.paths.filters_dir)
+            
+            new_filters = {
+                'multiple': 'multiple_filter.db',
+                'ten_section': 'ten_section_filter.db',           # 추가
+                'arithmetic_sequence': 'arithmetic_sequence.db',   # 추가
+                'geometric_sequence': 'geometric_sequence.db',      # 추가
+                # 새로운 필터들 추가
+                'prime_composite': 'prime_composite_filter.db',
+                'digit_sum': 'digit_sum_filter.db',
+                'dispersion': 'dispersion_filter.db'
+            }
+            
+            # 각 필터의 DB 파일 생성 및 초기화
+            for filter_type, db_name in new_filters.items():
+                db_path = os.path.join(self.paths.filters_dir, db_name)
+                self.filter_dbs[filter_type] = FilterDB(db_path)
+                
+                # DB 연결 테스트
+                with self.filter_dbs[filter_type]._create_connection() as conn:
+                    if conn is not None:
+                        logging.info(f"필터 데이터베이스 초기화 완료: {filter_type}")
+                    else:
+                        logging.error(f"필터 데이터베이스 초기화 실패: {filter_type}")
+                
+            logging.info("새로운 필터 데이터베이스 초기화 완료")
+            
+        except Exception as e:
+            logging.error(f"필터 데이터베이스 초기화 중 오류 발생: {str(e)}")
+
+    def get_filter_db(self, filter_type: str) -> Optional[FilterDB]:
+        """특정 필터의 데이터베이스 반환"""
+        try:
+            if filter_type not in self.filter_dbs:
+                logging.error(f"알 수 없는 필터 타입: {filter_type}")
+                return None
+            return self.filter_dbs[filter_type]
+        except Exception as e:
+            logging.error(f"필터 DB 조회 중 오류 발생: {str(e)}")
+            return None
+
+    # 당첨 번호 관련 메서드들
+    def get_last_round(self) -> int:
+        """마지막으로 저장된 회차 번호 조회"""
+        return self.lotto_db.get_last_round()
+
+    def insert_lotto_numbers(self, round_num: int, numbers: List[int], draw_date: str) -> bool:
+        """로또 번호 데이터 삽입"""
+        return self.lotto_db.insert_numbers(round_num, numbers, draw_date)
+
+    def get_all_numbers(self) -> List[Tuple[int, str, str]]:
+        """모든 로또 번호 데이터 조회"""
+        return self.lotto_db.get_all_numbers()
+
+    def get_numbers_by_round(self, round_num: int) -> Optional[Tuple[int, str, str]]:
+        """특정 회차의 로또 번호 데이터 조회"""
+        return self.lotto_db.get_numbers_by_round(round_num)
+
+    def get_all_winning_numbers(self) -> List[str]:
+        """모든 당첨 번호 목록 조회"""
+        return self.lotto_db.get_all_winning_numbers()
+    
+    def get_winning_numbers_before(self, round_num: int) -> List[str]:
+        """특정 회차 이전의 당첨 번호들 조회 (백테스팅용)"""
+        return self.lotto_db.get_winning_numbers_before(round_num)
+
+    # 조합 관련 메서드들
+    def check_base_combinations_exist(self) -> bool:
+        """기본 조합이 이미 생성되어 있는지 확인"""
+        return self.combinations_db.check_base_combinations_exist()
+
+    def save_base_combinations(self, combinations: List[str]) -> bool:
+        """기본 로또 조합 저장"""
+        return self.combinations_db.save_base_combinations(combinations)
+
+    def get_base_combinations(self) -> List[str]:
+        """기본 로또 조합 조회"""
+        return self.combinations_db.get_base_combinations()
+
+    def save_valid_combinations(self, round_num: int, combinations: List[str]) -> bool:
+        """유효한 로또 번호 조합 저장"""
+        return self.combinations_db.save_valid_combinations(round_num, combinations)
+
+    def get_valid_combinations(self, round_num: int) -> List[str]:
+        """특정 회차의 유효한 조합 조회"""
+        return self.combinations_db.get_valid_combinations(round_num)
+
+    # 필터링 관련 메서드들
+    def get_last_filtered_round(self) -> int:
+        """마지막으로 필터링된 회차 조회"""
+        return max(
+            (db.get_last_filtered_round() for db in self.filter_dbs.values()),
+            default=0
+        )
+
+    def save_filtered_combinations(self, round_num: int, combinations: List[str], 
+                                 filter_type: str) -> bool:
+        """필터링된 조합 저장"""
+        filter_db = self.get_filter_db(filter_type)
+        if not filter_db:
+            logging.error(f"알 수 없는 필터 타입: {filter_type}")
+            return False
+        return filter_db.save_filtered_combinations(round_num, combinations)
+
+    def get_filtered_statistics(self, round_num: int) -> Dict[str, Dict[str, Any]]:
+        """필터링 결과 통계"""
+        stats = {}
+        for filter_type, db in self.filter_dbs.items():
+            filter_stats = db.get_filtering_statistics(round_num)
+            if filter_stats:
+                stats[filter_type] = filter_stats
+        return stats
+
+    # 패턴 분석 관련 메서드들
+    def save_pattern_analysis(self, round_num: int, patterns: Dict[str, Any]) -> bool:
+        """패턴 분석 결과 저장"""
+        return self.patterns_db.save_pattern_analysis(round_num, patterns)
+
+    def get_latest_pattern_analysis(self) -> Optional[Dict[str, Any]]:
+        """최신 패턴 분석 결과 조회"""
+        return self.patterns_db.get_latest_pattern_analysis()
+
+    def get_pattern_history(self, pattern_type: str) -> Optional[List[Dict[str, Any]]]:
+        """특정 패턴의 이력 조회"""
+        return self.patterns_db.get_pattern_history(pattern_type)
+
+    # 추가 유틸리티 메서드들
+    def get_numbers_since_round(self, last_round: int) -> List[str]:
+        """특정 회차 이후의 당첨 번호들 조회"""
+        return self.lotto_db.get_numbers_since_round(last_round)
+
+    def get_winning_numbers_range(self, min_round: int, current_round: int) -> List[str]:
+        """특정 범위의 당첨 번호 조회"""
+        return self.lotto_db.get_winning_numbers_range(min_round, current_round)
+
+    def save_filter_criteria(self, round_num: int, filter_type: str, criteria: Dict) -> bool:
+        """필터링 기준 저장"""
+        filter_db = self.get_filter_db(filter_type)
+        if not filter_db:
+            logging.error(f"알 수 없는 필터 타입: {filter_type}")
+            return False
+        return filter_db.save_filter_criteria(round_num, criteria)
+
+    def get_detailed_filtering_status(self, round_num: int) -> Dict[str, Any]:
+        """상세 필터링 상태 조회"""
+        total_combinations = len(self.get_base_combinations())
+        filtered_counts = {}
+        
+        for filter_type, db in self.filter_dbs.items():
+            stats = db.get_filtering_statistics(round_num)
+            if stats:
+                filtered_counts[filter_type] = stats['filtered_count']
+        
+        total_filtered = sum(filtered_counts.values())
+        
+        return {
+            'total': total_combinations,
+            'filtered': filtered_counts,
+            'remaining': total_combinations - total_filtered
+        }
+    
+    # 새로운 메서드들 추가
+    def get_multiple_pattern_statistics(self, round_num: int) -> Dict[str, Any]:
+        """배수 패턴 통계 조회"""
+        return self.patterns_db.get_pattern_statistics(
+            round_num, 
+            LottoConstants.PatternTypes.MULTIPLE
+        )
+    
+    def save_multiple_filter_results(self, round_num: int, filtered_combinations: List[str],
+                                   details: Dict[str, Any]) -> bool:
+        """배수 필터 결과 저장"""
+        try:
+            # 필터링된 조합 저장
+            self.save_filtered_combinations(
+                round_num, 
+                filtered_combinations, 
+                LottoConstants.FilterTypes.MULTIPLE
+            )
+            
+            # 상세 정보 저장
+            filter_db = self.get_filter_db(LottoConstants.FilterTypes.MULTIPLE)
+            if filter_db:
+                filter_db.save_filter_details(round_num, details)
+            return True
+        except Exception as e:
+            logging.error(f"배수 필터 결과 저장 중 오류 발생: {str(e)}")
+            return False   
+    
+    def get_combined_pattern_statistics(self, round_num: int) -> Dict[str, Dict[str, Any]]:
+        """모든 패턴의 통계 조회"""
+        try:
+            stats = {}
+            
+            # 기존 패턴 통계 조회
+            existing_patterns = [
+                LottoConstants.PatternTypes.NUMBER_FREQUENCY,
+                LottoConstants.PatternTypes.ODD_EVEN,
+                LottoConstants.PatternTypes.CONSECUTIVE,
+                LottoConstants.PatternTypes.SUM_RANGE,
+                LottoConstants.PatternTypes.FIXED_STEP,
+                LottoConstants.PatternTypes.LAST_DIGIT,
+                LottoConstants.PatternTypes.MAX_GAP,
+                LottoConstants.PatternTypes.SECTION,
+                LottoConstants.PatternTypes.AVERAGE
+            ]
+            
+            # 새로운 패턴 통계 조회
+            new_patterns = [
+                LottoConstants.PatternTypes.MULTIPLE,
+                LottoConstants.PatternTypes.ALTERNATING_ODD_EVEN,
+                LottoConstants.PatternTypes.SUM_MULTIPLE
+            ]
+            
+            for pattern_type in existing_patterns + new_patterns:
+                pattern_stats = self.patterns_db.get_pattern_statistics(round_num, pattern_type)
+                if pattern_stats:
+                    stats[pattern_type] = pattern_stats
+            
+            return stats
+            
+        except Exception as e:
+            logging.error(f"패턴 통계 조회 중 오류 발생: {str(e)}")
+            return {}
+    
+    def get_filter_statistics_by_group(self, round_num: int) -> Dict[str, Dict[str, Any]]:
+        """필터 그룹별 통계 조회"""
+        try:
+            stats = {
+                '기본 필터': {},
+                '패턴 필터': {},
+                '신규 필터': {}
+            }
+            
+            # 기본 필터 통계
+            basic_filters = ['match', 'odd_even', 'consecutive', 'sum_range']
+            for filter_type in basic_filters:
+                filter_db = self.get_filter_db(filter_type)
+                if filter_db:
+                    stats['기본 필터'][filter_type] = filter_db.get_filtering_statistics(round_num)
+            
+            # 패턴 필터 통계
+            pattern_filters = ['fixed_step', 'last_digit', 'max_gap', 'section', 'average']
+            for filter_type in pattern_filters:
+                filter_db = self.get_filter_db(filter_type)
+                if filter_db:
+                    stats['패턴 필터'][filter_type] = filter_db.get_filtering_statistics(round_num)
+            
+            # 신규 필터 통계
+            new_filters = ['multiple', 'alternating_odd_even', 'sum_multiple']
+            for filter_type in new_filters:
+                filter_db = self.get_filter_db(filter_type)
+                if filter_db:
+                    stats['신규 필터'][filter_type] = filter_db.get_filtering_statistics(round_num)
+            
+            return stats
+            
+        except Exception as e:
+            logging.error(f"필터 그룹별 통계 조회 중 오류 발생: {str(e)}")
+            return {}
+
+    def get_multiple_filter_details(self, round_num: int) -> Optional[Dict[str, Any]]:
+        """배수 필터 상세 정보 조회"""
+        filter_db = self.get_filter_db(LottoConstants.FilterTypes.MULTIPLE)
+        return filter_db.get_filter_details(round_num) if filter_db else None
+
+    def get_alternating_filter_details(self, round_num: int) -> Optional[Dict[str, Any]]:
+        """홀짝 교차 필터 상세 정보 조회"""
+        filter_db = self.get_filter_db(LottoConstants.FilterTypes.ALTERNATING_ODD_EVEN)
+        return filter_db.get_filter_details(round_num) if filter_db else None
+
+    def get_sum_multiple_filter_details(self, round_num: int) -> Optional[Dict[str, Any]]:
+        """합계 배수 필터 상세 정보 조회"""
+        filter_db = self.get_filter_db(LottoConstants.FilterTypes.SUM_MULTIPLE)
+        return filter_db.get_filter_details(round_num) if filter_db else None
+
+    def create_filter_db(self, filter_name: str) -> Optional[FilterDB]:
+        """새로운 필터 데이터베이스 생성
+        
+        Args:
+            filter_name: 생성할 필터 데이터베이스 이름
+            
+        Returns:
+            FilterDB 인스턴스 또는 None (오류 시)
+        """
+        try:
+            # filters 디렉토리 확인 및 생성
+            if not os.path.exists(self.paths.filters_dir):
+                os.makedirs(self.paths.filters_dir)
+                
+            # 이미 존재하는 필터인지 확인
+            if filter_name in self.filter_dbs:
+                return self.filter_dbs[filter_name]
+                
+            # 새 필터 데이터베이스 생성
+            db_path = os.path.join(self.paths.filters_dir, f"{filter_name}.db")
+            filter_db = FilterDB(db_path)
+            
+            # DB 연결 테스트
+            with filter_db._create_connection() as conn:
+                if conn is not None:
+                    logging.info(f"새로운 필터 데이터베이스 생성 완료: {filter_name}")
+                    # 필터 DB 딕셔너리에 추가
+                    self.filter_dbs[filter_name] = filter_db
+                    return filter_db
+                else:
+                    logging.error(f"필터 데이터베이스 생성 실패: {filter_name}")
+                    return None
+                    
+        except Exception as e:
+            logging.error(f"필터 데이터베이스 생성 중 오류 발생: {str(e)}")
+            return None
