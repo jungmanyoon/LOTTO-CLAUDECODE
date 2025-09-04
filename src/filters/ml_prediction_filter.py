@@ -33,7 +33,7 @@ class MLPredictionFilter(BaseFilter):
             List[str]: 필터링된 조합 리스트
         """
         if not self.predictor:
-            logging.warning("ML 예측기가 설정되지 않았습니다. 필터링을 건너뜁니다.")
+            logging.debug("ML 예측기가 설정되지 않았습니다. 백테스팅 모드에서는 정상입니다.")
             return combinations
             
         try:
@@ -54,7 +54,19 @@ class MLPredictionFilter(BaseFilter):
                     latest_features = self.predictor.scalers['features'].transform(latest_features)
                 
                 # 예측 확률 계산
-                probabilities = self.predictor.predict_probability(latest_features)[0]
+                try:
+                    pred_result = self.predictor.predict_probability(latest_features)
+                    # 결과가 스칼라인 경우 배열로 변환
+                    if np.isscalar(pred_result) or pred_result.ndim == 0:
+                        probabilities = np.ones(45) / 45  # 균등 분포
+                    else:
+                        probabilities = pred_result[0] if pred_result.ndim > 1 else pred_result
+                        # 45개 요소가 없으면 균등 분포 사용
+                        if len(probabilities) != 45:
+                            probabilities = np.ones(45) / 45
+                except Exception as e:
+                    logging.debug(f"예측 확률 계산 실패: {e}")
+                    probabilities = np.ones(45) / 45  # 균등 분포
             else:
                 # 기본 예측 방식
                 probabilities = np.ones(45) / 45  # 균등 분포
@@ -63,7 +75,11 @@ class MLPredictionFilter(BaseFilter):
             filtered_combinations = []
             
             for combo_str in combinations:
-                numbers = [int(n) for n in combo_str.split(',')]
+                # 타입 체크 추가
+                if isinstance(combo_str, str):
+                    numbers = [int(n) for n in combo_str.split(',')]
+                else:
+                    numbers = combo_str
                 
                 # 조합의 평균 확률 계산
                 combo_probability = np.mean([probabilities[n-1] for n in numbers])

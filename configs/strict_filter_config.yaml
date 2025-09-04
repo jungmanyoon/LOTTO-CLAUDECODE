@@ -1,0 +1,112 @@
+# 엄격한 필터 설정 (목표 통과율: 10-20%)
+# 현재 41.87% → 15% 목표
+
+filters:
+  criteria:
+    # 매치 필터 - 더 엄격하게 (31.54% 제외 → 50% 제외 목표)
+    match:
+      enabled: true
+      min_match: 0
+      max_match: 3  # 4 → 3으로 감소
+    
+    # 자릿수 합 필터 - 더 엄격하게 (20.77% 제외 → 40% 제외 목표)
+    digit_sum:
+      enabled: true
+      min_digit_sum: 30  # 23 → 30 증가
+      max_digit_sum: 50  # 57 → 50 감소
+      min_digit_sum_range: 5  # 3 → 5 증가
+      max_digit_sum_range: 8   # 10 → 8 감소
+    
+    # 분산도 필터 - 더 엄격하게 (18.36% 제외 → 35% 제외 목표)
+    dispersion:
+      enabled: true
+      min_std_dev: 5  # 1 → 5 증가
+      max_std_dev: 15  # 18.46 → 15 감소
+      min_variance: 25  # 1 → 25 증가
+      max_variance: 250  # 308 → 250 감소
+      min_min_gap: 2  # 1 → 2 증가
+      max_min_gap: 3  # 4 → 3 감소
+      min_max_gap: 5  # 3 → 5 증가
+      max_max_gap: 20  # 24 → 20 감소
+      min_avg_gap: 2.0  # 1.4 → 2.0 증가
+      max_avg_gap: 7.5  # 8.6 → 7.5 감소
+    
+    # 소수/합성수 필터 - 더 엄격하게 (12.78% 제외 → 25% 제외 목표)
+    prime_composite:
+      enabled: true
+      min_prime: 2  # 1 → 2 증가
+      max_prime: 3  # 4 → 3 감소
+    
+    # 합계 범위 - 더 엄격하게 (0.02% 제외 → 10% 제외 목표)
+    sum_range:
+      enabled: true
+      min_sum: 100  # 67 → 100 증가
+      max_sum: 180  # 209 → 180 감소
+    
+    # 홀짝 비율 - 더 엄격하게 (2.38% 제외 → 15% 제외 목표)
+    odd_even:
+      enabled: true
+      patterns:
+      - '3:3'
+      - '4:2'
+      - '2:4'
+      # 5:1, 1:5 제거 (극단적 패턴 제외)
+    
+    # 구간 분포 - 더 엄격하게 (0.01% 제외 → 20% 제외 목표)
+    section:
+      enabled: true
+      max_numbers_per_section: 3  # 5 → 3 감소
+    
+    # 10구간 분포 - 더 엄격하게 (1.18% 제외 → 15% 제외 목표)
+    ten_section:
+      enabled: true
+      section_limits:
+        section1: [1, 2, 3]  # 0 제거, 4 제거
+        section2: [1, 2, 3]  # 0 제거, 4 제거
+        section3: [1, 2, 3]  # 0 제거, 4 제거
+        section4: [1, 2]     # 0 제거, 3 제거
+        section5: [0, 1]     # 2 제거
+    
+    # 고정 간격 필터 (3.10% 제외 → 유지)
+    fixed_step:
+      enabled: true
+      all_steps:
+        required_matches: 4
+        steps_to_exclude: [2, 3, 4, 5]
+    
+    # 연속 번호 필터 (0.15% 제외 → 5% 제외 목표)
+    consecutive:
+      enabled: true
+      max_consecutive: 3  # 4 → 3 감소
+    
+    # 마지막 자리 필터 (1.59% 제외 → 유지)
+    last_digit:
+      enabled: true
+      min_same_last_digits: 4
+    
+    # 최대 간격 필터 (0.02% 제외 → 5% 제외 목표)
+    max_gap:
+      enabled: true
+      max_allowed_gap: 25  # 30 → 25 감소
+    
+    # 배수 필터 (1.66% 제외 → 유지)
+    multiple:
+      enabled: true
+      multiples:
+        3: [0, 5]
+        5: [0, 3]
+        7: [0, 2]
+    
+    # 등차수열 필터 (0.08% 제외 → 유지)
+    arithmetic_sequence:
+      enabled: true
+      max_sequence_length: 3
+    
+    # 등비수열 필터 (0% 제외 → 유지)
+    geometric_sequence:
+      enabled: true
+      excluded_lengths: [4, 5, 6]
+    
+    # ML 예측 필터 (비활성화)
+    ml_prediction:
+      enabled: false

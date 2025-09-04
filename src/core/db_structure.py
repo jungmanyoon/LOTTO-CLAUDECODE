@@ -2,6 +2,9 @@ import os
 import sqlite3
 import logging
 from typing import Dict, Optional
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from src.utils.db_connection_manager import DatabaseConnectionManager
 
 class DatabasePaths:
     """데이터베이스 파일 경로 관리"""
@@ -93,20 +96,32 @@ class DatabasePaths:
             return False
 
 class BaseDatabase:
-    """데이터베이스 기본 클래스"""
+    """데이터베이스 기본 클래스 - 개선된 연결 관리"""
     
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self.connection_manager = DatabaseConnectionManager()
         self._initialize_database()
     
     def _initialize_database(self):
         """데이터베이스 초기화 - 하위 클래스에서 구현"""
         raise NotImplementedError
         
-    def _create_connection(self) -> sqlite3.Connection:
-        """데이터베이스 연결 생성"""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute('PRAGMA journal_mode = WAL')
-        conn.execute('PRAGMA synchronous = NORMAL')
-        conn.execute('PRAGMA temp_store = MEMORY')
-        return conn
+    def _create_connection(self):
+        """데이터베이스 연결 생성 - 개선된 연결 관리자 사용"""
+        # 새로운 연결 관리자를 사용하여 자동 재시도 및 락 관리
+        return self.connection_manager.get_connection(self.db_path)
+    
+    def execute_query(self, query: str, params: tuple = None) -> Optional[list]:
+        """쿼리 실행 with 자동 재시도"""
+        return self.connection_manager.execute_with_retry(
+            self.db_path, query, params
+        )
+    
+    def check_integrity(self) -> bool:
+        """데이터베이스 무결성 검사"""
+        return self.connection_manager.check_database_integrity(self.db_path)
+    
+    def optimize(self) -> bool:
+        """데이터베이스 최적화"""
+        return self.connection_manager.optimize_database(self.db_path)

@@ -2,6 +2,8 @@ import logging
 import os
 from datetime import datetime
 import logging.handlers
+from collections import defaultdict
+import time
 from .utils.config_manager import ConfigManager
 
 class CustomFormatter(logging.Formatter):
@@ -31,12 +33,67 @@ class CustomFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
 
+class LogAggregator:
+    """로그 집계 및 요약 클래스"""
+    
+    def __init__(self):
+        self.counters = defaultdict(int)
+        self.timers = defaultdict(list)
+        self.last_summary_time = time.time()
+        self.summary_interval = 60  # 60초마다 요약
+    
+    def count(self, key):
+        """카운터 증가"""
+        self.counters[key] += 1
+    
+    def time(self, key, duration):
+        """시간 기록"""
+        self.timers[key].append(duration)
+    
+    def should_summarize(self):
+        """요약이 필요한지 확인"""
+        return time.time() - self.last_summary_time > self.summary_interval
+    
+    def get_summary(self):
+        """요약 정보 반환"""
+        summary = {}
+        
+        # 카운터 요약
+        if self.counters:
+            summary['counts'] = dict(self.counters)
+        
+        # 타이머 요약
+        if self.timers:
+            summary['timings'] = {}
+            for key, times in self.timers.items():
+                summary['timings'][key] = {
+                    'count': len(times),
+                    'total': sum(times),
+                    'avg': sum(times) / len(times) if times else 0,
+                    'min': min(times) if times else 0,
+                    'max': max(times) if times else 0
+                }
+        
+        # 초기화
+        self.counters.clear()
+        self.timers.clear()
+        self.last_summary_time = time.time()
+        
+        return summary
+
+# 전역 로그 집계기
+log_aggregator = LogAggregator()
+
 def setup_logging(config_path: str = None):
     """로깅 설정 초기화
     
     Args:
         config_path: 설정 파일 경로 (기본값: None)
     """
+    # 이미 설정되어 있으면 스킵
+    if hasattr(setup_logging, '_initialized') and setup_logging._initialized:
+        return
+        
     try:
         # 기본 로그 디렉토리 생성
         log_dir = "logs"
@@ -68,10 +125,7 @@ def setup_logging(config_path: str = None):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
             
-        # 기존 로그 파일 초기화 (추가된 부분)
-        if os.path.exists(log_file):
-            with open(log_file, 'w', encoding='utf-8') as f:
-                f.write(f"=== 새로운 로그 세션 시작: {datetime.now()} ===\n")
+        # 프로그램 시작 시 로그 파일은 main.py에서 이미 초기화됨
         
         # 루트 로거 설정
         root_logger = logging.getLogger()
@@ -98,6 +152,9 @@ def setup_logging(config_path: str = None):
         
         logging.info("로깅 설정이 완료되었습니다.")
         logging.info(f"로그 레벨: {level_str}, 로그 파일: {log_file}")
+        
+        # 초기화 완료 플래그 설정
+        setup_logging._initialized = True
         
     except Exception as e:
         # 기본 로깅 설정 적용

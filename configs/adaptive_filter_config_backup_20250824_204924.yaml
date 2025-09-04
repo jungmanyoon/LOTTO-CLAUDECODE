@@ -1,0 +1,77 @@
+adaptive_options:
+  analysis_window: 200
+  auto_learning: true
+  backtest_validation: true
+  max_threshold: 5.0
+  min_threshold: 0.1
+  safety_mode: true
+  update_frequency: 10
+dynamic_criteria:
+  average:
+    max_average: 36.5
+    min_average: 11.2
+  consecutive:
+    max_consecutive: 4
+    min_gap: 1
+  last_digit:
+    min_same_last_digits: 4
+  max_gap:
+    max_allowed_gap: 30
+  multiple:
+    2:
+    - 0
+    - 5
+    3:
+    - 1
+    - 5
+    4:
+    - 0
+    - 3
+    5:
+    - 0
+    - 3
+  odd_even:
+    excluded_counts: []
+  sum_range:
+    max_sum: 209
+    min_sum: 68
+  ten_section:
+    section1:
+    - 5
+    - 6
+    section2:
+    - 6
+    section3:
+    - 6
+    section4:
+    - 6
+    section5:
+    - 5
+filters:
+  arithmetic: true
+  average: true
+  consecutive: true
+  digit_sum: false
+  dispersion: false
+  fixed_step: true
+  geometric: true
+  last_digit: true
+  match: true
+  max_gap: true
+  multiple: true
+  odd_even: true
+  prime_composite: false
+  section: true
+  sum_range: true
+  ten_section: true
+global_probability_threshold: 0.3
+logging:
+  log_excluded_patterns: true
+  statistics_interval: 50
+  verbosity: INFO
+performance:
+  batch_size: 10000
+  cache_ttl: 3600
+  enable_cache: true
+  max_workers: 8
+  parallel_processing: true

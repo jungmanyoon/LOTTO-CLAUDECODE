@@ -34,7 +34,11 @@ class DatabaseManager:
         logging.info("데이터베이스 매니저 초기화 완료")
 
     def _initialize_new_filter_dbs(self):
-        """새로운 필터 데이터베이스 초기화"""
+        """새로운 필터 데이터베이스 초기화 - 개선된 동시성 처리"""
+        import time
+        max_retries = 3
+        retry_delay = 1.0
+        
         try:
             # filters 디렉토리 확인 및 생성
             if not os.path.exists(self.paths.filters_dir):
@@ -48,20 +52,33 @@ class DatabaseManager:
                 # 새로운 필터들 추가
                 'prime_composite': 'prime_composite_filter.db',
                 'digit_sum': 'digit_sum_filter.db',
-                'dispersion': 'dispersion_filter.db'
+                'dispersion': 'dispersion_filter.db',
+                'ml_prediction': 'ml_prediction_filter.db'        # ML 예측 필터 추가
             }
             
             # 각 필터의 DB 파일 생성 및 초기화
             for filter_type, db_name in new_filters.items():
                 db_path = os.path.join(self.paths.filters_dir, db_name)
-                self.filter_dbs[filter_type] = FilterDB(db_path)
                 
-                # DB 연결 테스트
-                with self.filter_dbs[filter_type]._create_connection() as conn:
-                    if conn is not None:
-                        logging.info(f"필터 데이터베이스 초기화 완료: {filter_type}")
-                    else:
-                        logging.error(f"필터 데이터베이스 초기화 실패: {filter_type}")
+                # 재시도 로직 추가
+                for attempt in range(max_retries):
+                    try:
+                        self.filter_dbs[filter_type] = FilterDB(db_path)
+                        
+                        # DB 연결 테스트
+                        with self.filter_dbs[filter_type]._create_connection() as conn:
+                            if conn is not None:
+                                logging.info(f"필터 데이터베이스 초기화 완료: {filter_type}")
+                                break  # 성공시 반복 종료
+                            else:
+                                logging.error(f"필터 데이터베이스 초기화 실패: {filter_type}")
+                                
+                    except sqlite3.OperationalError as e:
+                        if "database is locked" in str(e) and attempt < max_retries - 1:
+                            logging.warning(f"데이터베이스 잠금 발생, 재시도 중... ({filter_type}, 시도 {attempt + 1}/{max_retries})")
+                            time.sleep(retry_delay * (attempt + 1))  # 점진적 대기
+                        else:
+                            raise
                 
             logging.info("새로운 필터 데이터베이스 초기화 완료")
             
@@ -95,6 +112,17 @@ class DatabaseManager:
     def get_numbers_by_round(self, round_num: int) -> Optional[Tuple[int, str, str]]:
         """특정 회차의 로또 번호 데이터 조회"""
         return self.lotto_db.get_numbers_by_round(round_num)
+    
+    def get_recent_numbers(self, count: int) -> List[Tuple[int, str, str]]:
+        """최근 n회의 당첨 번호 데이터 조회
+        
+        Args:
+            count: 조회할 최근 회차 수
+            
+        Returns:
+            List[Tuple[int, str, str]]: (회차, 번호, 추첨일) 튜플의 리스트
+        """
+        return self.lotto_db.get_recent_numbers(count)
 
     def get_all_winning_numbers(self) -> List[str]:
         """모든 당첨 번호 목록 조회"""
@@ -103,6 +131,37 @@ class DatabaseManager:
     def get_winning_numbers_before(self, round_num: int) -> List[str]:
         """특정 회차 이전의 당첨 번호들 조회 (백테스팅용)"""
         return self.lotto_db.get_winning_numbers_before(round_num)
+    
+    def get_winning_numbers(self, round_num: int) -> Optional[List[int]]:
+        """특정 회차의 당첨 번호를 리스트로 반환
+        
+        Args:
+            round_num: 회차 번호
+            
+        Returns:
+            당첨 번호 리스트 또는 None
+        """
+        result = self.get_numbers_by_round(round_num)
+        if result:
+            _, numbers_str, _ = result
+            return [int(n) for n in numbers_str.split(',')]
+        return None
+    
+    def get_winning_numbers_last_n(self, n: int) -> List[Tuple[int, List[int], str]]:
+        """최근 n회차의 당첨 번호를 반환
+        
+        Args:
+            n: 조회할 회차 수
+            
+        Returns:
+            (회차, 당첨번호리스트, 날짜) 튜플의 리스트
+        """
+        recent_data = self.get_recent_numbers(n)
+        result = []
+        for round_num, numbers_str, date_str in recent_data:
+            numbers = [int(n) for n in numbers_str.split(',')]
+            result.append((round_num, numbers, date_str))
+        return result
 
     # 조합 관련 메서드들
     def check_base_combinations_exist(self) -> bool:

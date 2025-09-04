@@ -37,7 +37,11 @@ class FilterManager:
         # 필터링 설정 로드
         filtering_config = self.config_manager.get_filtering_config()
         self.use_parallel = filtering_config.get("use_parallel", True)
-        self.max_workers = filtering_config.get("max_workers", 4)
+        # CPU 코어 수에 따라 동적으로 워커 수 결정 (최소 4개, 최대 8개)
+        cpu_count = os.cpu_count() or 4
+        default_workers = min(max(4, cpu_count - 1), 8)  # CPU 코어 수 - 1, 최소 4개, 최대 8개
+        self.max_workers = filtering_config.get("max_workers", default_workers)
+        logging.info(f"FilterManager 병렬 처리 워커 수: {self.max_workers}개 (CPU 코어: {cpu_count}개)")
         self.use_bit_operations = filtering_config.get("use_bit_operations", True)
         self.use_early_termination = filtering_config.get("use_early_termination", True)
         self.combine_independent_filters = filtering_config.get("combine_independent_filters", True)
@@ -100,22 +104,54 @@ class FilterManager:
         }
         
         # ML 예측 필터 추가 (사용 가능한 경우)
-        # ML 필터는 수동으로 등록하므로 여기서는 제외
-        # if ML_FILTER_AVAILABLE:
-        #     filter_classes['ml_prediction'] = MLPredictionFilter
+        if ML_FILTER_AVAILABLE:
+            filter_classes['ml_prediction'] = MLPredictionFilter
         
         # 모든 필터를 활성화
         enabled_filters = list(filter_classes.keys())
-        logging.info(f"\n[필터 초기화] 총 {len(enabled_filters)}개의 필터가 활성화됩니다:")
+        logging.debug(f"[필터 초기화] 총 {len(enabled_filters)}개의 필터가 활성화됩니다")
+        
+        # 필터 카테고리별로 분류 (DEBUG 레벨에서만 표시)
+        filter_categories = {
+            "기본 필터": ["match", "odd_even", "consecutive", "sum_range"],
+            "패턴 필터": ["fixed_step", "last_digit", "max_gap", "section", "average"],
+            "신규 필터": ["multiple", "ten_section", "arithmetic_sequence", "geometric_sequence", 
+                         "prime_composite", "digit_sum", "dispersion"],
+            "ML/AI 필터": ["ml_prediction"] if ML_FILTER_AVAILABLE else []
+        }
+        
+        # 카테고리별로 필터 목록 표시 (DEBUG 레벨)
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            for category, filters in filter_categories.items():
+                if filters:
+                    logging.debug(f"[{category}] {', '.join(filters)}")
+        
+        registered_count = 0
+        failed_filters = []
         
         for filter_name in enabled_filters:
             # 필터 기준 가져오기
             criteria = self.config_manager.get_filter_criteria(filter_name)
             
             # 필터 인스턴스 생성 및 등록
-            filter_instance = filter_classes[filter_name](self.db_manager, criteria)
-            self.register_filter(filter_name, filter_instance)
-            logging.info(f"- '{filter_name}' 필터 등록됨")
+            try:
+                filter_instance = filter_classes[filter_name](self.db_manager, criteria)
+                self.register_filter(filter_name, filter_instance)
+                registered_count += 1
+                logging.debug(f"'{filter_name}' 필터 등록 성공")
+            except Exception as e:
+                failed_filters.append(filter_name)
+                logging.error(f"'{filter_name}' 필터 등록 실패: {str(e)}")
+        
+        # 요약 정보만 INFO 레벨로 출력
+        if failed_filters:
+            logging.warning(f"[필터 초기화] {registered_count}/{len(enabled_filters)}개 필터 활성화 (실패: {', '.join(failed_filters)})")
+        else:
+            logging.info(f"[필터 초기화] {registered_count}개 필터 활성화 완료")
+        
+        # 상세 목록은 DEBUG 레벨로
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug(f"등록된 필터: {', '.join(sorted(self.filters.keys()))}")
 
     def register_filter(self, filter_name: str, filter_instance: BaseFilter) -> None:
         """필터 등록
@@ -125,7 +161,7 @@ class FilterManager:
             filter_instance: 필터 인스턴스
         """
         self.filters[filter_name] = filter_instance
-        logging.info(f"필터 '{filter_name}' 등록 완료")
+        # logging.info는 _auto_register_filters에서 이미 처리됨
 
     def check_filter_version(self) -> bool:
         """
@@ -164,7 +200,7 @@ class FilterManager:
                     cursor.execute("DELETE FROM filtered_combinations")
                     conn.commit()
                 
-                logging.info(f"- {filter_name} 필터 데이터 초기화 완료")
+                logging.debug(f"- {filter_name} 필터 데이터 초기화 완료")
             
             return True
             
@@ -186,7 +222,7 @@ class FilterManager:
                 db_path = os.path.join(self.paths.filters_dir, db_name)
                 self.filter_dbs[filter_type] = FilterDB(db_path)
                 
-            logging.info("새로운 필터 데이터베이스 초기화 완료")
+            logging.debug("새로운 필터 데이터베이스 초기화 완료")
         except Exception as e:
             logging.error(f"필터 데이터베이스 초기화 중 오류 발생: {str(e)}")
             
@@ -445,9 +481,69 @@ class FilterManager:
                 # 증분식 필터링 + 중간 결과 저장
                 return self._apply_incremental_with_save(latest_round)
                 
-            # 기본 조합 로드
+            # 기본 조합 로드 - 배치 처리로 변경
             if update_mode == 'full' or force:
-                combinations = self.db_manager.combinations_db.get_all_combinations()
+                # 전체 조합을 한 번에 로드하는 대신 배치로 처리
+                total_count = self.db_manager.combinations_db.count_all_combinations()
+                if total_count == 0:
+                    logging.error("데이터베이스에 조합이 없습니다.")
+                    return False
+                    
+                # 전체 조합을 배치로 처리
+                logging.info(f"[DEBUG] 전체 조합 수: {total_count:,}개")
+                
+                # 항상 전체 처리
+                process_limit = total_count
+                logging.info(f"전체 {process_limit:,}개 조합을 처리합니다.")
+                
+                try:
+                    # 메모리 효율을 위한 배치 처리
+                    batch_size = min(100000, process_limit)  # 10만개씩 배치 처리
+                    offset = 0
+                    combinations = []
+                    
+                    with self.db_manager.combinations_db._create_connection() as conn:
+                        cursor = conn.cursor()
+                        mode = self.db_manager.combinations_db._get_storage_mode()
+                        
+                        while offset < process_limit and len(combinations) < process_limit:
+                            current_batch_size = min(batch_size, process_limit - offset)
+                            
+                            if mode == 'optimized':
+                                query = f"SELECT combination_blob FROM base_combinations_optimized LIMIT {current_batch_size} OFFSET {offset}"
+                            else:
+                                query = f"SELECT combination FROM base_combinations LIMIT {current_batch_size} OFFSET {offset}"
+                            
+                            cursor.execute(query)
+                            result = cursor.fetchall()
+                            
+                            if not result:
+                                break
+                            
+                            for row in result:
+                                try:
+                                    if mode == 'optimized':
+                                        # blob에서 비트맵으로 변환 후 디코딩
+                                        from ..utils.validators import LottoValidator
+                                        bitmap = LottoValidator.bytes_to_bitmap(row[0])
+                                        numbers = LottoValidator.decode_combination(bitmap)
+                                        combinations.append(LottoValidator.combination_to_str(numbers))
+                                    else:
+                                        # 문자열 그대로 사용
+                                        combinations.append(row[0])
+                                except Exception as e:
+                                    logging.error(f"조합 변환 중 오류 발생: {str(e)}")
+                            
+                            offset += current_batch_size
+                            
+                            # 진행 상황 로깅 (매 100만개마다)
+                            if offset % 1000000 == 0:
+                                logging.info(f"[DEBUG] 진행 상황: {offset:,}/{process_limit:,}개 로드 완료")
+                        
+                        logging.info(f"[DEBUG] 로드 완료: 총 {len(combinations):,}개 조합")
+                except Exception as e:
+                    logging.error(f"조합 로드 중 오류: {str(e)}")
+                    combinations = []
             else:
                 combinations = self.db_manager.combinations_db.get_filtered_combinations()
                 
@@ -623,8 +719,20 @@ class FilterManager:
             filter_groups = {
                 "기본 필터": ["match", "odd_even", "consecutive", "sum_range"],
                 "패턴 필터": ["fixed_step", "last_digit", "max_gap", "section", "average"],
-                "신규 필터": ["multiple", "ten_section", "arithmetic_sequence", "geometric_sequence", "prime_composite", "digit_sum", "dispersion"]
+                "신규 필터": ["multiple", "ten_section", "arithmetic_sequence", "geometric_sequence", 
+                           "prime_composite", "digit_sum", "dispersion"],
+                "ML/AI 필터": ["ml_prediction"]
             }
+            
+            # 카테고리에 없는 필터 찾기
+            categorized_filters = []
+            for filters in filter_groups.values():
+                categorized_filters.extend(filters)
+            
+            uncategorized_filters = [f for f in all_filters if f not in categorized_filters]
+            if uncategorized_filters:
+                filter_groups["기타 필터"] = uncategorized_filters
+                logging.warning(f"카테고리에 없는 필터 발견: {uncategorized_filters}")
             
             total_excluded = 0
             total_excluded_percent = 0
@@ -1022,8 +1130,19 @@ class FilterManager:
                 "기본 필터": ["match", "odd_even", "consecutive", "sum_range"],
                 "패턴 필터": ["fixed_step", "last_digit", "max_gap", "section", "average"],
                 "신규 필터": ["multiple", "ten_section", "arithmetic_sequence", "geometric_sequence", 
-                           "prime_composite", "digit_sum", "dispersion"]
+                           "prime_composite", "digit_sum", "dispersion"],
+                "ML/AI 필터": ["ml_prediction"]
             }
+            
+            # 카테고리에 없는 필터 찾기
+            categorized_filters = []
+            for filters in filter_groups.values():
+                categorized_filters.extend(filters)
+            
+            uncategorized_filters = [f for f in all_filters if f not in categorized_filters]
+            if uncategorized_filters:
+                filter_groups["기타 필터"] = uncategorized_filters
+                logging.warning(f"카테고리에 없는 필터 발견: {uncategorized_filters}")
             
             # 각 필터 결과 저장
             filter_results = {}
@@ -1129,11 +1248,20 @@ class FilterManager:
             # 필터 효율성 업데이트 (캐시)
             self.filter_efficiency[filter_name] = exclude_ratio
             
+            # 성능 로그 출력
+            if len(combinations) > 0:
+                processing_speed = len(combinations) / elapsed_time if elapsed_time > 0 else 0
+                logging.info(f"\n[필터 성능] {filter_name} 필터:")
+                logging.info(f"  ├─ 처리 시간: {elapsed_time:.3f}초")
+                logging.info(f"  ├─ 처리 속도: {processing_speed:,.0f} 조합/초")
+                logging.info(f"  ├─ 입력: {len(combinations):,}개")
+                logging.info(f"  ├─ 출력: {len(filtered_combinations):,}개")
+                logging.info(f"  └─ 제외율: {exclude_ratio*100:.2f}% ({excluded_count:,}개 제외)")
+            
             # 필터링 결과 저장
             filter_db = self.db_manager.get_filter_db(filter_name)
             if filter_db:
                 # 필터링된 조합 저장
-                logging.info(f"[필터 디버그] {filter_name}: 필터링된 조합 저장 시작 ({len(filtered_combinations):,}개)")
                 filter_db.save_filtered_combinations(round_num, filtered_combinations)
                 
                 # 제외된 조합 계산 및 저장

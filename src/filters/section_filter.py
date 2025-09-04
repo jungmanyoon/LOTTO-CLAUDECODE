@@ -37,10 +37,15 @@ class SectionFilter(BaseFilter):
                     max_numbers_per_section: int) -> List[str]:
         """청크 단위 필터링 처리"""
         try:
-            chunk_arrays = np.array([
-                list(map(int, comb.split(','))) 
-                for comb in combinations_chunk
-            ], dtype=np.int8)
+            # 타입 체크 추가
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.int8)
 
             # 각 구간별 번호 개수 계산
             section1 = np.sum((chunk_arrays >= 1) & (chunk_arrays <= 15), axis=1)

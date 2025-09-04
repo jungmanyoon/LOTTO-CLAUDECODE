@@ -65,12 +65,23 @@ pip install -r requirements.txt
 
 ## 💻 사용법
 
-### 기본 실행
+### 🚀 빠른 시작 (F5 실행)
 ```bash
+# VSCode에서 F5 키 또는
 python main.py
+
+# 자동으로 실행되는 기능:
+# ✅ 데이터 수집 및 업데이트
+# ✅ 패턴 분석
+# ✅ ML/AI 예측 (최적화됨)
+# ✅ 백테스팅 (50-70% 속도 향상)
+# ✅ 필터링 및 예측 번호 생성
+# ✅ 성능 모니터링 및 피드백
 ```
 
-### 주요 옵션
+**참고**: 별도 옵션 없이 실행하면 모든 기능이 자동으로 최적화된 상태로 실행됩니다!
+
+### 고급 옵션 (선택사항)
 ```bash
 # 데이터 수집 건너뛰기
 python main.py --skip-fetch
@@ -120,6 +131,35 @@ python main.py --lstm --no-ensemble --no-monte-carlo
 
 이 프로그램은 통계적 분석과 패턴 인식을 위한 연구 목적으로 개발되었습니다. 
 로또는 확률 게임이며, 이 프로그램이 당첨을 보장하지 않습니다.
+
+## 🔧 문제 해결
+
+### StandardScaler 에러
+```
+AttributeError: 'StandardScaler' object has no attribute 'mean_'
+```
+**해결 방법:**
+```bash
+# 손상된 캐시 정리
+python src/scripts/clear_model_cache.py
+
+# main.py 재실행
+python main.py
+```
+
+### 성능 문제
+- 첫 실행은 모델 학습으로 시간이 오래 걸림
+- 두 번째 실행부터 캐싱으로 빨라짐
+- 메모리 부족 시 배치 크기 조정 필요
+
+### 에러 테스트
+```bash
+# 에러 수정 확인
+python src/scripts/test_error_fixes.py
+
+# 성능 비교 테스트
+python src/scripts/test_performance_improvement.py
+```
 
 ## 📝 라이선스
 

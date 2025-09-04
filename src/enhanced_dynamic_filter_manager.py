@@ -22,8 +22,9 @@ try:
 except ImportError:
     # analyze_system이 없을 경우 대체 구현
     class FilterPerformanceMonitor:
-        def __init__(self):
+        def __init__(self, window_size: int = 50):
             self.metrics = {}
+            self.window_size = window_size
             
         def update_metric(self, filter_name: str, metric: str, value: float):
             if filter_name not in self.metrics:
@@ -32,6 +33,26 @@ except ImportError:
             
         def get_performance_summary(self) -> Dict:
             return self.metrics
+        
+        def get_performance_metrics(self, filter_name: str) -> Dict[str, float]:
+            """필터 성능 메트릭 반환"""
+            # 해당 필터의 메트릭이 없으면 기본값 반환
+            if filter_name not in self.metrics:
+                return {
+                    'avg_pass_rate': 1.0,
+                    'avg_exclusion_rate': 0.0,
+                    'false_negative_rate': 0.0,
+                    'stability': 1.0
+                }
+            
+            # 저장된 메트릭 반환 (기본값으로 채움)
+            metrics = self.metrics[filter_name]
+            return {
+                'avg_pass_rate': metrics.get('avg_pass_rate', 1.0),
+                'avg_exclusion_rate': metrics.get('avg_exclusion_rate', 0.0),
+                'false_negative_rate': metrics.get('false_negative_rate', 0.0),
+                'stability': metrics.get('stability', 1.0)
+            }
     
     class BalancedStrategy:
         def __init__(self):
@@ -120,7 +141,7 @@ class AdaptiveWeightManager:
 class EnhancedDynamicFilterManager(DynamicFilterManager):
     """향상된 동적 필터 관리자"""
     
-    def __init__(self, db_manager, strategy=None, auto_adjust_interval=10):
+    def __init__(self, db_manager, strategy=None, auto_adjust_interval=1):
         """
         Args:
             db_manager: 데이터베이스 관리자
@@ -150,7 +171,11 @@ class EnhancedDynamicFilterManager(DynamicFilterManager):
             'processing_time': deque(maxlen=10)
         })
         
-        logging.info("향상된 동적 필터 관리자 초기화 완료")
+        logging.info("\n[동적 필터 시스템] 향상된 동적 필터 관리자 초기화")
+        logging.info(f"  - 자동 조정 간격: {self.auto_adjust_interval}회차마다")
+        logging.info(f"  - 성능 임계값: {self.performance_threshold:.1%}")
+        logging.info(f"  - 모니터링 윈도우: 최근 50회차")
+        logging.info("  - 실시간 가중치 조정 활성화")
     
     def start_monitoring(self):
         """실시간 모니터링 시작"""
@@ -280,7 +305,13 @@ class EnhancedDynamicFilterManager(DynamicFilterManager):
         # 필터 효율성 업데이트
         self.filter_effectiveness.update(new_weights)
         
-        logging.info(f"필터 자동 조정 완료: {len(metrics)}개 필터 조정됨")
+        logging.info(f"\n[동적 필터 조정] 자동 조정 완료")
+        logging.info(f"  - 조정된 필터 수: {len(metrics)}개")
+        logging.info(f"  - 조정된 필터 목록:")
+        for filter_name, weight in sorted(new_weights.items(), key=lambda x: x[1], reverse=True)[:10]:
+            logging.info(f"    • {filter_name}: 가중치 {weight:.3f}")
+        logging.info(f"  - 평균 통과율: {np.mean([m['avg_pass_rate'] for m in metrics.values()]):.2%}")
+        logging.info(f"  - 평균 제외율: {np.mean([m.get('avg_exclusion_rate', 0) for m in metrics.values()]):.2%}")
     
     def _save_adjusted_criteria(self, filter_name: str, criteria: Dict[str, Any]):
         """조정된 기준값 저장
@@ -394,7 +425,7 @@ def main():
     # 향상된 동적 필터 관리자 생성
     enhanced_manager = EnhancedDynamicFilterManager(
         db_manager,
-        auto_adjust_interval=5  # 5회차마다 자동 조정
+        auto_adjust_interval=1  # 매 회차마다 자동 조정
     )
     
     # 실시간 모니터링 시작

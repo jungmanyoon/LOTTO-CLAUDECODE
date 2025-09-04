@@ -63,17 +63,49 @@ class LSTMPredictor:
         """모델 초기화"""
         if os.path.exists(self.model_path):
             try:
-                # TensorFlow 경고 억제
+                # TensorFlow/Keras/ABSL 경고 완전 억제
                 import warnings
+                import absl.logging
+                absl.logging.set_verbosity(absl.logging.ERROR)
+                
                 with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
+                    warnings.simplefilter("ignore")
+                    warnings.filterwarnings('ignore', category=UserWarning)
                     warnings.filterwarnings('ignore', message='.*compiled metrics.*')
                     warnings.filterwarnings('ignore', message='.*compile_metrics.*')
-                    self.model = load_model(self.model_path)
+                    warnings.filterwarnings('ignore', message='.*Compiled the loaded model.*')
+                    
+                    # 모델 로드 (compile=False로 로드하여 경고 방지)
+                    self.model = load_model(self.model_path, compile=False)
+                    
+                    # 로드 후 명시적으로 compile (경고 없이)
+                    self.model.compile(
+                        optimizer='adam',
+                        loss='mse',
+                        metrics=['mae']
+                    )
+                    
+                    # Dummy 평가로 metrics 빌드 (완전히 조용하게)
+                    try:
+                        import numpy as np
+                        # 모델의 실제 입력 차원에 맞춰 dummy 데이터 생성
+                        dummy_x = np.random.random((1, self.sequence_length, self.feature_dims))
+                        dummy_y = np.random.random((1, self.output_dims))
+                        self.model.evaluate(dummy_x, dummy_y, verbose=0)
+                    except Exception:
+                        # Dummy 평가 실패는 무시 (메트릭이 처음 사용될 때 빌드됨)
+                        pass
+                    
                 self.is_trained = True
-                logging.info(f"기존 모델 로드됨: {self.model_path}")
+                logging.debug(f"기존 모델 로드 및 컴파일 완료: {self.model_path}")
             except Exception as e:
                 logging.warning(f"모델 로드 실패: {str(e)}. 새 모델을 생성합니다.")
+                # 기존 모델 파일이 손상되었거나 구조가 맞지 않으므로 삭제
+                try:
+                    os.remove(self.model_path)
+                    logging.info(f"손상된 모델 파일 삭제: {self.model_path}")
+                except:
+                    pass
                 self.model = self._build_lstm_model()
         else:
             self.model = self._build_lstm_model()
@@ -117,6 +149,110 @@ class LSTMPredictor:
         
         logging.info("새 LSTM 모델 생성됨")
         return model
+    
+    def rebuild_model(self, params: Dict[str, Any]):
+        """새로운 파라미터로 모델 재구성
+        
+        Args:
+            params: 모델 파라미터
+        """
+        # 파라미터 업데이트
+        if 'lstm_units' in params:
+            if isinstance(params['lstm_units'], int):
+                self.lstm_units = [params['lstm_units'], params['lstm_units']//2, params['lstm_units']//4]
+            else:
+                self.lstm_units = params['lstm_units']
+        
+        if 'dropout_rate' in params:
+            self.dropout_rate = params['dropout_rate']
+        
+        if 'learning_rate' in params:
+            self.learning_rate = params['learning_rate']
+        
+        # 모델 재생성
+        self.model = self._build_lstm_model()
+        self.is_trained = False
+        logging.info(f"LSTM 모델 재구성 완료: {params}")
+    
+    def update_hyperparameters(self, params: Dict[str, Any]):
+        """하이퍼파라미터 업데이트"""
+        self.rebuild_model(params)
+    
+    def apply_best_params(self, params: Dict[str, Any]):
+        """최적 파라미터 적용"""
+        self.rebuild_model(params)
+    
+    def retrain(self, winning_numbers: Optional[List[str]] = None):
+        """모델 재학습
+        
+        Args:
+            winning_numbers: 당첨번호 리스트 (None이면 기존 데이터 사용)
+        """
+        if winning_numbers is None:
+            logging.warning("재학습할 데이터가 제공되지 않았습니다.")
+            return
+        
+        # 데이터 준비
+        X_train, y_train = self.prepare_training_data(winning_numbers)
+        
+        # 간단한 학습 (빠른 재학습을 위해 epoch 줄임)
+        history = self.model.fit(
+            X_train, y_train,
+            epochs=30,
+            batch_size=32,
+            validation_split=0.2,
+            verbose=0
+        )
+        
+        self.is_trained = True
+        logging.info("LSTM 모델 재학습 완료")
+        return history
+    
+    def train_with_validation(self, train_data: List, val_data: List) -> float:
+        """검증 데이터를 사용한 학습
+        
+        Args:
+            train_data: 학습 데이터
+            val_data: 검증 데이터
+            
+        Returns:
+            float: 검증 점수
+        """
+        # 데이터 준비
+        X_train, y_train = self.prepare_training_data(train_data)
+        X_val, y_val = self.prepare_training_data(val_data)
+        
+        # 학습
+        history = self.model.fit(
+            X_train, y_train,
+            validation_data=(X_val, y_val),
+            epochs=50,
+            batch_size=32,
+            verbose=0,
+            callbacks=[
+                EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+            ]
+        )
+        
+        # 검증 점수 계산
+        val_predictions = self.model.predict(X_val, verbose=0)
+        
+        # 예측 정확도 계산 (각 번호의 출현 여부를 얼마나 잘 맞추는지)
+        val_score = 0
+        for pred, actual in zip(val_predictions, y_val):
+            # 상위 6개 예측
+            top_6_indices = np.argsort(pred)[-6:]
+            # 실제 출현 번호
+            actual_indices = np.where(actual == 1)[0]
+            # 일치 개수
+            matches = len(set(top_6_indices) & set(actual_indices))
+            val_score += matches / 6.0
+        
+        val_score = val_score / len(y_val)
+        self.is_trained = True
+        
+        logging.info(f"LSTM 검증 점수: {val_score:.4f}")
+        return val_score
     
     def prepare_training_data(self, winning_numbers: List[str]) -> Tuple[np.ndarray, np.ndarray]:
         """학습 데이터 준비
@@ -171,6 +307,9 @@ class LSTMPredictor:
             logging.error(f"학습 데이터가 부족합니다: {len(X_train)}개")
             return
         
+        # 모델 저장 디렉토리 생성
+        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+        
         # 콜백 설정
         callbacks = [
             EarlyStopping(
@@ -224,13 +363,26 @@ class LSTMPredictor:
             logging.warning("모델이 준비되지 않았습니다. 랜덤 예측을 반환합니다.")
             return self._random_predictions(num_predictions)
         
-        # 입력 데이터 준비
-        if len(recent_numbers) < self.sequence_length:
-            logging.warning(f"입력 데이터 부족: {len(recent_numbers)}개 (필요: {self.sequence_length}개)")
+        # 입력 데이터 검증
+        if not recent_numbers or len(recent_numbers) == 0:
+            logging.warning("입력 데이터가 없습니다. 랜덤 예측을 반환합니다.")
             return self._random_predictions(num_predictions)
         
-        # 최근 sequence_length개의 데이터만 사용
-        recent_sequence = recent_numbers[-self.sequence_length:]
+        # 입력 데이터 준비
+        if len(recent_numbers) < self.sequence_length:
+            # 데이터가 부족한 경우 동적으로 sequence_length 조정
+            available_length = len(recent_numbers)
+            if available_length >= 10:  # 최소 10개는 있어야 함
+                logging.info(f"시퀀스 길이 조정: {self.sequence_length} → {available_length}")
+                # 임시로 더 짧은 시퀀스 사용
+                temp_sequence_length = available_length
+                recent_sequence = recent_numbers
+            else:
+                logging.warning(f"입력 데이터 부족: {len(recent_numbers)}개 (최소 필요: 10개)")
+                return self._random_predictions(num_predictions)
+        else:
+            temp_sequence_length = self.sequence_length
+            recent_sequence = recent_numbers[-self.sequence_length:]
         
         # 인코딩
         encoded_sequence = []
@@ -240,6 +392,16 @@ class LSTMPredictor:
             for num in numbers:
                 encoded[num - 1] = 1
             encoded_sequence.append(encoded)
+        
+        # 입력 데이터 패딩 또는 트리밍
+        if len(encoded_sequence) < self.sequence_length:
+            # 패딩 추가 (앞쪽에 0으로 채우기)
+            padding_length = self.sequence_length - len(encoded_sequence)
+            padding = [np.zeros(self.feature_dims) for _ in range(padding_length)]
+            encoded_sequence = padding + encoded_sequence
+        elif len(encoded_sequence) > self.sequence_length:
+            # 트리밍 (최근 데이터만 사용)
+            encoded_sequence = encoded_sequence[-self.sequence_length:]
         
         X = np.array([encoded_sequence])
         
@@ -274,6 +436,21 @@ class LSTMPredictor:
         predictions.sort(key=lambda x: x['confidence'], reverse=True)
         
         return predictions
+    
+    def predict_next(self, recent_numbers: List[str]) -> Optional[List[int]]:
+        """다음 회차 번호 단일 예측 (백테스팅 호환용)
+        
+        Args:
+            recent_numbers: 최근 당첨번호 리스트
+            
+        Returns:
+            Optional[List[int]]: 예측된 6개 번호 리스트
+        """
+        predictions = self.predict_next_numbers(recent_numbers, num_predictions=1)
+        
+        if predictions:
+            return predictions[0]['numbers']
+        return None
     
     def _random_predictions(self, num_predictions: int) -> List[Dict[str, Any]]:
         """랜덤 예측 생성 (폴백 메서드)"""
@@ -366,10 +543,37 @@ class LSTMPredictor:
             return
         
         try:
-            self.model = load_model(path)
+            # TensorFlow/Keras/ABSL 경고 완전 억제
+            import warnings
+            import absl.logging
+            absl.logging.set_verbosity(absl.logging.ERROR)
+            
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                warnings.filterwarnings('ignore', category=UserWarning)
+                warnings.filterwarnings('ignore', message='.*compiled metrics.*')
+                warnings.filterwarnings('ignore', message='.*compile_metrics.*')
+                warnings.filterwarnings('ignore', message='.*Compiled the loaded model.*')
+                
+                # 모델 로드 (compile=False로 로드하여 경고 방지)
+                self.model = load_model(path, compile=False)
+                
+                # 로드 후 명시적으로 compile
+                self.model.compile(
+                    optimizer='adam',
+                    loss='mse',
+                    metrics=['mae']
+                )
+                
+                # Dummy 평가로 metrics 빌드
+                import numpy as np
+                dummy_x = np.random.random((1, self.sequence_length, 6))
+                dummy_y = np.random.random((1, 6))
+                self.model.evaluate(dummy_x, dummy_y, verbose=0)
+                
             self.is_trained = True
             self.model_path = path
-            logging.info(f"모델 로드됨: {path}")
+            logging.debug(f"모델 로드 및 컴파일 완료: {path}")
         except Exception as e:
             logging.error(f"모델 로드 실패: {str(e)}")
 

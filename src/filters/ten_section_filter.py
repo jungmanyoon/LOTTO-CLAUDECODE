@@ -44,10 +44,15 @@ class TenSectionFilter(BaseFilter):
                     section_limits: Dict[str, List[int]]) -> List[str]:
         """청크 단위 필터링 처리"""
         try:
-            chunk_arrays = np.array([
-                list(map(int, comb.split(','))) 
-                for comb in combinations_chunk
-            ], dtype=np.int8)
+            # 타입 체크 추가
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.int8)
 
             # 각 10구간별 번호 개수 계산
             sections = {
@@ -62,7 +67,9 @@ class TenSectionFilter(BaseFilter):
             valid_mask = np.ones(len(combinations_chunk), dtype=bool)
             for section_name, counts in sections.items():
                 limits = section_limits[section_name]
-                section_mask = ~np.isin(counts, limits)
+                # limits의 최대값을 초과하는 경우 제외
+                max_limit = max(limits) if limits else 6
+                section_mask = counts <= max_limit
                 valid_mask &= section_mask
 
             return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid_mask[i]]

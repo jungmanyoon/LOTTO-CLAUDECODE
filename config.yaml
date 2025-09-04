@@ -1,166 +1,162 @@
-# 로또 애플리케이션 설정
-
-# 데이터베이스 설정
+batch_size: 10000
 database:
-  storage_mode: optimized  # 'optimized' 또는 'legacy' 모드 선택
-  batch_size: 10000       # 한 번에 처리할 데이터 수
-  max_batch_memory: 1000000  # 최대 메모리 사용량 (바이트)
-
-# 필터링 설정
+  batch_size: 10000
+  max_batch_memory: 1000000
+  storage_mode: optimized
+filter_manager:
+  parallel_workers: 14
 filtering:
-  use_parallel: true   # 병렬 처리 사용 여부
-  max_workers: 4       # 최대 작업자 수 (CPU 코어 수 고려)
-  
-# 로깅 설정
-logging:
-  level: INFO         # 로그 레벨 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  format: "%(asctime)s - %(levelname)s - %(message)s"  # 로그 출력 형식
-  file: logs/lotto_app.log  # 로그 파일 경로
-  max_size: 10485760  # 최대 로그 파일 크기 (10MB)
-  backup_count: 5     # 보관할 로그 파일 수
-
-# 필터 설정
+  batch_size: 10000
+  max_workers: 14
+  use_parallel: true
 filters:
-  # 사용할 필터 목록
-  enabled_filters:
-    - match            # 일치 번호 필터
-    - odd_even         # 홀짝 필터
-    - consecutive      # 연속 번호 필터
-    - sum_range        # 합계 범위 필터
-    - fixed_step       # 고정 간격 필터
-    - last_digit       # 끝자리 숫자 필터
-    - max_gap          # 최대 간격 필터
-    - section          # 구간 필터
-    - average          # 평균값 필터
-    - multiple         # 배수 필터
-    - ten_section      # 10구간 필터
-    - arithmetic_sequence  # 등차수열 필터
-    - geometric_sequence  # 등비수열 필터
-    - prime_composite    # 소수/합성수 필터
-    - digit_sum         # 자릿수 합 필터
-    - dispersion        # 분산도 필터
-  
-  # 필터 효율성 가중치 (높을수록 먼저 적용)
-  filter_efficiency:
-    sum_range: 0.45           # 합계 범위 (가장 효율적)
-    consecutive: 0.30         # 연속 번호
-    max_gap: 0.25            # 최대 간격
-    section: 0.22            # 구간
-    geometric_sequence: 0.20  # 등비수열
-    arithmetic_sequence: 0.18 # 등차수열
-    odd_even: 0.15           # 홀짝
-    fixed_step: 0.15         # 고정 간격
-    ten_section: 0.12        # 10구간
-    last_digit: 0.10         # 끝자리 숫자
-    average: 0.10            # 평균값
-    multiple: 0.08           # 배수
-    match: 0.05             # 일치 번호 (가장 비효율적)
-    prime_composite: 0.15    # 소수/합성수
-    digit_sum: 0.20         # 자릿수 합
-    dispersion: 0.18        # 분산도
-  
-  # 개별 필터 상세 설정
   criteria:
-    # 일치 번호 필터 - 기존 당첨번호와 비교
-    match:
-      max_match: 5  # 5개 이상 일치 제외 (5개 일치도 0%로 매우 드물어 제외)
-    
-    # 홀짝 필터 - 홀수/짝수 개수 제한
-    odd_even:
-      excluded_counts: [0, 6]  # 모두 홀수(0개 짝수) 또는 모두 짝수(6개 짝수)인 조합 제외
-    
-    # 연속 번호 필터 - 연속된 숫자 제한
+    arithmetic_sequence:
+      excluded_lengths:
+      - 5
+      - 6
+      min_sequence: 5
+    average:
+      exclude_extremes: true
+      max_average: 32.0
+      min_average: 14.0
     consecutive:
-      max_consecutive: 4  # 4개 이상 연속된 번호 제외 (4개 연속도 0.51%로 매우 드물어 제외)
-      min_gap: 1         # 최소 간격
-    
-    # 합계 범위 필터 - 6개 번호의 총합 제한
-    sum_range:
-      min_sum: 70       # 최소 합계 (극단값 제외)
-      max_sum: 210      # 최대 합계 (극단값 제외)
-    
-    # 고정 간격 필터 - 일정한 간격으로 나타나는 번호 제한
+      max_consecutive: 2
+      min_gap: 1
+    digit_sum:
+      max_digit_sum: 60
+      max_digit_sum_range: 12
+      min_digit_sum: 18
+      min_digit_sum_range: 2
+    dispersion:
+      max_avg_gap: 9.0
+      max_max_gap: 30
+      max_min_gap: 5
+      max_std_dev: 220.0
+      max_variance: 400.0
+      min_avg_gap: 2.5
+      min_max_gap: 4
+      min_min_gap: 1
+      min_std_dev: -200.0
+      min_variance: 40.0
     fixed_step:
       all_steps:
-        steps_to_exclude: [2, 3, 4, 5, 6, 7]  # 제외할 간격 (더 많은 간격 제외)
-        required_matches: 6                       # 검사할 연속 번호 수
-      partial_steps:
-        steps_to_exclude: [2, 3, 4, 5]  # 제외할 간격 (일부만 제외)
-        required_matches: 5
+        required_matches: 6
+        steps_to_exclude:
+        - 2
+        - 3
       four_steps:
-        steps_to_exclude: [2, 3, 4]  # 제외할 간격 (4간격도 추가)
-        required_matches: 4
+        required_matches: 5
+        steps_to_exclude:
+        - 2
+        - 3
+      partial_steps:
+        required_matches: 6
+        steps_to_exclude:
+        - 2
+        - 3
       three_steps:
-        steps_to_exclude: [2]  # 제외할 간격 (최소한 2간격은 제외)
-        required_matches: 3
-    
-    # 끝자리 숫자 필터 - 같은 끝자리 개수 제한
+        required_matches: 5
+        steps_to_exclude:
+        - 2
+        - 3
+    geometric_sequence:
+      excluded_lengths:
+      - 4
+      - 5
+      - 6
+      min_sequence: 4
     last_digit:
-      min_same_last_digits: 4  # 같은 끝자리 4개 이상 제외 (4개 동일도 0.42%로 매우 드물어 제외)
-    
-    # 최대 간격 필터 - 인접 번호 간 간격 제한
+      min_same_last_digits: 3
+    match:
+      max_match: 5
     max_gap:
-      max_allowed_gap: 30  # 최대 허용 간격 (완화)
-    
-    # 구간 필터 - 번호 분포 제한
-    section:
-      max_numbers_per_section: 5  # 구간당 최대 번호 수
-      exclude_all_section: true   # 한 구간에 모든 번호가 있는 경우 제외
-    
-    # 평균값 필터 - 6개 번호의 평균값 제한
-    average:
-      min_average: 10.5      # 최소 평균 (약간 완화)
-      max_average: 37.0      # 최대 평균 (약간 완화)
-      exclude_extremes: true # 극단값 제외
-    
-    # 배수 필터 - 특정 수의 배수 개수 제한
+      max_allowed_gap: 30
     multiple:
+      global_threshold: 1.5
       multiples:
-        3: [0, 5]  # 3의 배수 허용 범위
-        4: [0, 4]  # 4의 배수 허용 범위 (약간 완화)
-        5: [0, 4]  # 5의 배수 허용 범위 (약간 완화)
-    
-    # 10구간 필터 - 10단위 구간별 번호 분포 제한
+        2:
+        - 0
+        - 5
+        3:
+        - 1
+        - 5
+        4:
+        - 0
+        - 3
+        5:
+        - 0
+        - 3
+    odd_even:
+      excluded_counts:
+      - 0
+      - 6
+    prime_composite:
+      max_allowed: 4
+      min_allowed: 1
+      valid_prime_counts:
+      - 2
+      - 3
+      - 4
+    section:
+      exclude_all_section: true
+      max_numbers_per_section: 4
+    sum_range:
+      max_sum: 197
+      min_sum: 83
     ten_section:
       section_limits:
-        section1: [6]    # 1-10 구간 제한 (완화)
-        section2: [6]    # 11-20 구간 제한 (완화)
-        section3: [6]    # 21-30 구간 제한 (완화)
-        section4: [6]    # 31-40 구간 제한 (완화)
-        section5: [5, 6]    # 41-45 구간 제한 (일부 유지)
-    
-    # 등차수열 필터 - 일정한 차이를 가진 수열 제한
-    arithmetic_sequence:
-      min_sequence: 5           # 최소 연속 수열 길이 (5개 등차수열도 0.08%로 매우 드물어 포함)
-      excluded_lengths: [5, 6]  # 제외할 수열 길이
-    
-    # 등비수열 필터 - 일정한 비율을 가진 수열 제한
-    geometric_sequence:
-      min_sequence: 4              # 최소 연속 수열 길이 (4개 등비수열도 0.08%로 매우 드물어 포함)
-      excluded_lengths: [4, 5, 6]  # 제외할 수열 길이
-      
-    # 소수/합성수 필터 - 소수와 합성수 분포 제한
-    prime_composite:
-      valid_prime_counts: [1, 2, 3, 4, 5]  # 유효한 소수 개수 (완화)
-      min_allowed: 0                       # 최소 허용 개수
-      max_allowed: 5                       # 최대 허용 개수 (완화)
-      
-    # 자릿수 합 필터 - 각 번호의 자릿수 합 제한
-    digit_sum:
-      min_digit_sum: 18         # 최소 자릿수 합 (약간 완화)
-      max_digit_sum: 60         # 최대 자릿수 합 (약간 완화)
-      min_digit_sum_range: 2    # 최소 자릿수 합 범위 (약간 완화)
-      max_digit_sum_range: 12   # 최대 자릿수 합 범위 (약간 완화)
-      
-    # 분산도 필터 - 번호들의 통계적 분포 제한
-    dispersion:
-      min_std_dev: 5.0        # 최소 표준편차 (극단적으로 몰린 패턴 제외)
-      max_std_dev: 16.0      # 최대 표준편차 (극단적으로 퍼진 패턴 제외)
-      min_variance: 25.0      # 최소 분산 (극단적으로 몰린 패턴 제외)
-      max_variance: 256.0     # 최대 분산 (극단적으로 퍼진 패턴 제외)
-      min_min_gap: 0       # 최소 간격의 하한 (완화)
-      max_min_gap: 5       # 최소 간격의 상한 (약간 완화)
-      min_max_gap: 2       # 최대 간격의 하한 (약간 완화)
-      max_max_gap: 31      # 최대 간격의 상한 (약간 완화)
-      min_avg_gap: 2.0      # 평균 간격의 하한 (너무 밀집된 패턴 제외)
-      max_avg_gap: 8.5      # 평균 간격의 상한 (너무 퍼진 패턴 제외)
+        section1:
+        - 6
+        section2:
+        - 6
+        section3:
+        - 6
+        section4:
+        - 6
+        section5:
+        - 5
+        - 6
+  enabled_filters:
+  - match
+  - odd_even
+  - consecutive
+  - sum_range
+  - fixed_step
+  - last_digit
+  - max_gap
+  - section
+  - average
+  - multiple
+  - ten_section
+  - arithmetic_sequence
+  - geometric_sequence
+  - prime_composite
+  - digit_sum
+  - dispersion
+  filter_efficiency:
+    arithmetic_sequence: 0.18
+    average: 0.1
+    consecutive: 0.3
+    digit_sum: 0.2
+    dispersion: 0.18
+    fixed_step: 0.15
+    geometric_sequence: 0.2
+    last_digit: 0.1
+    match: 0.05
+    max_gap: 0.25
+    multiple: 0.08
+    odd_even: 0.15
+    prime_composite: 0.15
+    section: 0.22
+    sum_range: 0.45
+    ten_section: 0.12
+logging:
+  backup_count: 5
+  file: logs/lotto_app.log
+  format: '%(asctime)s - %(levelname)s - %(message)s'
+  level: INFO
+  max_size: 10485760
+progress_display:
+  disable_all: false
+  simple_mode: true

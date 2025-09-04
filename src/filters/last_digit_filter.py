@@ -16,8 +16,8 @@ class LastDigitFilter(BaseFilter):
                      예: {'min_same_last_digits': 3}
         """
         super().__init__(db_manager, criteria)
-        # 성능 최적화를 위한 FilterOptimizer 추가
-        self.optimizer = FilterOptimizer(self._process_chunk)
+        # 성능 최적화를 위한 FilterOptimizer 추가 - 래퍼 함수 사용
+        self.optimizer = FilterOptimizer(self._process_chunk_wrapper)
     
     def _validate_criteria(self) -> None:
         """필터링 기준값 유효성 검사"""
@@ -39,10 +39,17 @@ class LastDigitFilter(BaseFilter):
         except Exception as e:
             logging.error(f"끝자리 필터링 중 오류 발생: {str(e)}")
             return combinations
+    
+    @staticmethod
+    def _process_chunk_wrapper(combinations_chunk: List[str], **kwargs) -> List[str]:
+        """FilterOptimizer용 래퍼 함수 - 키워드 인수를 위치 인수로 변환"""
+        min_same_last_digits = kwargs.get('min_same_last_digits')
+        return LastDigitFilter._process_chunk(combinations_chunk, min_same_last_digits)
 
     @staticmethod
     def _process_chunk(combinations_chunk: List[str],
-                      min_same_last_digits: int) -> List[str]:
+                      min_same_last_digits: int = None,
+                      **kwargs) -> List[str]:
         """청크 단위 필터링 처리 - NumPy 최적화 적용
         
         Args:
@@ -53,11 +60,20 @@ class LastDigitFilter(BaseFilter):
             List[str]: 필터링된 조합 목록
         """
         try:
-            # 문자열 조합을 NumPy 배열로 변환
-            chunk_arrays = np.array([
-                list(map(int, comb.split(',')))
-                for comb in combinations_chunk
-            ], dtype=np.int8)
+            # 필수 매개변수 검증
+            if min_same_last_digits is None:
+                logging.error("_process_chunk: min_same_last_digits 매개변수 누락")
+                return combinations_chunk
+                
+            # 문자열 조합을 NumPy 배열로 변환 (타입 체크 추가)
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.int8)
             
             # 끝자리 숫자 추출 (모듈로 연산)
             last_digits = chunk_arrays % 10

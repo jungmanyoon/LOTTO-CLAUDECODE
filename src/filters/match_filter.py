@@ -10,7 +10,8 @@ from ..filter_optimizer import FilterOptimizer
 class MatchFilter(BaseFilter):
     def __init__(self, db_manager, criteria: Dict[str, Any] = None):
         super().__init__(db_manager, criteria)
-        self.optimizer = FilterOptimizer(self._process_chunk)
+        # FilterOptimizer에 전달할 래퍼 함수 생성
+        self.optimizer = FilterOptimizer(self._process_chunk_wrapper)
                            
     def _validate_criteria(self) -> None:
         """필터링 기준값 유효성 검사"""
@@ -20,6 +21,14 @@ class MatchFilter(BaseFilter):
         max_match = self.criteria['max_match']
         if not isinstance(max_match, int) or max_match < 0 or max_match > 6:
             raise ValueError("'max_match'는 0에서 6 사이의 정수여야 합니다.")
+        
+        # 확률 분포 정보가 있으면 로그 출력
+        if 'distribution' in self.criteria:
+            dist = self.criteria['distribution']
+            logging.info(f"[Match 필터] 확률 기반 설정 - max_match: {max_match}")
+            if dist:
+                for match_count, percentage in dist.items():
+                    logging.debug(f"  {match_count}개 일치: {percentage:.2f}%")
 
     def apply_filter(self, combinations: List[str], round_num: int) -> List[str]:
         """필터 적용 (시계열 고려 버전)
@@ -37,7 +46,7 @@ class MatchFilter(BaseFilter):
                 # 시계열을 고려하여 해당 회차 이전의 당첨번호만 가져오기
                 if hasattr(self.db_manager, 'get_winning_numbers_before'):
                     winning_numbers = self.db_manager.get_winning_numbers_before(round_num)
-                    logging.info(f"백테스팅 모드: {round_num}회차 이전의 {len(winning_numbers)}개 당첨번호 사용")
+                    # DEBUG 로그 제거 - 반복적이고 불필요함
                 else:
                     # 폴백: 메서드가 없으면 전체 당첨번호 사용 (기존 방식)
                     logging.warning("get_winning_numbers_before 메서드가 없어 전체 당첨번호 사용")
@@ -45,17 +54,21 @@ class MatchFilter(BaseFilter):
             else:
                 # 일반 모드: 모든 당첨번호 사용
                 winning_numbers = self.db_manager.get_all_winning_numbers()
-                logging.info(f"일반 모드: 전체 {len(winning_numbers)}개 당첨번호 사용")
+                # DEBUG 로그 제거 - 반복적이고 불필요함
                 
             if not winning_numbers:
                 logging.warning("참고할 당첨 번호가 없습니다.")
                 return combinations
 
-            # 당첨 번호 배열 미리 생성
-            winning_arrays = np.array([
-                list(map(int, nums.split(','))) 
-                for nums in winning_numbers
-            ], dtype=np.int8)
+            # 당첨 번호 배열 미리 생성 (타입 체크 추가)
+            converted_winning = []
+            for nums in winning_numbers:
+                if isinstance(nums, str):
+                    converted_winning.append(list(map(int, nums.split(','))))
+                else:
+                    converted_winning.append(nums)
+            
+            winning_arrays = np.array(converted_winning, dtype=np.int8)
 
             # max_match=6인 경우 특별 처리 (유사도 기반 필터링)
             if self.criteria['max_match'] == 6:
@@ -78,30 +91,59 @@ class MatchFilter(BaseFilter):
     def apply(self, combinations: List[str], round_num: int) -> List[str]:
         # apply_filter 메서드 호출하여 동일한 기능 유지
         return self.apply_filter(combinations, round_num)
+    
+    @staticmethod
+    def _process_chunk_wrapper(combinations_chunk: List[str], **kwargs) -> List[str]:
+        """FilterOptimizer용 래퍼 함수 - 키워드 인수를 위치 인수로 변환"""
+        winning_arrays = kwargs.get('winning_arrays')
+        max_match = kwargs.get('max_match')
+        logging.debug(f"_process_chunk_wrapper 호출: 조합 {len(combinations_chunk)}개, max_match={max_match}")
+        result = MatchFilter._process_chunk(combinations_chunk, winning_arrays, max_match)
+        logging.debug(f"_process_chunk_wrapper 결과: {len(result)}개 통과")
+        return result
 
     @staticmethod
     def _process_chunk(combinations_chunk: List[str],
-                      winning_arrays: np.ndarray,
-                      max_match: int) -> List[str]:
+                      winning_arrays: np.ndarray = None,
+                      max_match: int = None,
+                      **kwargs) -> List[str]:
         """청크 단위 필터링 처리"""
         try:
-            # 배열 변환 최적화
-            chunk_arrays = np.array([
-                list(map(int, comb.split(','))) 
-                for comb in combinations_chunk
-            ], dtype=np.int8)
+            # 필수 매개변수 검증
+            if winning_arrays is None or max_match is None:
+                logging.error("_process_chunk: 필수 매개변수 누락")
+                return combinations_chunk
+            
+            logging.debug(f"_process_chunk 호출: 조합 {len(combinations_chunk)}개, winning {len(winning_arrays)}개, max_match={max_match}")
+                
+            # 배열 변환 최적화 (타입 체크 추가)
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.int8)
 
-            # 벡터화된 연산으로 성능 개선
+            # 집합 비교로 일치 개수 계산 (순서 무관)
             match_counts = np.zeros(len(chunk_arrays), dtype=np.int8)
             for win_nums in winning_arrays:
-                matches = np.sum(
-                    chunk_arrays == win_nums.reshape(1, -1), 
-                    axis=1
-                )
-                match_counts = np.maximum(match_counts, matches)
+                win_set = set(win_nums)
+                for i, combo in enumerate(chunk_arrays):
+                    combo_set = set(combo)
+                    matches = len(win_set & combo_set)  # 교집합 크기
+                    match_counts[i] = max(match_counts[i], matches)
 
             # 조건을 만족하는 조합만 선택
             valid_indices = match_counts < max_match
+            
+            # 디버그 로깅
+            for i, (combo_str, matches) in enumerate(zip(combinations_chunk, match_counts)):
+                if matches >= max_match:
+                    logging.debug(f"  제외: {combo_str} (일치 개수: {matches} >= {max_match})")
+                else:
+                    logging.debug(f"  통과: {combo_str} (일치 개수: {matches} < {max_match})")
             
             # 메모리 효율을 위해 리스트 컴프리헨션 사용
             return [

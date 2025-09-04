@@ -44,18 +44,21 @@ class AverageFilter(BaseFilter):
                     max_average: float) -> List[str]:
         """청크 단위 필터링 처리"""
         try:
-            chunk_arrays = np.array([
-                list(map(int, comb.split(','))) 
-                for comb in combinations_chunk
-            ], dtype=np.float32)
+            # 타입 체크 추가
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.float32)
 
             # 각 조합의 평균값 계산
             averages = np.mean(chunk_arrays, axis=1)
             
-            # 수정: 극단적인 평균값 제외 (8.0~11.2 이하와 36.5~39.7 이상)
+            # 평균값 범위 체크 (극단값 자동 제외)
             valid_mask = (
-                (averages > 11.2) &   # 8.0~11.2 구간 제외
-                (averages < 36.5) &   # 36.5~39.7 구간 제외
                 (averages >= min_average) & 
                 (averages <= max_average)
             )

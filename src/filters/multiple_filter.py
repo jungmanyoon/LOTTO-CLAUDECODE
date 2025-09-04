@@ -51,10 +51,15 @@ class MultipleFilter(BaseFilter):
                       multiples: Dict[int, List[int]]) -> List[str]:
         """청크 단위 필터링 처리"""
         try:
-            chunk_arrays = np.array([
-                list(map(int, comb.split(','))) 
-                for comb in combinations_chunk
-            ], dtype=np.int16)
+            # 타입 체크 추가
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.int16)
 
             valid_indices = np.ones(len(combinations_chunk), dtype=bool)
 
@@ -88,7 +93,10 @@ class MultipleFilter(BaseFilter):
                 count_distribution = {i: 0 for i in range(max_possible + 1)}  # 0부터 최대 가능 개수까지
                 
                 for numbers_str in winning_numbers:
-                    numbers = list(map(int, numbers_str.split(',')))
+                    if isinstance(numbers_str, str):
+                        numbers = list(map(int, numbers_str.split(',')))
+                    else:
+                        numbers = numbers_str
                     valid_multiples = [n for n in range(1, 46) if n % base == 0]
                     multiple_count = sum(1 for n in numbers if n in valid_multiples)
                     count_distribution[multiple_count] += 1

@@ -68,7 +68,7 @@ class PrimeCompositeFilter(BaseFilter):
             # 가장 빈번한 분포 패턴 추출
             total_rounds = len(prime_counts)
             for count, frequency in counter.items():
-                if frequency / total_rounds >= 0.05:  # 5% 이상 빈도의 패턴만 허용
+                if frequency / total_rounds >= 0.02:  # 2% 이상 빈도의 패턴만 허용 (완화)
                     valid_distributions.append(count)
             
             # 기준 설정
@@ -139,16 +139,19 @@ class PrimeCompositeFilter(BaseFilter):
         try:
             result = []
             
-            for combo_str in combinations_chunk:
-                # 문자열 조합을 정수 목록으로 변환
-                numbers = [int(n) for n in combo_str.split(",")]
+            for combo in combinations_chunk:
+                # 조합이 문자열인지 리스트인지 확인
+                if isinstance(combo, str):
+                    numbers = [int(n) for n in combo.split(",")]
+                else:
+                    numbers = combo
                 
                 # 소수 개수 계산
                 prime_count = sum(1 for num in numbers if num in primes)
                 
                 # 허용 범위 내에 있거나 유효한 분포인 경우만 유지
                 if prime_count in valid_counts or (min_allowed <= prime_count <= max_allowed):
-                    result.append(combo_str)
+                    result.append(combo)
                     
             return result
             

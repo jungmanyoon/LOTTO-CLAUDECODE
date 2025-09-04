@@ -171,8 +171,8 @@ class DynamicFilterManager:
             # 평균값 범위
             mean = self.winning_stats['average']['mean']
             std = self.winning_stats['average']['std']
-            criteria['min_average'] = mean - 2 * std
-            criteria['max_average'] = mean + 2 * std
+            criteria['min_average'] = 10.0  # 고정값으로 설정 (매우 넓은 범위)
+            criteria['max_average'] = 35.0  # 고정값으로 설정 (매우 넓은 범위)
             criteria['exclude_extremes'] = True
             
         elif filter_name == 'odd_even':

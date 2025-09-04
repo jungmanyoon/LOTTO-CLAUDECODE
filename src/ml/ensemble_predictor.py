@@ -18,6 +18,8 @@ try:
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import train_test_split, cross_val_score
     from sklearn.metrics import accuracy_score, precision_score, recall_score
+    from sklearn.multioutput import MultiOutputClassifier
+    from sklearn.utils.validation import check_is_fitted
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -61,90 +63,253 @@ class EnsemblePredictor:
             'window_sizes': [5, 10, 20]  # 다양한 윈도우 크기
         }
         
-        # 모델 초기화
+        # 최소 학습 데이터 요구사항 완화
+        self.min_train_samples = 30  # 기존 50에서 30으로 감소
+        self.min_sequence_length = 10  # 최소 시퀀스 길이
+        
+        # 모델 초기화 및 캐시된 모델 로드
         if SKLEARN_AVAILABLE:
-            self._initialize_models()
+            # 저장된 설정이 있으면 먼저 로드
+            config_path = os.path.join(self.model_dir, 'ensemble_config.json')
+            if os.path.exists(config_path):
+                self.load_models()  # 캐시된 모델 로드
+            else:
+                self._initialize_models()  # 새로운 모델 초기화
     
     def _initialize_models(self):
         """모델 초기화 또는 로드"""
-        # Random Forest
-        rf_path = os.path.join(self.model_dir, 'random_forest.pkl')
+        # 모델 로드 상태 추적
+        models_loaded = []
+        
+        # Random Forest - 실제 파일명에 맞게 수정
+        rf_path = os.path.join(self.model_dir, 'rf.pkl')
         if os.path.exists(rf_path):
             with open(rf_path, 'rb') as f:
                 self.models['rf'] = pickle.load(f)
-                self.is_trained = True
+                models_loaded.append('rf')
+                logging.debug(f"Random Forest 모델 로드: {rf_path}")
         else:
-            self.models['rf'] = self._build_random_forest()
+            # 이전 파일명 체크 (호환성)
+            old_rf_path = os.path.join(self.model_dir, 'random_forest.pkl')
+            if os.path.exists(old_rf_path):
+                with open(old_rf_path, 'rb') as f:
+                    self.models['rf'] = pickle.load(f)
+                    models_loaded.append('rf')
+                    logging.debug(f"Random Forest 모델 로드 (이전 파일): {old_rf_path}")
+            else:
+                self.models['rf'] = self._build_random_forest()
+                logging.info("Random Forest 모델 새로 생성")
         
-        # XGBoost
+        # XGBoost - 실제 파일명에 맞게 수정
         if XGBOOST_AVAILABLE:
-            xgb_path = os.path.join(self.model_dir, 'xgboost.pkl')
+            xgb_path = os.path.join(self.model_dir, 'xgb.pkl')
             if os.path.exists(xgb_path):
                 with open(xgb_path, 'rb') as f:
                     self.models['xgb'] = pickle.load(f)
+                    models_loaded.append('xgb')
+                    logging.debug(f"XGBoost 모델 로드: {xgb_path}")
             else:
-                self.models['xgb'] = self._build_xgboost()
+                # 이전 파일명 체크 (호환성)
+                old_xgb_path = os.path.join(self.model_dir, 'xgboost.pkl')
+                if os.path.exists(old_xgb_path):
+                    with open(old_xgb_path, 'rb') as f:
+                        self.models['xgb'] = pickle.load(f)
+                        models_loaded.append('xgb')
+                        logging.debug(f"XGBoost 모델 로드 (이전 파일): {old_xgb_path}")
+                else:
+                    self.models['xgb'] = self._build_xgboost()
+                    logging.info("XGBoost 모델 새로 생성")
         
-        # Neural Network
-        nn_path = os.path.join(self.model_dir, 'neural_network.pkl')
+        # Neural Network - 실제 파일명에 맞게 수정
+        nn_path = os.path.join(self.model_dir, 'nn.pkl')
         if os.path.exists(nn_path):
             with open(nn_path, 'rb') as f:
                 self.models['nn'] = pickle.load(f)
+                models_loaded.append('nn')
+                logging.debug(f"Neural Network 모델 로드: {nn_path}")
         else:
-            self.models['nn'] = self._build_neural_network()
+            # 이전 파일명 체크 (호환성)
+            old_nn_path = os.path.join(self.model_dir, 'neural_network.pkl')
+            if os.path.exists(old_nn_path):
+                with open(old_nn_path, 'rb') as f:
+                    self.models['nn'] = pickle.load(f)
+                    models_loaded.append('nn')
+                    logging.debug(f"Neural Network 모델 로드 (이전 파일): {old_nn_path}")
+            else:
+                self.models['nn'] = self._build_neural_network()
+                logging.info("Neural Network 모델 새로 생성")
         
         # Scaler
         scaler_path = os.path.join(self.model_dir, 'scalers.pkl')
         if os.path.exists(scaler_path):
-            with open(scaler_path, 'rb') as f:
-                self.scalers = pickle.load(f)
+            try:
+                with open(scaler_path, 'rb') as f:
+                    self.scalers = pickle.load(f)
+                
+                # 로드된 scaler의 상태 확인
+                # targets scaler는 사용하지 않으므로 제거
+                if 'targets' in self.scalers:
+                    del self.scalers['targets']
+                    logging.info("targets scaler 제거 (사용하지 않음)")
+                
+                for scaler_name, scaler in self.scalers.items():
+                    if not hasattr(scaler, 'mean_') or scaler.mean_ is None:
+                        logging.warning(f"{scaler_name} scaler가 손상됨. 재초기화합니다.")
+                        self.scalers[scaler_name] = StandardScaler()
+                    else:
+                        logging.debug(f"{scaler_name} scaler 정상 로드됨")
+                        
+            except Exception as e:
+                logging.warning(f"Scaler 로드 실패: {e}. 새로 초기화합니다.")
+                self.scalers = {
+                    'features': StandardScaler()
+                }
         else:
             self.scalers = {
-                'features': StandardScaler(),
-                'targets': StandardScaler()
+                'features': StandardScaler()
             }
+        
+        # 모든 모델이 로드되었는지 확인
+        # XGBoost가 없는 경우는 2개, 있는 경우는 3개 모델 필요
+        required_models = ['rf', 'nn']
+        if XGBOOST_AVAILABLE:
+            required_models.append('xgb')
+        
+        # 설정 파일이 있으면 로드
+        config_path = os.path.join(self.model_dir, 'ensemble_config.json')
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                saved_is_trained = config.get('is_trained', False)
+        else:
+            saved_is_trained = False
+        
+        # 실제 로드된 모델과 저장된 상태를 모두 확인
+        all_models_loaded = all(model in models_loaded for model in required_models)
+        self.is_trained = all_models_loaded and saved_is_trained
+        
+        if self.is_trained:
+            logging.debug(f"모든 모델이 로드됨: {models_loaded}")
+        else:
+            logging.debug(f"모델 학습 필요. 로드된 모델: {models_loaded}, 요구 모델: {required_models}")
     
-    def _build_random_forest(self) -> RandomForestClassifier:
-        """Random Forest 모델 구축"""
-        return RandomForestClassifier(
-            n_estimators=200,
-            max_depth=20,
-            min_samples_split=5,
-            min_samples_leaf=2,
+    def _build_random_forest(self):
+        """Random Forest 모델 구축 - MultiOutput으로 감싸서 반환"""
+        base_rf = RandomForestClassifier(
+            n_estimators=50,  # 100 -> 50 (더 감소, 강력한 과적합 방지)
+            max_depth=3,  # 5 -> 3 (더 감소, 매우 얕은 트리)
+            min_samples_split=30,  # 20 -> 30 (더 증가)
+            min_samples_leaf=15,  # 10 -> 15 (더 증가)
             max_features='sqrt',
             random_state=42,
-            n_jobs=-1
+            n_jobs=1  # MultiOutputClassifier가 병렬 처리를 하므로 1로 설정
         )
+        return MultiOutputClassifier(base_rf, n_jobs=4)  # CPU 사용률과 성능의 균형
     
     def _build_xgboost(self):
-        """XGBoost 모델 구축"""
-        return xgb.XGBClassifier(
-            n_estimators=200,
-            max_depth=10,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
+        """XGBoost 모델 구축 - MultiOutput으로 감싸서 반환"""
+        base_xgb = xgb.XGBClassifier(
+            n_estimators=50,  # 100 -> 50 (더 감소)
+            max_depth=2,  # 3 -> 2 (최소 깊이)
+            learning_rate=0.01,  # 0.05 -> 0.01 (더 감소)
+            subsample=0.5,  # 0.6 -> 0.5 (더 감소)
+            colsample_bytree=0.5,  # 0.6 -> 0.5 (더 감소)
+            reg_alpha=2.0,  # 1.0 -> 2.0 (L1 정규화 강화)
+            reg_lambda=3.0,  # 2.0 -> 3.0 (L2 정규화 강화)
             objective='binary:logistic',
             random_state=42,
-            n_jobs=-1
+            n_jobs=1  # MultiOutputClassifier가 병렬 처리를 하므로 1로 설정
         )
+        return MultiOutputClassifier(base_xgb, n_jobs=4)  # CPU 사용률과 성능의 균형
     
-    def _build_neural_network(self) -> MLPClassifier:
-        """Neural Network 모델 구축"""
-        return MLPClassifier(
-            hidden_layer_sizes=(256, 128, 64, 32),
+    def _build_neural_network(self):
+        """Neural Network 모델 구축 - MultiOutput으로 감싸서 반환"""
+        base_nn = MLPClassifier(
+            hidden_layer_sizes=(64, 32),  # (256,128,64,32) -> (64,32) 크게 단순화, 과적합 방지
             activation='relu',
             solver='adam',
-            alpha=0.001,
+            alpha=0.1,  # 0.001 -> 0.1 (100배 증가, 강력한 L2 정규화)
             batch_size='auto',
             learning_rate='adaptive',
-            learning_rate_init=0.001,
-            max_iter=500,
+            learning_rate_init=0.0005,  # 0.001 -> 0.0005 (감소, 느린 학습)
+            max_iter=200,  # 500 -> 200 (감소, 과적합 방지)
             shuffle=True,
             random_state=42,
             early_stopping=True,
-            validation_fraction=0.1
+            validation_fraction=0.2  # 0.1 -> 0.2 (검증 데이터 증가)
         )
+        return MultiOutputClassifier(base_nn, n_jobs=1)  # Neural Network는 자체적으로 병렬 처리하므로 n_jobs=1
+    
+    def _augment_training_data(self, winning_numbers: List[str]) -> List[str]:
+        """데이터 증강으로 학습 데이터 확대
+        
+        통계적 특성을 유지하면서 변형된 데이터 생성
+        """
+        # 데이터 증강 비활성화 (과적합 방지)
+        # 원본 데이터만 사용
+        return list(winning_numbers)
+        
+        # 아래 코드는 주석 처리 (나중에 필요시 활성화)
+        """
+        augmented = list(winning_numbers)  # 원본 데이터 유지
+        
+        for combo_str in winning_numbers:
+            numbers = [int(n) for n in combo_str.split(',')]
+            
+            # 1가지 증강 전략만 사용 (3 -> 1, 과적합 방지)
+            for strategy in range(1):
+                new_numbers = []
+                
+                if strategy == 0:
+                    # 전략 1: ±2 범위 내에서 무작위 변형
+                    for num in numbers:
+                        noise = np.random.randint(-2, 3)
+                        new_num = max(1, min(45, num + noise))
+                        new_numbers.append(new_num)
+                
+                elif strategy == 1:
+                    # 전략 2: 1-2개 번호만 교체
+                    new_numbers = numbers.copy()
+                    num_to_replace = np.random.randint(1, 3)
+                    indices = np.random.choice(6, num_to_replace, replace=False)
+                    for idx in indices:
+                        # 기존 번호 제외하고 새 번호 선택
+                        available = [n for n in range(1, 46) if n not in new_numbers]
+                        if available:
+                            new_numbers[idx] = np.random.choice(available)
+                
+                else:
+                    # 전략 3: 통계적 특성 유지하며 생성
+                    mean = np.mean(numbers)
+                    std = np.std(numbers)
+                    # 비슷한 평균과 표준편차를 가진 번호 생성
+                    candidates = []
+                    while len(candidates) < 6:
+                        num = int(np.random.normal(mean, std))
+                        if 1 <= num <= 45 and num not in candidates:
+                            candidates.append(num)
+                    new_numbers = sorted(candidates)
+                
+                # 중복 제거 및 정렬
+                new_numbers = sorted(list(set(new_numbers)))
+                
+                # 6개가 되도록 조정
+                if len(new_numbers) < 6:
+                    available = [n for n in range(1, 46) if n not in new_numbers]
+                    need = 6 - len(new_numbers)
+                    new_numbers.extend(np.random.choice(available, need, replace=False))
+                elif len(new_numbers) > 6:
+                    new_numbers = new_numbers[:6]
+                
+                new_numbers = sorted(new_numbers)
+                augmented.append(','.join(map(str, new_numbers)))
+        
+        # 중복 제거
+        augmented = list(set(augmented))
+        logging.info(f"데이터 증강: {len(winning_numbers)}개 → {len(augmented)}개")
+        
+        return augmented
+        """
     
     def extract_features(self, winning_numbers: List[str], 
                         target_round: int = None) -> pd.DataFrame:
@@ -263,7 +428,24 @@ class EnsemblePredictor:
             logging.error("scikit-learn이 설치되지 않아 학습할 수 없습니다.")
             return
         
-        logging.info("앙상블 모델 학습 시작...")
+        # 첫 번째 학습일 때만 info 레벨로 출력
+        if not hasattr(self, '_training_logged'):
+            logging.info("앙상블 모델 학습 시작...")
+            self._training_logged = True
+        else:
+            logging.debug("앙상블 모델 학습 시작...")
+        
+        # 데이터 부족 체크
+        if len(winning_numbers) < self.min_train_samples:
+            logging.warning(f"학습 데이터 부족: {len(winning_numbers)}개 (최소 {self.min_train_samples}개 필요)")
+            # 데이터 증강은 과적합 위험이 있으므로 제한적으로 사용
+            if len(winning_numbers) >= 30:  # 최소 30개 이상일 때만 증강
+                augmented = self._augment_training_data(winning_numbers[:int(len(winning_numbers)*0.7)])  # 70%만 증강
+                winning_numbers = winning_numbers + augmented[:20]  # 최대 20개만 추가
+                logging.info(f"제한적 데이터 증강 후: {len(winning_numbers)}개")
+            else:
+                logging.error("데이터가 너무 적어 학습할 수 없습니다.")
+                return {}
         
         # 특징 추출
         features = self.extract_features(winning_numbers[:-1])
@@ -279,7 +461,9 @@ class EnsemblePredictor:
         # NaN 값을 0으로 채우기 (또는 평균값으로 채우기)
         features = features.fillna(0)
         
-        # 스케일링
+        # 스케일링 - scaler 상태 확인 및 안전한 처리
+        # StandardScaler 항상 새로 생성하여 오류 방지
+        self.scalers['features'] = StandardScaler()
         features_scaled = self.scalers['features'].fit_transform(features)
         
         # 학습/테스트 분할
@@ -291,22 +475,39 @@ class EnsemblePredictor:
         results = {}
         
         # Random Forest
-        logging.info("Random Forest 학습 중...")
-        for i in range(45):  # 각 번호에 대해 별도 모델
-            self.models['rf'].fit(X_train, y_train[:, i])
+        logging.debug("Random Forest 학습 중...")
+        self.models['rf'].fit(X_train, y_train)
         
-        # 특징 중요도 저장
-        self.feature_importances['rf'] = self.models['rf'].feature_importances_
+        # 특징 중요도 저장 (MultiOutputClassifier의 경우 각 estimator의 평균)
+        if hasattr(self.models['rf'], 'estimators_'):
+            feature_importances = np.mean([
+                estimator.feature_importances_ 
+                for estimator in self.models['rf'].estimators_
+            ], axis=0)
+            self.feature_importances['rf'] = feature_importances
         
         # XGBoost
         if XGBOOST_AVAILABLE and 'xgb' in self.models:
-            logging.info("XGBoost 학습 중...")
-            for i in range(45):
-                self.models['xgb'].fit(X_train, y_train[:, i])
+            logging.debug("XGBoost 학습 중...")
+            self.models['xgb'].fit(X_train, y_train)
         
         # Neural Network
-        logging.info("Neural Network 학습 중...")
-        self.models['nn'].fit(X_train, y_train)
+        logging.debug("Neural Network 학습 중...")
+        try:
+            # 데이터 크기 확인
+            if X_train.shape[0] < 10:
+                logging.warning(f"Neural Network 학습 데이터가 너무 적습니다: {X_train.shape[0]}개")
+                # 기본 모델로 재초기화
+                self.models['nn'] = self._build_neural_network()
+            else:
+                # Neural Network 학습 (MultiOutputClassifier가 y_train을 적절히 처리)
+                self.models['nn'].fit(X_train, y_train)
+        except Exception as e:
+            logging.warning(f"Neural Network 학습 실패: {e}")
+            logging.debug(f"X_train shape: {X_train.shape if 'X_train' in locals() else 'N/A'}")
+            logging.debug(f"y_train shape: {y_train.shape if 'y_train' in locals() else 'N/A'}")
+            # 실패 시 기본 모델 사용
+            self.models['nn'] = self._build_neural_network()
         
         self.is_trained = True
         
@@ -318,6 +519,79 @@ class EnsemblePredictor:
         
         logging.info("앙상블 모델 학습 완료")
         return evaluation
+    
+    def update_hyperparameters(self, rf_params: Dict[str, Any], 
+                             xgb_params: Dict[str, Any], 
+                             nn_params: Dict[str, Any]):
+        """하이퍼파라미터 업데이트
+        
+        Args:
+            rf_params: Random Forest 파라미터
+            xgb_params: XGBoost 파라미터
+            nn_params: Neural Network 파라미터
+        """
+        # Random Forest 파라미터 업데이트
+        if 'rf' not in self.models or not self.is_trained:
+            self.models['rf'] = RandomForestClassifier(
+                **rf_params,
+                random_state=42,
+                n_jobs=-1
+            )
+        else:
+            # 기존 모델의 파라미터 업데이트
+            for param, value in rf_params.items():
+                setattr(self.models['rf'], param, value)
+        
+        # XGBoost 파라미터 업데이트
+        if XGBOOST_AVAILABLE:
+            if 'xgb' not in self.models or not self.is_trained:
+                self.models['xgb'] = xgb.XGBClassifier(
+                    **xgb_params,
+                    random_state=42,
+                    n_jobs=-1,
+                    use_label_encoder=False
+                )
+            else:
+                for param, value in xgb_params.items():
+                    setattr(self.models['xgb'], param, value)
+        
+        # Neural Network 파라미터 업데이트
+        if 'nn' not in self.models or not self.is_trained:
+            self.models['nn'] = MLPClassifier(
+                **nn_params,
+                random_state=42,
+                max_iter=1000,
+                early_stopping=True
+            )
+        else:
+            for param, value in nn_params.items():
+                setattr(self.models['nn'], param, value)
+        
+        # 재학습 필요 플래그 - 모델이 이미 존재하면 trained 상태 유지
+        # 파라미터만 업데이트하고 재학습은 필요시에만 수행
+        if all(model in self.models for model in ['rf', 'xgb', 'nn']):
+            # 모델이 모두 있으면 trained 상태 유지
+            logging.info("앙상블 모델 하이퍼파라미터 업데이트 완료 - 학습 상태 유지")
+        else:
+            # 모델이 없으면 학습 필요
+            self.is_trained = False
+            logging.info("앙상블 모델 하이퍼파라미터 업데이트 완료 - 학습 필요")
+    
+    def apply_best_params(self, best_params: Dict[str, Any]):
+        """최적 파라미터 적용
+        
+        Args:
+            best_params: 최적화된 파라미터 딕셔너리
+        """
+        # 파라미터 분리
+        rf_params = {k.replace('rf_', ''): v for k, v in best_params.items() if k.startswith('rf_')}
+        xgb_params = {k.replace('xgb_', ''): v for k, v in best_params.items() if k.startswith('xgb_')}
+        nn_params = {k.replace('nn_', ''): v for k, v in best_params.items() if k.startswith('nn_')}
+        
+        # 업데이트 실행
+        self.update_hyperparameters(rf_params, xgb_params, nn_params)
+        
+        logging.info("최적 파라미터 적용 완료")
     
     def predict_probability(self, features: np.ndarray) -> np.ndarray:
         """앙상블 예측 (확률)
@@ -335,24 +609,68 @@ class EnsemblePredictor:
         predictions = {}
         
         # Random Forest 예측
-        rf_pred = np.zeros((features.shape[0], 45))
-        for i in range(45):
-            rf_pred[:, i] = self.models['rf'].predict_proba(features)[:, 1]
-        predictions['rf'] = rf_pred
+        try:
+            # 모델이 학습되었는지 확인
+            check_is_fitted(self.models['rf'])
+            # MultiOutputClassifier의 predict_proba는 각 출력에 대한 확륨을 반환
+            rf_proba = self.models['rf'].predict_proba(features)
+            # 각 클래스에 대해 양성 클래스(1)의 확률만 추출
+            rf_pred = np.array([proba[:, 1] for proba in rf_proba]).T
+            predictions['rf'] = rf_pred
+        except Exception as e:
+            if "instance is not fitted yet" in str(e):
+                logging.debug(f"RF 모델이 아직 학습되지 않았습니다. 기본값 사용")
+            else:
+                logging.warning(f"RF 예측 실패: {e}")
+            predictions['rf'] = np.ones((features.shape[0], 45)) / 45
         
         # XGBoost 예측
         if XGBOOST_AVAILABLE and 'xgb' in self.models:
-            xgb_pred = np.zeros((features.shape[0], 45))
-            for i in range(45):
-                xgb_pred[:, i] = self.models['xgb'].predict_proba(features)[:, 1]
-            predictions['xgb'] = xgb_pred
+            try:
+                # 모델이 학습되었는지 확인
+                check_is_fitted(self.models['xgb'])
+                # MultiOutputClassifier의 predict_proba는 각 출력에 대한 확륬을 반환
+                xgb_proba = self.models['xgb'].predict_proba(features)
+                # 각 클래스에 대해 양성 클래스(1)의 확륬만 추출
+                xgb_pred = np.array([proba[:, 1] for proba in xgb_proba]).T
+                predictions['xgb'] = xgb_pred
+            except Exception as e:
+                if "instance is not fitted yet" in str(e) or "has not been fitted" in str(e):
+                    logging.debug(f"XGBoost 모델이 아직 학습되지 않았습니다. 기본값 사용")
+                else:
+                    logging.warning(f"XGBoost 예측 실패: {e}")
+                predictions['xgb'] = np.ones((features.shape[0], 45)) / 45
         
         # Neural Network 예측
-        nn_pred = self.models['nn'].predict_proba(features)
-        predictions['nn'] = nn_pred
+        try:
+            # 모델이 학습되었는지 확인
+            check_is_fitted(self.models['nn'])
+            # MultiOutputClassifier의 predict_proba는 각 출력에 대한 확률을 반환
+            nn_proba = self.models['nn'].predict_proba(features)
+            # 각 클래스에 대해 양성 클래스(1)의 확률만 추출
+            if isinstance(nn_proba, list):
+                # MultiOutputClassifier의 경우 리스트 반환
+                nn_pred = np.array([proba[:, 1] if proba.shape[1] > 1 else proba[:, 0] 
+                                   for proba in nn_proba]).T
+            else:
+                # 단일 출력의 경우
+                nn_pred = nn_proba
+            predictions['nn'] = nn_pred
+        except Exception as e:
+            if "instance is not fitted yet" in str(e):
+                logging.debug(f"NN 모델이 아직 학습되지 않았습니다. 기본값 사용")
+            else:
+                logging.warning(f"NN 예측 실패: {e}")
+            predictions['nn'] = np.ones((features.shape[0], 45)) / 45
         
         # 가중 평균 앙상블
-        final_pred = np.zeros_like(rf_pred)
+        # predictions 중 하나를 템플릿으로 사용
+        if predictions:
+            template_pred = next(iter(predictions.values()))
+            final_pred = np.zeros_like(template_pred)
+        else:
+            # 모든 예측이 실패한 경우 기본값
+            final_pred = np.ones((features.shape[0], 45)) / 45
         total_weight = 0
         
         for model_name, pred in predictions.items():
@@ -387,7 +705,15 @@ class EnsemblePredictor:
             latest_features = self.scalers['features'].transform(latest_features)
         
         # 예측
-        probabilities = self.predict_probability(latest_features)[0]
+        probabilities = self.predict_probability(latest_features)
+        if probabilities.ndim > 1:
+            probabilities = probabilities[0]
+        
+        # 확률 배열 검증
+        if not isinstance(probabilities, np.ndarray) or len(probabilities) != 45:
+            logging.warning(f"예상치 못한 확률 형태: {type(probabilities)}, shape: {getattr(probabilities, 'shape', 'N/A')}")
+            # 기본 균등 분포 사용
+            probabilities = np.ones(45) / 45
         
         # 번호 조합 생성
         predictions = []
@@ -404,8 +730,20 @@ class EnsemblePredictor:
             )
             selected_numbers = sorted([i + 1 for i in selected_indices])
             
-            # 예측 신뢰도 계산
+            # 예측 결과 검증
+            if len(selected_numbers) != 6:
+                logging.error(f"예측 번호 개수 오류: {len(selected_numbers)}개")
+                continue
+            if any(n < 1 or n > 45 for n in selected_numbers):
+                logging.error(f"예측 번호 범위 오류: {selected_numbers}")
+                continue
+            if len(set(selected_numbers)) != 6:
+                logging.error(f"예측 번호 중복 오류: {selected_numbers}")
+                continue
+            
+            # 예측 신뢰도 계산 (현실적인 범위로 조정)
             confidence = np.mean([probabilities[i] for i in selected_indices])
+            confidence = min(confidence, 0.3)  # 최대 30%로 제한
             
             # 개별 모델 예측도 포함
             model_predictions = {}
@@ -506,7 +844,7 @@ class EnsemblePredictor:
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
         
-        logging.info(f"모델 저장 완료: {self.model_dir}")
+        logging.debug(f"모델 저장 완료: {self.model_dir}")
     
     def load_models(self):
         """모델 로드"""
@@ -522,7 +860,7 @@ class EnsemblePredictor:
         # 모델 로드
         self._initialize_models()
         
-        logging.info("모델 로드 완료")
+        logging.debug("모델 로드 완료")
 
 
 def main():

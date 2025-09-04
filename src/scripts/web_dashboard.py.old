@@ -1,0 +1,405 @@
+"""
+웹 기반 대시보드
+Flask를 사용한 간단한 웹 UI
+"""
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+import json
+from datetime import datetime
+from flask import Flask, render_template_string, jsonify
+import logging
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+app = Flask(__name__)
+
+# HTML 템플릿
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로또 예측 시스템 대시보드</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+        
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        
+        .status-online {
+            color: #4caf50;
+            font-weight: bold;
+        }
+        
+        .status-offline {
+            color: #f44336;
+            font-weight: bold;
+        }
+        
+        .prediction-numbers {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+        
+        .number-ball {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        .number-ball:nth-child(odd) {
+            background: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        .number-ball:nth-child(even) {
+            background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%);
+        }
+        
+        .metric {
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .metric:last-child {
+            border-bottom: none;
+        }
+        
+        .metric-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .metric-value {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .filter-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .filter-badge {
+            background: #667eea;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.85em;
+        }
+        
+        .model-status {
+            display: grid;
+            gap: 10px;
+        }
+        
+        .model-item {
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 8px;
+        }
+        
+        .model-ready {
+            border-left: 4px solid #4caf50;
+        }
+        
+        .model-not-ready {
+            border-left: 4px solid #ff9800;
+        }
+        
+        .refresh-info {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            font-size: 0.9em;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 로또 예측 시스템 대시보드</h1>
+        
+        <div class="dashboard">
+            <!-- 시스템 상태 -->
+            <div class="card">
+                <h2>시스템 상태</h2>
+                <div class="metric">
+                    <span class="metric-label">상태:</span>
+                    <span class="metric-value status-online" id="system-status">ONLINE</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">최신 회차:</span>
+                    <span class="metric-value" id="latest-round">Loading...</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">데이터베이스:</span>
+                    <span class="metric-value" id="db-status">Connected</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">업데이트 시간:</span>
+                    <span class="metric-value" id="update-time">-</span>
+                </div>
+            </div>
+            
+            <!-- 최근 예측 -->
+            <div class="card">
+                <h2>최근 예측 번호</h2>
+                <div id="predictions-container">
+                    <div class="loading"></div> Loading...
+                </div>
+            </div>
+            
+            <!-- 성능 지표 -->
+            <div class="card">
+                <h2>성능 지표</h2>
+                <div class="metric">
+                    <span class="metric-label">평균 일치 개수:</span>
+                    <span class="metric-value" id="avg-match">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">3개 이상 일치율:</span>
+                    <span class="metric-value" id="three-plus">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">최고 일치 개수:</span>
+                    <span class="metric-value" id="best-match">-</span>
+                </div>
+            </div>
+            
+            <!-- ML 모델 상태 -->
+            <div class="card">
+                <h2>ML 모델 상태</h2>
+                <div class="model-status" id="model-status">
+                    <div class="model-item model-not-ready">
+                        <strong>LSTM:</strong> <span>Checking...</span>
+                    </div>
+                    <div class="model-item model-not-ready">
+                        <strong>ENSEMBLE:</strong> <span>Checking...</span>
+                    </div>
+                    <div class="model-item model-not-ready">
+                        <strong>MONTE CARLO:</strong> <span>Checking...</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 필터 상태 -->
+            <div class="card">
+                <h2>활성 필터</h2>
+                <div class="metric">
+                    <span class="metric-label">총 필터 수:</span>
+                    <span class="metric-value" id="filter-count">-</span>
+                </div>
+                <div class="filter-list" id="filter-list">
+                    <span class="loading"></span>
+                </div>
+            </div>
+            
+            <!-- 실시간 로그 -->
+            <div class="card">
+                <h2>최근 활동</h2>
+                <div id="recent-activity" style="max-height: 200px; overflow-y: auto;">
+                    <p style="color: #666;">시스템 활동이 여기에 표시됩니다...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="refresh-info">
+            <p>⏱️ 5초마다 자동 새로고침 | 마지막 업데이트: <span id="last-refresh">-</span></p>
+        </div>
+    </div>
+    
+    <script>
+        // 데이터 업데이트 함수
+        function updateDashboard() {
+            fetch('/api/dashboard')
+                .then(response => response.json())
+                .then(data => {
+                    // 시스템 상태 업데이트
+                    document.getElementById('system-status').textContent = data.system.status;
+                    document.getElementById('latest-round').textContent = data.system.latest_round;
+                    document.getElementById('db-status').textContent = data.system.database;
+                    document.getElementById('update-time').textContent = data.system.timestamp;
+                    
+                    // 예측 번호 업데이트
+                    const predContainer = document.getElementById('predictions-container');
+                    if (data.predictions && data.predictions.length > 0) {
+                        predContainer.innerHTML = data.predictions.map(pred => `
+                            <div style="margin-bottom: 15px;">
+                                <div style="font-size: 0.9em; color: #666;">
+                                    회차 ${pred.round} | Set ${pred.set} | ${pred.source}
+                                </div>
+                                <div class="prediction-numbers">
+                                    ${pred.numbers.map(n => `<div class="number-ball">${n}</div>`).join('')}
+                                </div>
+                            </div>
+                        `).join('');
+                    } else {
+                        predContainer.innerHTML = '<p style="color: #666;">예측 데이터가 없습니다.</p>';
+                    }
+                    
+                    // 성능 지표 업데이트
+                    document.getElementById('avg-match').textContent = 
+                        data.performance.avg_match ? data.performance.avg_match.toFixed(2) + ' 개' : '-';
+                    document.getElementById('three-plus').textContent = 
+                        data.performance.three_plus_rate ? data.performance.three_plus_rate.toFixed(1) + '%' : '-';
+                    document.getElementById('best-match').textContent = 
+                        data.performance.best_match ? data.performance.best_match + ' 개' : '-';
+                    
+                    // ML 모델 상태 업데이트
+                    const modelContainer = document.getElementById('model-status');
+                    if (data.ml_models) {
+                        modelContainer.innerHTML = Object.entries(data.ml_models).map(([name, info]) => `
+                            <div class="model-item ${info.status === 'Ready' ? 'model-ready' : 'model-not-ready'}">
+                                <strong>${name.toUpperCase()}:</strong> 
+                                <span>${info.status} ${info.last_updated !== 'N/A' ? '(' + info.last_updated + ')' : ''}</span>
+                            </div>
+                        `).join('');
+                    }
+                    
+                    // 필터 상태 업데이트
+                    document.getElementById('filter-count').textContent = data.filters.total_filters || '-';
+                    const filterList = document.getElementById('filter-list');
+                    if (data.filters.active_filters && data.filters.active_filters.length > 0) {
+                        filterList.innerHTML = data.filters.active_filters.map(f => 
+                            `<span class="filter-badge">${f}</span>`
+                        ).join('');
+                    } else {
+                        filterList.innerHTML = '<span style="color: #666;">활성 필터 없음</span>';
+                    }
+                    
+                    // 마지막 업데이트 시간
+                    document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString('ko-KR');
+                })
+                .catch(error => {
+                    console.error('Error updating dashboard:', error);
+                });
+        }
+        
+        // 페이지 로드 시 즉시 업데이트
+        updateDashboard();
+        
+        // 5초마다 자동 업데이트
+        setInterval(updateDashboard, 5000);
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def index():
+    """메인 대시보드 페이지"""
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/dashboard')
+def api_dashboard():
+    """대시보드 데이터 API"""
+    from src.scripts.dashboard import LottoDashboard
+    
+    dashboard = LottoDashboard()
+    
+    # 데이터 수집
+    data = {
+        'system': dashboard._get_system_status(),
+        'predictions': dashboard._get_recent_predictions(),
+        'performance': dashboard._get_performance_metrics(),
+        'filters': dashboard._get_filter_status(),
+        'ml_models': dashboard._get_ml_status(),
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    return jsonify(data)
+
+def run_web_dashboard(host='127.0.0.1', port=5000, debug=False):
+    """웹 대시보드 실행"""
+    print("\n" + "="*60)
+    print("로또 예측 시스템 웹 대시보드")
+    print("="*60)
+    print(f"\n[INFO] 웹 서버를 시작합니다...")
+    print(f"[INFO] 브라우저에서 http://{host}:{port} 접속하세요.")
+    print(f"[INFO] 종료하려면 Ctrl+C를 누르세요.\n")
+    
+    app.run(host=host, port=port, debug=debug)
+
+if __name__ == '__main__':
+    run_web_dashboard(debug=True)

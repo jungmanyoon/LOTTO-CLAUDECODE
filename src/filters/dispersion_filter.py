@@ -57,12 +57,12 @@ class DispersionFilter(BaseFilter):
             min_var = min(variances)
             max_var = max(variances)
             
-            # 범위의 15% 마진 추가
-            std_margin = (max_std - min_std) * 0.15
+            # 범위의 30% 마진 추가 (15% → 30%로 증가)
+            std_margin = (max_std - min_std) * 0.30
             min_std = max(1, min_std - std_margin)
             max_std = max_std + std_margin
             
-            var_margin = (max_var - min_var) * 0.15
+            var_margin = (max_var - min_var) * 0.30
             min_var = max(1, min_var - var_margin)
             max_var = max_var + var_margin
             
@@ -160,10 +160,13 @@ class DispersionFilter(BaseFilter):
             max_avg_gap = criteria.get("max_avg_gap", 15)
             
             # 배열로 변환 (벡터화 처리)
-            chunk_arrays = np.array([
-                list(map(int, comb.split(',')))
-                for comb in combinations_chunk
-            ], dtype=np.int8)
+            chunk_arrays = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    chunk_arrays.append(list(map(int, comb.split(','))))
+                else:
+                    chunk_arrays.append(comb)
+            chunk_arrays = np.array(chunk_arrays, dtype=np.int8)
             
             # 정렬된 배열 생성
             sorted_arrays = np.sort(chunk_arrays, axis=1)

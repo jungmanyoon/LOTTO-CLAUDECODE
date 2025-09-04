@@ -134,9 +134,12 @@ class DigitSumFilter(BaseFilter):
         try:
             result = []
             
-            for combo_str in combinations_chunk:
-                # 문자열 조합을 정수 목록으로 변환
-                numbers = [int(n) for n in combo_str.split(",")]
+            for combo in combinations_chunk:
+                # 조합이 문자열인지 리스트인지 확인
+                if isinstance(combo, str):
+                    numbers = [int(n) for n in combo.split(",")]
+                else:
+                    numbers = combo
                 
                 # 각 번호의 자릿수 합 계산
                 number_digit_sums = [sum(int(digit) for digit in str(num)) for num in numbers]
@@ -148,7 +151,7 @@ class DigitSumFilter(BaseFilter):
                 # 허용 범위 내에 있는 경우만 유지
                 if (min_sum <= total_digit_sum <= max_sum and 
                     min_range <= digit_sum_range <= max_range):
-                    result.append(combo_str)
+                    result.append(combo)
                     
             return result
             

@@ -54,7 +54,11 @@ class GeometricSequenceFilter(BaseFilter):
             filtered_combinations = []
             
             for comb in combinations_chunk:
-                numbers = sorted(list(map(int, comb.split(','))))
+                # 타입 체크 추가
+                if isinstance(comb, str):
+                    numbers = sorted(list(map(int, comb.split(','))))
+                else:
+                    numbers = sorted(comb)
                 max_sequence = GeometricSequenceFilter._find_geometric_sequence_static(numbers)
                 
                 if max_sequence < min_sequence or max_sequence not in exclude_lengths:

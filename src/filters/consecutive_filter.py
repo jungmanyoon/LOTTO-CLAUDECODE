@@ -51,10 +51,15 @@ class ConsecutiveFilter(BaseFilter):
                       min_gap: int) -> List[str]:
         """청크 단위 필터링 처리"""
         try:
-            chunk_arrays = np.array([
-                list(map(int, comb.split(','))) 
-                for comb in combinations_chunk
-            ], dtype=np.int8)
+            # 타입 체크 추가
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.int8)
 
             # 정렬된 배열 생성
             sorted_arrays = np.sort(chunk_arrays, axis=1)
@@ -142,7 +147,10 @@ class ConsecutiveFilter(BaseFilter):
             total = len(combinations)
             
             for comb in combinations:
-                numbers = sorted(map(int, comb.split(',')))
+                if isinstance(comb, str):
+                    numbers = sorted(map(int, comb.split(',')))
+                else:
+                    numbers = sorted(comb)
                 max_consecutive = self._get_max_consecutive(numbers)
                 pattern_counts[max_consecutive] += 1
                 
@@ -196,7 +204,10 @@ class ConsecutiveFilter(BaseFilter):
             Dict: 분석 결과
         """
         try:
-            numbers = list(map(int, combination.split(',')))
+            if isinstance(combination, str):
+                numbers = list(map(int, combination.split(',')))
+            else:
+                numbers = combination
             sequences = self.find_consecutive_sequences(numbers)
             
             return {
@@ -236,7 +247,10 @@ class ConsecutiveFilter(BaseFilter):
             min_gaps = []
             
             for numbers_str in winning_numbers:
-                numbers = sorted(map(int, numbers_str.split(',')))
+                if isinstance(numbers_str, str):
+                    numbers = sorted(map(int, numbers_str.split(',')))
+                else:
+                    numbers = sorted(numbers_str)
                 consecutive_counts.append(self._get_max_consecutive(numbers))
                 min_gaps.extend(
                     numbers[i] - numbers[i-1]

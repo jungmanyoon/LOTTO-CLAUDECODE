@@ -15,6 +15,10 @@ from scipy.special import comb
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# numpy가 제대로 import되었는지 확인
+if 'np' not in globals():
+    import numpy as np
+
 class BayesianFilter:
     """베이지안 추론 기반 로또 번호 필터"""
     
@@ -214,7 +218,7 @@ class BayesianFilter:
         
         return pattern_params
     
-    def _calculate_correlation_matrix(self, numbers_list: List[List[int]]) -> np.ndarray:
+    def _calculate_correlation_matrix(self, numbers_list: List[List[int]]) -> 'np.ndarray':
         """번호 간 상관관계 행렬 계산
         
         Args:
@@ -272,7 +276,7 @@ class BayesianFilter:
         
         return posterior
     
-    def _update_dirichlet(self, prior_params: np.ndarray, 
+    def _update_dirichlet(self, prior_params: 'np.ndarray', 
                          evidence: Dict[str, Any]) -> Dict[str, Any]:
         """디리클레 분포 업데이트
         
@@ -359,6 +363,58 @@ class BayesianFilter:
             'params': {'mean': posterior_mean, 'std': posterior_std}
         }
     
+    def calculate_log_likelihood(self, combination: List[int], 
+                               given_evidence: Dict[str, Any]) -> float:
+        """조합의 로그 우도 계산
+        
+        Args:
+            combination: 6개 번호 조합
+            given_evidence: 주어진 증거
+            
+        Returns:
+            float: 로그 우도값
+        """
+        log_likelihood = 0.0
+        
+        # 1. 번호 빈도 우도
+        if 'number_frequency' in self.posterior_beliefs:
+            freq_dist = self.posterior_beliefs['number_frequency']
+            if freq_dist['distribution'] == 'dirichlet':
+                # 다항분포 우도
+                probs = freq_dist['mean']
+                for num in combination:
+                    prob = probs[num - 1]
+                    if prob > 0:
+                        log_likelihood += np.log(prob)
+                    else:
+                        log_likelihood += np.log(1e-10)  # 매우 작은 값으로 대체
+        
+        # 2. 패턴 우도
+        if 'patterns' in self.posterior_beliefs:
+            patterns = self.posterior_beliefs['patterns']
+            
+            # 홀짝 패턴
+            odd_count = sum(1 for n in combination if n % 2 == 1)
+            if 'odd_even' in patterns and odd_count in patterns['odd_even']:
+                beta_params = patterns['odd_even'][odd_count]['params']
+                odd_prob = beta_params[0] / (beta_params[0] + beta_params[1])
+                if odd_prob > 0:
+                    log_likelihood += np.log(odd_prob)
+                else:
+                    log_likelihood += np.log(1e-10)
+            
+            # 합계 범위
+            total_sum = sum(combination)
+            if 'sum_range' in patterns:
+                sum_dist = patterns['sum_range']['params']
+                # 로그 확률밀도 사용
+                log_sum_likelihood = stats.norm.logpdf(total_sum, 
+                                                     sum_dist['mean'], 
+                                                     sum_dist['std'])
+                log_likelihood += log_sum_likelihood
+        
+        return log_likelihood
+    
     def calculate_likelihood(self, combination: List[int], 
                            given_evidence: Dict[str, Any]) -> float:
         """조합의 우도 계산
@@ -370,36 +426,15 @@ class BayesianFilter:
         Returns:
             float: 우도값
         """
-        likelihood = 1.0
+        log_likelihood = self.calculate_log_likelihood(combination, given_evidence)
         
-        # 1. 번호 빈도 우도
-        if 'number_frequency' in self.posterior_beliefs:
-            freq_dist = self.posterior_beliefs['number_frequency']
-            if freq_dist['distribution'] == 'dirichlet':
-                # 다항분포 우도
-                probs = freq_dist['mean']
-                for num in combination:
-                    likelihood *= probs[num - 1]
-        
-        # 2. 패턴 우도
-        if 'patterns' in self.posterior_beliefs:
-            patterns = self.posterior_beliefs['patterns']
-            
-            # 홀짝 패턴
-            odd_count = sum(1 for n in combination if n % 2 == 1)
-            if 'odd_even' in patterns and odd_count in patterns['odd_even']:
-                beta_params = patterns['odd_even'][odd_count]['params']
-                odd_prob = beta_params[0] / (beta_params[0] + beta_params[1])
-                likelihood *= odd_prob
-            
-            # 합계 범위
-            total_sum = sum(combination)
-            if 'sum_range' in patterns:
-                sum_dist = patterns['sum_range']['params']
-                sum_likelihood = stats.norm.pdf(total_sum, 
-                                              sum_dist['mean'], 
-                                              sum_dist['std'])
-                likelihood *= sum_likelihood
+        # 로그 스케일에서 실제 값으로 변환
+        # 언더플로우 방지를 위해 안전하게 변환
+        try:
+            likelihood = np.exp(log_likelihood)
+        except:
+            # 언더플로우 발생 시 매우 작은 값 반환
+            likelihood = 1e-300
         
         return likelihood
     
@@ -424,21 +459,30 @@ class BayesianFilter:
         for _ in range(n_predictions * 10):  # 오버샘플링
             combination = self._sample_from_posterior()
             
-            # 우도 계산
-            likelihood = self.calculate_likelihood(combination, {})
+            # 우도 계산 (로그 스케일)
+            log_likelihood = self.calculate_log_likelihood(combination, {})
             
             # 사후 확률 (정규화 상수 무시)
-            posterior_prob = likelihood  # * prior (uniform이면 생략)
+            posterior_prob = np.exp(log_likelihood) if log_likelihood > -700 else 0  # 언더플로우 방지
             
             predictions.append({
                 'numbers': combination,
-                'likelihood': likelihood,
+                'likelihood': self.calculate_likelihood(combination, {}),
+                'log_likelihood': log_likelihood,
                 'posterior_prob': posterior_prob
             })
         
-        # 상위 n_predictions개 선택
-        predictions.sort(key=lambda x: x['posterior_prob'], reverse=True)
+        # 로그 우도 기준으로 정렬 (더 안정적)
+        predictions.sort(key=lambda x: x['log_likelihood'], reverse=True)
         top_predictions = predictions[:n_predictions]
+        
+        # 상대적 점수 계산 (가장 높은 것을 100점으로)
+        if top_predictions:
+            max_log_likelihood = top_predictions[0]['log_likelihood']
+            for pred in top_predictions:
+                # 로그 차이를 이용한 상대 점수
+                log_diff = pred['log_likelihood'] - max_log_likelihood
+                pred['relative_score'] = 100 * np.exp(log_diff) if log_diff > -10 else 0
         
         # 신뢰구간 계산
         for pred in top_predictions:
@@ -639,14 +683,20 @@ class BayesianFilter:
         Returns:
             Dict: 직렬화된 신념
         """
+        import numpy as np  # 메서드 내에서 numpy를 다시 import
         serialized = {}
         
         for key, value in beliefs.items():
-            if isinstance(value, np.ndarray):
-                serialized[key] = value.tolist()
-            elif isinstance(value, dict):
-                serialized[key] = self._serialize_beliefs(value)
-            else:
+            try:
+                # numpy array인지 체크
+                if hasattr(value, 'tolist') and hasattr(value, 'shape'):
+                    serialized[key] = value.tolist()
+                elif isinstance(value, dict):
+                    serialized[key] = self._serialize_beliefs(value)
+                else:
+                    serialized[key] = value
+            except Exception as e:
+                # 에러 발생 시 그대로 저장
                 serialized[key] = value
         
         return serialized
@@ -686,10 +736,17 @@ def main():
     for i, pred in enumerate(predictions, 1):
         numbers = pred['numbers']
         likelihood = pred['likelihood']
+        log_likelihood = pred.get('log_likelihood', np.log(likelihood) if likelihood > 0 else -np.inf)
+        relative_score = pred.get('relative_score', 0)
         confidence = pred['confidence_interval']
         
         print(f"\n{i}. {numbers}")
-        print(f"   우도: {likelihood:.6f}")
+        print(f"   상대 점수: {relative_score:.1f}점")
+        print(f"   로그 우도: {log_likelihood:.2f}")
+        if likelihood > 1e-10:
+            print(f"   우도: {likelihood:.2e}")  # 과학적 표기법
+        else:
+            print(f"   우도: < 1e-10 (매우 작음)")
         print(f"   신뢰구간: [{confidence['lower']:.2%}, {confidence['upper']:.2%}]")
     
     # 신념 시각화

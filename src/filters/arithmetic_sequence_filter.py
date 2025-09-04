@@ -74,7 +74,11 @@ class ArithmeticSequenceFilter(BaseFilter):
             filtered_combinations = []
             
             for comb in combinations_chunk:
-                numbers = sorted(list(map(int, comb.split(','))))
+                # 조합이 문자열인지 리스트인지 확인
+                if isinstance(comb, str):
+                    numbers = sorted(list(map(int, comb.split(','))))
+                else:
+                    numbers = sorted(comb)
                 max_sequence = ArithmeticSequenceFilter._find_arithmetic_sequence_static(numbers)
                 
                 if max_sequence < min_sequence or max_sequence not in exclude_lengths:

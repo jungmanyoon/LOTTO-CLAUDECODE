@@ -85,7 +85,11 @@ class BaseFilter(ABC):
         total = len(combinations)
         processed = 0
         
-        logging.info(f"[DEBUG-빠른실패] {total}개 조합에 빠른 실패 전략 적용 중...")
+        # 1개 조합 처리 시 불필요한 로그 제거
+        if total > 1:
+            logging.info(f"[빠른실패] {total}개 조합에 빠른 실패 전략 적용 중...")
+        else:
+            logging.debug(f"[DEBUG-빠른실패] {total}개 조합에 빠른 실패 전략 적용 중...")
         
         for combo in combinations:
             processed += 1
@@ -113,7 +117,11 @@ class BaseFilter(ABC):
         # 필터링 결과
         remaining = len(filtered_combinations)
         excluded = total - remaining
-        logging.info(f"[DEBUG-빠른실패] 완료: {remaining:,}개 남음, {excluded:,}개 제외됨 ({(excluded/total)*100:.2f}%)")
+        # 1개 조합 처리 결과는 DEBUG로 처리
+        if total > 1:
+            logging.info(f"[빠른실패] 완료: {remaining:,}개 남음, {excluded:,}개 제외됨 ({(excluded/total)*100:.2f}%)")
+        else:
+            logging.debug(f"[DEBUG-빠른실패] 완료: {remaining:,}개 남음, {excluded:,}개 제외됨 ({(excluded/total)*100:.2f}%)")
         
         return filtered_combinations
     
@@ -175,21 +183,21 @@ class BaseFilter(ABC):
         # 캐시 키 생성 (라운드 + 필터 이름)
         cache_key = f"{round_num or 'none'}_{self.get_filter_name()}"
         
-        logging.info(f"[DEBUG-캐싱] 캐싱 모드로 필터 적용 중... (캐시 키: {cache_key})")
+        logging.debug(f"[DEBUG-캐싱] 캐싱 모드로 필터 적용 중... (캐시 키: {cache_key})")
         
         # 캐시된 결과가 있으면 사용
         if cache_key in self._cached_results:
-            logging.info(f"[DEBUG-캐싱] 캐시된 결과 사용 (키: {cache_key})")
+            logging.debug(f"[DEBUG-캐싱] 캐시된 결과 사용 (키: {cache_key})")
             cached_set = self._cached_results[cache_key]
             filtered = [c for c in combinations if c in cached_set]
-            logging.info(f"[DEBUG-캐싱] 캐시 히트: {len(filtered):,}/{len(combinations):,}개 남음")
+            logging.debug(f"[DEBUG-캐싱] 캐시 히트: {len(filtered):,}/{len(combinations):,}개 남음")
             return filtered
         
         # 없으면 새로 계산하고 캐시
-        logging.info(f"[DEBUG-캐싱] 캐시 미스: 새로 계산 시작 (조합 수: {len(combinations):,}개)")
+        logging.debug(f"[DEBUG-캐싱] 캐시 미스: 새로 계산 시작 (조합 수: {len(combinations):,}개)")
         filtered = self.apply(combinations, round_num)
         self._cached_results[cache_key] = set(filtered)
-        logging.info(f"[DEBUG-캐싱] 계산 완료: {len(filtered):,}/{len(combinations):,}개 남음")
+        logging.debug(f"[DEBUG-캐싱] 계산 완료: {len(filtered):,}/{len(combinations):,}개 남음")
         return filtered
 
     @abstractmethod

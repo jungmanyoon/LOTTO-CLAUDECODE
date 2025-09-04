@@ -14,8 +14,11 @@ class FixedStepFilter(BaseFilter):
         if not isinstance(self.criteria, dict):
             raise ValueError("criteria must be a dictionary")
             
-        for key in ['all_steps', 'partial_steps', 'four_steps', 'three_steps']:  # 검사할 패턴 추가
+        for key in ['all_steps', 'partial_steps', 'four_steps', 'three_steps', 'five_steps', 'six_steps']:  # 검사할 패턴 추가
             if key not in self.criteria:
+                # five_steps와 six_steps는 선택적으로 처리
+                if key in ['five_steps', 'six_steps']:
+                    continue
                 raise ValueError(f"'{key}' configuration is required")
                 
             config = self.criteria[key]
@@ -33,8 +36,8 @@ class FixedStepFilter(BaseFilter):
                 raise ValueError(f"'steps_to_exclude' in {key} must be a list of integers >= 2")
             
             matches = config['required_matches']
-            if not isinstance(matches, int) or matches < 3 or matches > 6:  # 최소 매칭 수 3으로 변경
-                raise ValueError(f"'required_matches' in {key} must be between 3 and 6")
+            if not isinstance(matches, int) or matches < 2 or matches > 6:  # 최소 매칭 수 2로 완화
+                raise ValueError(f"'required_matches' in {key} must be between 2 and 6")
 
     def _has_fixed_step_pattern_vectorized(self, numbers: np.ndarray, steps: List[int], required_matches: int) -> bool:
         """벡터화된 고정 간격 패턴 검사
@@ -86,11 +89,15 @@ class FixedStepFilter(BaseFilter):
     def _process_chunk(self, combinations_chunk: List[str], **kwargs) -> List[str]:
         """청크 단위 필터링 처리 (벡터화 개선)"""
         try:
-            # 배열로 한 번에 변환
-            chunk_arrays = np.array([
-                list(map(int, comb.split(',')))
-                for comb in combinations_chunk
-            ], dtype=np.int8)
+            # 배열로 한 번에 변환 (타입 체크 추가)
+            converted_chunks = []
+            for comb in combinations_chunk:
+                if isinstance(comb, str):
+                    converted_chunks.append(list(map(int, comb.split(','))))
+                else:
+                    converted_chunks.append(comb)
+            
+            chunk_arrays = np.array(converted_chunks, dtype=np.int8)
             
             # 각 패턴에 대해 벡터화 검사
             patterns_to_check = [
@@ -99,6 +106,12 @@ class FixedStepFilter(BaseFilter):
                 ('four_steps', kwargs['four_steps']),
                 ('three_steps', kwargs['three_steps'])
             ]
+            
+            # five_steps와 six_steps가 있으면 추가
+            if 'five_steps' in kwargs:
+                patterns_to_check.append(('five_steps', kwargs['five_steps']))
+            if 'six_steps' in kwargs:
+                patterns_to_check.append(('six_steps', kwargs['six_steps']))
             
             valid_mask = np.ones(len(combinations_chunk), dtype=bool)
             
@@ -126,14 +139,22 @@ class FixedStepFilter(BaseFilter):
     def apply(self, combinations: List[str], round_num: int) -> List[str]:
         """필터 적용"""
         try:
-            return self.optimizer.optimize_filter(
-                combinations=combinations,
-                desc=f"fixed_step 필터 진행률",
-                all_steps=self.criteria['all_steps'],
-                partial_steps=self.criteria['partial_steps'],
-                four_steps=self.criteria['four_steps'],
-                three_steps=self.criteria['three_steps']
-            )
+            kwargs = {
+                'combinations': combinations,
+                'desc': f"fixed_step 필터 진행률",
+                'all_steps': self.criteria['all_steps'],
+                'partial_steps': self.criteria['partial_steps'],
+                'four_steps': self.criteria['four_steps'],
+                'three_steps': self.criteria['three_steps']
+            }
+            
+            # five_steps와 six_steps가 있으면 추가
+            if 'five_steps' in self.criteria:
+                kwargs['five_steps'] = self.criteria['five_steps']
+            if 'six_steps' in self.criteria:
+                kwargs['six_steps'] = self.criteria['six_steps']
+                
+            return self.optimizer.optimize_filter(**kwargs)
         except Exception as e:
             logging.error(f"고정 간격 필터링 중 오류 발생: {str(e)}")
             return combinations

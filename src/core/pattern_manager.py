@@ -71,7 +71,9 @@ class PatternManager:
     def analyze_patterns(self, round_num: int = None) -> bool:
         """전체 패턴 분석 수행"""
         try:
-            logging.info("\n[패턴 분석] 시작")
+            logging.info("\n" + "="*60)
+            logging.info("🔍 [패턴 분석 시스템] 분석 시작")
+            logging.info("="*60)
             
             if round_num is None:
                 round_num = self.db_manager.lotto_db.get_last_round()
@@ -85,7 +87,12 @@ class PatternManager:
                 logging.error("분석할 당첨 번호가 없습니다.")
                 return False
                 
+            logging.info(f"✅ 분석 대상: {round_num}회차")
+            logging.info(f"✅ 분석할 데이터: {len(winning_numbers)}개 회차")
+            
             patterns = {}
+            successful_patterns = []
+            failed_patterns = []
             
             # 모든 패턴 분석을 순차적으로 수행
             pattern_analyses = [
@@ -100,22 +107,41 @@ class PatternManager:
                 ('number_average', self._analyze_average_patterns),
                 ('multiple_patterns', self._analyze_multiple_patterns),
                 # 새로운 패턴 분석 추가
-                ('ten_section_distribution', self._analyze_ten_section_patterns),  # 10구간 분석 추가
+                ('ten_section', self._analyze_ten_section_patterns),  # 10구간 분석 추가 (DB컬럼: ten_section_patterns)
                 ('arithmetic_sequence', self._analyze_arithmetic_sequence),       # 등차수열 분석 추가
                 ('geometric_sequence', self._analyze_geometric_sequence),          # 등비수열 분석 추가
                 ('alternating_odd_even', self._analyze_alternating_odd_even_patterns),  # 홀짝 교차 패턴 분석 추가
                 ('sum_multiple', self._analyze_sum_multiple_patterns)                 # 합계 배수 패턴 분석 추가
             ]
             
+            logging.info(f"\n📊 총 {len(pattern_analyses) + 1}개 패턴 분석 진행:")
+            
             for pattern_name, analysis_func in pattern_analyses:
                 try:
+                    logging.info(f"  - {pattern_name} 패턴 분석 중...")
                     patterns[pattern_name] = analysis_func(winning_numbers)
+                    successful_patterns.append(pattern_name)
                 except Exception as e:
-                    logging.error(f"{pattern_name} 패턴 분석 실패: {str(e)}")
+                    logging.error(f"    ❌ {pattern_name} 패턴 분석 실패: {str(e)}")
                     patterns[pattern_name] = {}
+                    failed_patterns.append(pattern_name)
             
             # 16. 분산도 패턴 분석
-            patterns['dispersion'] = self._analyze_dispersion_patterns(winning_numbers)
+            try:
+                logging.info("  - dispersion 패턴 분석 중...")
+                patterns['dispersion'] = self._analyze_dispersion_patterns(winning_numbers)
+                successful_patterns.append('dispersion')
+            except Exception as e:
+                logging.error(f"    ❌ dispersion 패턴 분석 실패: {str(e)}")
+                patterns['dispersion'] = {}
+                failed_patterns.append('dispersion')
+            
+            logging.info(f"\n📈 분석 결과 요약:")
+            logging.info(f"  - 성공: {len(successful_patterns)}개")
+            logging.info(f"  - 실패: {len(failed_patterns)}개")
+            
+            if failed_patterns:
+                logging.info(f"  - 실패한 패턴: {', '.join(failed_patterns)}")
             
             if any(patterns.values()):
                 self.db_manager.save_pattern_analysis(round_num, patterns)
@@ -676,7 +702,7 @@ class PatternManager:
 
         # 11. 10구간 분석 결과 추가
         logging.info("\n11. 10구간 분석 결과:")
-        if patterns.get('ten_section_distribution'):
+        if patterns.get('ten_section'):
             sections = {
                 'section_1': '[구간 1-10]',
                 'section_2': '[구간 11-20]',
@@ -685,7 +711,7 @@ class PatternManager:
                 'section_5': '[구간 41-45]'
             }
             for section, name in sections.items():
-                data = patterns['ten_section_distribution'].get(section, {})
+                data = patterns['ten_section'].get(section, {})
                 logging.info(f"   {name}")
                 total_numbers = sum(count * pct/100 for count, pct in data.items())
                 max_pattern = max(data.items(), key=lambda x: x[1], default=(0, 0))
