@@ -73,7 +73,7 @@ filters:
     max_gap:
       max_allowed_gap: 30
     multiple:
-      global_threshold: 1.5
+      global_threshold: 1.0
       multiples:
         2:
         - 0

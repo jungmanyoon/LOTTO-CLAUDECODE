@@ -64,7 +64,7 @@ filters:
   section: false
   sum_range: true
   ten_section: false
-global_probability_threshold: 1.0
+global_probability_threshold: 1.5
 logging:
   log_excluded_patterns: true
   statistics_interval: 50

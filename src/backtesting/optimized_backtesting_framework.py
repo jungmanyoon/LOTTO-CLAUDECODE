@@ -39,6 +39,7 @@ from ..probabilistic.bayesian_inference import BayesianFilter as BayesianInferen
 from ..advanced.fractal_pattern_analyzer import FractalPatternAnalyzer
 from ..utils.singleton import SingletonMeta
 from ..utils.counter_manager import get_counter_manager
+from ..core.performance_stats_manager import PerformanceStatsManager
 
 
 class ModelCache:
@@ -163,6 +164,9 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         # 카운터 매니저
         self.counter_manager = get_counter_manager()
         
+        # 성능 통계 매니저
+        self.performance_stats_manager = PerformanceStatsManager()
+        
         self._initialized = True
         logging.info(f"최적화된 백테스팅 프레임워크 초기화 완료 (싱글톤, 병렬 처리: {self.n_jobs} 코어)")
     
@@ -248,8 +252,9 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         # 카운터 상태 로깅
         self.counter_manager.log_status()
         
-        # 결과 저장
+        # 결과 저장 (JSON + DB)
         self._save_backtest_results(results)
+        self._save_to_database(results)
         
         # 결과 요약 출력
         self._print_backtest_summary(results)
@@ -815,6 +820,74 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             logging.info(f"\n백테스팅 결과 저장: {filename}")
         except Exception as e:
             logging.error(f"결과 저장 중 오류: {str(e)}")
+    
+    def _save_to_database(self, results: Dict[str, Any]):
+        """백테스팅 결과를 데이터베이스에 저장"""
+        try:
+            # 상세 예측 결과를 PerformanceStatsManager가 기대하는 형식으로 변환
+            formatted_results = self._format_results_for_db(results)
+            
+            # DB에 저장
+            session_id = self.performance_stats_manager.save_backtest_results(formatted_results)
+            
+            if session_id > 0:
+                logging.info(f"백테스팅 결과 DB 저장 완료 (세션 ID: {session_id})")
+            else:
+                logging.warning("백테스팅 결과 DB 저장에 실패했습니다")
+                
+        except Exception as e:
+            logging.error(f"백테스팅 결과 DB 저장 중 오류: {str(e)}")
+    
+    def _format_results_for_db(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        """DB 저장을 위해 결과 형식 변환"""
+        formatted_predictions = []
+        
+        for pred_result in results.get('predictions', []):
+            round_num = pred_result.get('round')
+            actual_numbers = pred_result.get('actual_numbers', [])
+            
+            # 각 모델의 예측과 매치 결과를 통합
+            formatted_pred = {
+                'round': round_num,
+                'winning_numbers': actual_numbers,
+                'matches': {}
+            }
+            
+            # 예측 결과와 매치 결과를 결합
+            predictions = pred_result.get('predictions', {})
+            matches = pred_result.get('matches', {})
+            
+            for model_name in predictions.keys():
+                model_matches = []
+                
+                if model_name in matches:
+                    # 기존 매치 정보 사용
+                    for match_info in matches[model_name]:
+                        model_matches.append({
+                            'predicted_numbers': match_info.get('prediction', []),
+                            'match_count': match_info.get('match_count', 0),
+                            'contaminated': match_info.get('contaminated', False),
+                            'filter_passed': True  # 기본값
+                        })
+                else:
+                    # 예측만 있고 매치 정보가 없는 경우
+                    for pred in predictions[model_name]:
+                        model_matches.append({
+                            'predicted_numbers': pred,
+                            'match_count': 0,
+                            'contaminated': False,
+                            'filter_passed': True
+                        })
+                
+                formatted_pred['matches'][model_name] = model_matches
+            
+            formatted_predictions.append(formatted_pred)
+        
+        # 기존 결과에 형식화된 예측 추가
+        formatted_results = results.copy()
+        formatted_results['predictions'] = formatted_predictions
+        
+        return formatted_results
     
     def _print_backtest_summary(self, results: Dict[str, Any]):
         """백테스팅 결과 요약 출력"""

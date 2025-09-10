@@ -2402,57 +2402,62 @@ def main():
             # 주의: 자동 조정 시스템에서도 백테스팅이 실행되므로 중복 방지
         # ML만 수행 모드
         if args.ml_only:
+            pass  # ML만 수행 모드에서는 별도 처리 없음
 
         # ================================================================
         # 백테스팅 - 필터링+ML 통합 검증 (최적화)
         # ================================================================
-            if not args.skip_backtest and not auto_adjustment:
-                logging.info("\n" + "="*60)
-                logging.info("[백테스팅] ML/AI 모델 성능 최종 검증...")
-                logging.info("="*60)
-                logging.info("[PIN] 참고: 자동 조정 시스템이 활성화되면 백테스팅이 자동 실행됩니다.")
+        # 🔧 수정: auto_adjustment와 관계없이 백테스팅 항상 실행 (DB 저장을 위해)
+        if not args.skip_backtest:
+            logging.info("\n" + "="*60)
+            logging.info("[백테스팅] ML/AI 모델 성능 최종 검증...")
+            logging.info("="*60)
+            if auto_adjustment:
+                logging.info("[INFO] 자동 조정 모드이지만 성능 통계를 위해 백테스팅을 실행합니다.")
+            else:
+                logging.info("[INFO] 백테스팅 결과가 자동으로 DB에 저장됩니다.")
+            
+            try:
+                backtesting_framework = OptimizedBacktestingFramework(db_manager, enable_fractal=False)
+                backtest_results = backtesting_framework.run_backtest(
+                    start_round=max(1, latest_round - 50),
+                    end_round=latest_round - 1,  # 현재 회차 제외 (데이터 누출 방지)
+                    window_size=100
+                )
+                logging.info("백테스팅 최종 검증 완료")
                 
-                try:
-                    backtesting_framework = OptimizedBacktestingFramework(db_manager, enable_fractal=False)
-                    backtest_results = backtesting_framework.run_backtest(
-                        start_round=max(1, latest_round - 50),
-                        end_round=latest_round - 1,  # 현재 회차 제외 (데이터 누출 방지)
-                        window_size=100
-                    )
-                    logging.info("백테스팅 최종 검증 완료")
-                    
-                    # 자동 조정 시스템 V2: 백테스팅 성능에 따라 임계값 조정
-                    if auto_adjustment and backtest_results:
-                        try:
-                            # 성능 점수 계산 (평균 일치 개수 기반)
-                            metrics = backtest_results.get('performance_metrics', {})
-                            total_score = 0
-                            model_count = 0
+                # 자동 조정 시스템 V2: 백테스팅 성능에 따라 임계값 조정
+                if auto_adjustment and backtest_results:
+                    try:
+                        # 성능 점수 계산 (평균 일치 개수 기반)
+                        metrics = backtest_results.get('performance_metrics', {})
+                        total_score = 0
+                        model_count = 0
+                        
+                        for model_name in ['lstm', 'ensemble', 'monte_carlo']:
+                            model_perf = metrics.get('model_performance', {}).get(model_name, {})
+                            if model_perf:
+                                avg_matches = model_perf.get('avg_matches', 0)
+                                # 2개 일치를 1.0으로 정규화
+                                normalized = min(1.0, avg_matches / 2.0)
+                                total_score += normalized
+                                model_count += 1
+                        
+                        if model_count > 0:
+                            performance_score = total_score / model_count
                             
-                            for model_name in ['lstm', 'ensemble', 'monte_carlo']:
-                                model_perf = metrics.get('model_performance', {}).get(model_name, {})
-                                if model_perf:
-                                    avg_matches = model_perf.get('avg_matches', 0)
-                                    # 2개 일치를 1.0으로 정규화
-                                    normalized = min(1.0, avg_matches / 2.0)
-                                    total_score += normalized
-                                    model_count += 1
+                            logging.info(f"\n[자동 조정 V2] 백테스팅 성능 점수: {performance_score:.3f}")
                             
-                            if model_count > 0:
-                                performance_score = total_score / model_count
+                            # 임계값 자동 조정
+                            adjustment_result = auto_adjustment.analyze_and_adjust(performance_score)
+                            
+                            if adjustment_result['adjusted']:
+                                logging.info("\n🔄 필터링 재실행 필요")
+                                logging.info("  다음 실행 시 새로운 임계값이 적용됩니다.")
+                                logging.info(f"  변경: {adjustment_result['current_threshold']}% → {adjustment_result['optimal_threshold']}%")
                                 
-                                logging.info(f"\n[자동 조정 V2] 백테스팅 성능 점수: {performance_score:.3f}")
-                                
-                                # 임계값 자동 조정
-                                adjustment_result = auto_adjustment.analyze_and_adjust(performance_score)
-                                
-                                if adjustment_result['adjusted']:
-                                    logging.info("\n🔄 필터링 재실행 필요")
-                                    logging.info("  다음 실행 시 새로운 임계값이 적용됩니다.")
-                                    logging.info(f"  변경: {adjustment_result['current_threshold']}% → {adjustment_result['optimal_threshold']}%")
-                                    
-                        except Exception as e:
-                            logging.error(f"자동 조정 실행 실패: {e}")
+                    except Exception as e:
+                        logging.error(f"자동 조정 실행 실패: {e}")
                     
                     # 성능 모니터링 대시보드 업데이트
                     if args.monitoring:
@@ -2541,9 +2546,9 @@ def main():
                                     logging.info(f"앙상블 모델 최적화 건너뜀: {optimization_result.get('reason', 'unknown')}")
                         except Exception as e:
                             logging.error(f"하이퍼파라미터 튜닝 실패: {str(e)}")
-                    
-                except Exception as e:
-                    logging.error(f"백테스팅 실패: {str(e)}")
+                
+            except Exception as e:
+                logging.error(f"백테스팅 실패: {str(e)}")
         
         # 최종 예측 번호는 모든 작업 완료 후 마지막에 생성
         
@@ -2772,8 +2777,13 @@ def main():
             latest_round = db_manager.get_last_round()
             next_round = latest_round + 1
             
-            # 예측 저장
-            if 'prediction_tracker' in locals():
+            # 예측 저장 (PredictionTracker 확실히 초기화)
+            try:
+                if 'prediction_tracker' not in locals():
+                    from src.core.prediction_tracker import PredictionTracker
+                    prediction_tracker = PredictionTracker()
+                    logging.info("예측 저장을 위해 PredictionTracker를 초기화했습니다.")
+                
                 success = prediction_tracker.save_predictions(next_round, predictions_to_save)
                 if success:
                     logging.info(f"\n[OK] {next_round}회차 예측이 저장되었습니다.")
@@ -2781,6 +2791,8 @@ def main():
                     logging.info(f"   JSON 백업: data/predictions/{datetime.now().year}/week_{next_round}.json")
                 else:
                     logging.warning(f"{next_round}회차 예측 저장 실패 (이미 존재할 수 있음)")
+            except Exception as e:
+                logging.error(f"예측 저장 중 내부 오류: {e}")
         except Exception as e:
             logging.error(f"예측 저장 중 오류: {e}")
         
