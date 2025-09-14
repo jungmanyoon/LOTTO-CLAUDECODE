@@ -51,22 +51,30 @@ class AutoScheduler:
     
     def _setup_schedule(self):
         """스케줄 작업 설정"""
-        # 매시 정각: 새 회차 확인
-        schedule.every().hour.at(":00").do(self._check_new_round)
-        
+        # 토요일 저녁 8시 45분부터 9시 30분까지 1분마다 새 회차 확인
+        # (로또 추첨 시간: 토요일 저녁 8시 45분)
+        for minute in range(45, 60):  # 8시 45분 ~ 8시 59분
+            schedule.every().saturday.at(f"20:{minute:02d}").do(self._check_new_round_intensive)
+        for minute in range(0, 31):  # 9시 00분 ~ 9시 30분 (여유있게)
+            schedule.every().saturday.at(f"21:{minute:02d}").do(self._check_new_round_intensive)
+
+        # 다른 날은 3시간마다 확인 (토요일 제외)
+        schedule.every(3).hours.do(self._check_new_round_if_not_saturday)
+
         # 매일 오전 9시: 일일 예측 실행
         schedule.every().day.at("09:00").do(self._run_daily_prediction)
-        
+
         # 매주 일요일 오전 3시: 시스템 최적화
         schedule.every().sunday.at("03:00").do(self._run_weekly_optimization)
-        
+
         # 30분마다: 시스템 상태 체크
         schedule.every(30).minutes.do(self._health_check)
-        
+
         # 매일 자정: 로그 정리
         schedule.every().day.at("00:00").do(self._cleanup_logs)
-        
+
         logging.info("[AutoScheduler] 스케줄 설정 완료")
+        logging.info("[AutoScheduler] 토요일 20:45 ~ 21:30 집중 모니터링 활성화")
     
     def register_callback(self, event_type: str, callback: Callable):
         """이벤트 콜백 등록"""
@@ -139,7 +147,98 @@ class AutoScheduler:
             self._update_job_status(job_name, False)
         
         return False
-    
+
+    def _check_new_round_intensive(self):
+        """토요일 집중 모니터링 - 당첨번호 확인 후 자동 실행"""
+        job_name = 'check_new_round_intensive'
+        current_time = datetime.now()
+        logging.info(f"[AutoScheduler] 🎯 토요일 집중 모니터링 시작 ({current_time.strftime('%H:%M:%S')})")
+
+        try:
+            # 새 회차 확인
+            latest_web_round = self._fetch_latest_round_from_web()
+
+            if latest_web_round and self.db_manager:
+                current_db_round = self.db_manager.get_last_round()
+
+                if latest_web_round > current_db_round:
+                    logging.warning(f"[AutoScheduler] 🎉 새 당첨번호 발표! {current_db_round} → {latest_web_round}")
+
+                    # 새 회차 데이터 수집
+                    if self._fetch_and_save_new_round(latest_web_round):
+                        logging.info(f"[AutoScheduler] ✅ {latest_web_round}회차 당첨번호 저장 완료!")
+
+                        # 콜백 트리거 - 새 회차 감지
+                        if self.callbacks['new_round_detected']:
+                            self.callbacks['new_round_detected'](latest_web_round)
+
+                        # 자동 재필터링 실행
+                        logging.info("[AutoScheduler] 🔄 자동 재필터링 시작...")
+                        if self.callbacks['refilter_required']:
+                            self.callbacks['refilter_required']('new_round', latest_web_round)
+
+                        # 자동 예측 생성 (토요일 밤에만)
+                        if current_time.hour >= 20:  # 저녁 8시 이후
+                            logging.info("[AutoScheduler] 🎲 새 회차 예측 생성 시작...")
+                            self._run_prediction_for_new_round(latest_web_round + 1)
+
+                        # 최적화 콜백 실행
+                        if self.callbacks['optimization_complete']:
+                            self.callbacks['optimization_complete']()
+
+                        self._update_job_status(job_name, True)
+
+                        # 성공 시 30분 대기 후 다시 확인 (중복 실행 방지)
+                        logging.info("[AutoScheduler] 당첨번호 업데이트 완료. 30분 후 재확인.")
+                        return True
+                else:
+                    logging.info(f"[AutoScheduler] 아직 {latest_web_round}회차 당첨번호 미발표")
+
+            self._update_job_status(job_name, True)
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 집중 모니터링 실패: {e}")
+            self._update_job_status(job_name, False)
+
+        return False
+
+    def _check_new_round_if_not_saturday(self):
+        """토요일이 아닐 때만 새 회차 확인"""
+        if datetime.now().weekday() != 5:  # 5 = Saturday
+            return self._check_new_round()
+        else:
+            logging.info("[AutoScheduler] 토요일은 집중 모니터링 시간에만 확인")
+            return False
+
+    def _run_prediction_for_new_round(self, next_round: int):
+        """새 회차를 위한 예측 생성"""
+        try:
+            logging.info(f"[AutoScheduler] {next_round}회차 예측 생성 중...")
+
+            # DataCollector를 사용하여 새 예측 생성
+            from src.data_collector import DataCollector
+            collector = DataCollector(self.db_manager)
+
+            # main.py의 예측 로직 실행
+            result = subprocess.run(
+                ['python', 'main.py', '--skip-fetch', '--ml-only'],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                timeout=300  # 5분 타임아웃
+            )
+
+            if result.returncode == 0:
+                logging.info(f"[AutoScheduler] ✅ {next_round}회차 예측 생성 완료!")
+
+                # 예측 완료 알림
+                self._notify_prediction_complete()
+            else:
+                logging.error(f"[AutoScheduler] 예측 생성 실패: {result.stderr}")
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 예측 생성 오류: {e}")
+
     def _fetch_latest_round_from_web(self) -> Optional[int]:
         """웹에서 최신 회차 번호 가져오기"""
         try:

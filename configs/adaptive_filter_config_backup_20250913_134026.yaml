@@ -23,7 +23,7 @@ dynamic_criteria:
     min_average: 8.0
   consecutive:
     max_consecutive: 5
-    min_gap: 1
+    min_gap: 0
   last_digit:
     min_same_last_digits: 5
   max_gap:
@@ -81,7 +81,7 @@ filters:
   section: false
   sum_range: true
   ten_section: true
-global_probability_threshold: 1.0
+global_probability_threshold: 0.5
 logging:
   log_excluded_patterns: true
   statistics_interval: 25

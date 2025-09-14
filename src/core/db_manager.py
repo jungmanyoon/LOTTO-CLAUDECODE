@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import logging
 import sqlite3
 import json
+import threading
 from .db_structure import DatabasePaths
 from .specialized_databases import (
     LottoNumbersDB,
@@ -13,25 +14,47 @@ from .specialized_databases import (
 from ..utils.constants import LottoConstants
 
 class DatabaseManager:
-    """통합 데이터베이스 관리자"""
+    """통합 데이터베이스 관리자 (Singleton Pattern)"""
+    
+    _instance = None
+    _lock = threading.Lock()
+    _initialized = False
+    
+    def __new__(cls, base_dir: str = 'data'):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(DatabaseManager, cls).__new__(cls)
+                    logging.info("[SINGLETON] DatabaseManager 인스턴스 생성")
+        return cls._instance
     
     def __init__(self, base_dir: str = 'data'):
-        self.paths = DatabasePaths(base_dir)
+        # 이미 초기화되었으면 재초기화 방지
+        if DatabaseManager._initialized:
+            return
         
-        # 각 데이터베이스 초기화
-        self.lotto_db = LottoNumbersDB(self.paths.lotto_numbers)
-        self.combinations_db = CombinationsDB(self.paths.combinations)
-        self.patterns_db = PatternsDB(self.paths.patterns)
-        
-        # 기존 필터 데이터베이스 초기화
-        self.filter_dbs: Dict[str, FilterDB] = {
-            filter_type: FilterDB(path)
-            for filter_type, path in self.paths.filter_paths.items()
-        }
-        
-        # 새로운 필터 데이터베이스 초기화 - 수정된 부분
-        self._initialize_new_filter_dbs()
-        logging.info("데이터베이스 매니저 초기화 완료")
+        with DatabaseManager._lock:
+            if DatabaseManager._initialized:
+                return
+            
+            self.paths = DatabasePaths(base_dir)
+            
+            # 각 데이터베이스 초기화
+            self.lotto_db = LottoNumbersDB(self.paths.lotto_numbers)
+            self.combinations_db = CombinationsDB(self.paths.combinations)
+            self.patterns_db = PatternsDB(self.paths.patterns)
+            
+            # 기존 필터 데이터베이스 초기화
+            self.filter_dbs: Dict[str, FilterDB] = {
+                filter_type: FilterDB(path)
+                for filter_type, path in self.paths.filter_paths.items()
+            }
+            
+            # 새로운 필터 데이터베이스 초기화 - 수정된 부분
+            self._initialize_new_filter_dbs()
+            
+            DatabaseManager._initialized = True
+            logging.info("[SINGLETON] 데이터베이스 매니저 초기화 완료 (단일 인스턴스)")
 
     def _initialize_new_filter_dbs(self):
         """새로운 필터 데이터베이스 초기화 - 개선된 동시성 처리"""
@@ -104,6 +127,10 @@ class DatabaseManager:
     def insert_lotto_numbers(self, round_num: int, numbers: List[int], draw_date: str) -> bool:
         """로또 번호 데이터 삽입"""
         return self.lotto_db.insert_numbers(round_num, numbers, draw_date)
+    
+    def insert_lotto_numbers_with_bonus(self, round_num: int, numbers: List[int], bonus: int, draw_date: str) -> bool:
+        """로또 번호와 보너스 번호 데이터 삽입"""
+        return self.lotto_db.insert_numbers_with_bonus(round_num, numbers, bonus, draw_date)
 
     def get_all_numbers(self) -> List[Tuple[int, str, str]]:
         """모든 로또 번호 데이터 조회"""
@@ -409,3 +436,55 @@ class DatabaseManager:
         except Exception as e:
             logging.error(f"필터 데이터베이스 생성 중 오류 발생: {str(e)}")
             return None
+
+    def get_numbers_with_bonus(self) -> List[Tuple[int, Tuple[int, ...]]]:
+        """보너스 번호를 포함한 모든 당첨번호 조회
+        
+        Returns:
+            List[Tuple[int, Tuple[int, ...]]]: (회차, (번호1,번호2,...,번호6,보너스)) 튜플 리스트
+        """
+        return self.lotto_db.get_numbers_with_bonus()
+    
+    def get_latest_round(self) -> int:
+        """가장 최신 회차 번호 조회
+        
+        Returns:
+            int: 최신 회차 번호
+        """
+        return self.lotto_db.get_latest_round()
+    
+    def close_all_connections(self):
+        """모든 데이터베이스 연결 종료
+        
+        각 데이터베이스의 연결을 안전하게 종료합니다.
+        """
+        try:
+            # 각 데이터베이스 연결 종료
+            if hasattr(self, 'lotto_db'):
+                self.lotto_db = None
+            if hasattr(self, 'combinations_db'):
+                self.combinations_db = None
+            if hasattr(self, 'patterns_db'):
+                self.patterns_db = None
+            
+            # 필터 데이터베이스 연결 종료
+            if hasattr(self, 'filter_dbs'):
+                for filter_name in self.filter_dbs:
+                    self.filter_dbs[filter_name] = None
+                self.filter_dbs.clear()
+            
+            logging.info("모든 데이터베이스 연결이 종료되었습니다.")
+        except Exception as e:
+            logging.error(f"데이터베이스 연결 종료 중 오류: {e}")
+    
+    @classmethod
+    def reset_instance(cls):
+        """싱글톤 인스턴스 리셋 (테스트 용도)"""
+        with cls._lock:
+            if cls._instance:
+                # 기존 연결 종료
+                if hasattr(cls._instance, 'close_connections'):
+                    cls._instance.close_connections()
+                cls._instance = None
+                cls._initialized = False
+                logging.info("[SINGLETON] DatabaseManager 인스턴스 리셋 완료")

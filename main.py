@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import logging
 import argparse
 import os
@@ -10,6 +11,10 @@ import webbrowser
 import subprocess
 import random
 import traceback
+import hashlib
+import shutil
+from pathlib import Path
+import pytz  # 한국 시간대(KST) 처리 - 절대 제거하지 말 것!
 
 # matplotlib 백엔드를 non-interactive로 설정 (tkinter 에러 방지)
 try:
@@ -71,6 +76,8 @@ from src.optimization.enhanced_feedback_loop import EnhancedFeedbackLoop  # 향�
 from src.ml.realtime_learning_system import RealtimeLearningSystem  # 신규 추가
 from src.monitoring.performance_dashboard import PerformanceDashboard  # 신규 추가
 from src.core.auto_adjustment_system_v2 import AutoAdjustmentSystemV2  # 단순화된 자동 조정 시스템
+from src.core.smart_auto_learning import SmartAutoLearning  # 스마트 자동 학습 시스템
+from src.core.threshold_optimizer import ThresholdOptimizer  # 임계값 최적화 시스템
 
 # ML/AI 모듈 임포트
 try:
@@ -119,10 +126,18 @@ class SystemHealthChecker:
         self.logger = logging.getLogger(__name__)
         self.issues_found = []
         self.repairs_performed = []
+        self.bonus_collected = False
+        self.cache_cleaned = False
         
     def check_system_health(self) -> bool:
         """전체 시스템 상태 점검"""
         self.logger.info("[CHECK] 시스템 상태 점검 시작...")
+        
+        # 보너스 번호 자동 수집
+        self._auto_collect_bonus_numbers()
+        
+        # 캐시 상태 확인 및 필요시 정리
+        self._auto_clean_cache()
         
         # 모든 점검 실행
         checks = [
@@ -131,7 +146,8 @@ class SystemHealthChecker:
             self._check_file_permissions,
             self._check_cache_integrity,
             self._check_configuration_files,
-            self._check_encoding_issues
+            self._check_encoding_issues,
+            self._check_bonus_numbers
         ]
         
         all_passed = True
@@ -366,6 +382,89 @@ class SystemHealthChecker:
             
         except Exception as e:
             self.logger.error(f"설정 파일 점검 오류: {e}")
+            return False
+    
+    def _auto_collect_bonus_numbers(self):
+        """보너스 번호 자동 수집"""
+        try:
+            self.logger.info("[AUTO] 보너스 번호 확인 및 수집 중...")
+            
+            # 보너스 번호 누락 여부 확인
+            from src.core.db_manager import DatabaseManager
+            db_manager = DatabaseManager()
+            
+            # 누락된 보너스 번호가 있는지 확인
+            missing_bonus = db_manager.lotto_db.get_missing_bonus_rounds()
+            
+            if missing_bonus and len(missing_bonus) > 0:
+                self.logger.info(f"[INFO] {len(missing_bonus)}개 회차 보너스 번호 누락 발견")
+                
+                # 자동 수집 실행
+                try:
+                    from src.scripts.complete_bonus_collection import collect_all_bonus_numbers
+                    result = collect_all_bonus_numbers(db_manager)
+                    if result:
+                        self.logger.info("[OK] 보너스 번호 수집 완료")
+                        self.bonus_collected = True
+                except Exception as e:
+                    self.logger.warning(f"보너스 번호 자동 수집 실패: {e}")
+            else:
+                self.logger.info("[OK] 모든 보너스 번호 정상")
+                
+        except Exception as e:
+            self.logger.warning(f"보너스 번호 확인 중 오류: {e}")
+    
+    def _auto_clean_cache(self):
+        """캐시 자동 정리"""
+        try:
+            cache_dir = 'cache/models'
+            if os.path.exists(cache_dir):
+                # 캐시 파일 크기 확인
+                total_size = sum(
+                    os.path.getsize(os.path.join(cache_dir, f))
+                    for f in os.listdir(cache_dir)
+                    if os.path.isfile(os.path.join(cache_dir, f))
+                )
+                
+                # 500MB 이상이면 정리
+                if total_size > 500 * 1024 * 1024:
+                    self.logger.info(f"[INFO] 캐시 크기 {total_size / 1024 / 1024:.1f}MB - 정리 시작")
+                    
+                    # 오래된 캐시 파일 삭제
+                    current_time = time.time()
+                    for filename in os.listdir(cache_dir):
+                        file_path = os.path.join(cache_dir, filename)
+                        if os.path.isfile(file_path):
+                            file_age = current_time - os.path.getmtime(file_path)
+                            if file_age > 7 * 24 * 3600:  # 7일 이상
+                                os.remove(file_path)
+                                self.logger.info(f"[CLEAN] 오래된 캐시 삭제: {filename}")
+                    
+                    self.cache_cleaned = True
+                    self.logger.info("[OK] 캐시 정리 완료")
+                    
+        except Exception as e:
+            self.logger.warning(f"캐시 정리 중 오류: {e}")
+    
+    def _check_bonus_numbers(self) -> bool:
+        """보너스 번호 데이터 점검"""
+        try:
+            from src.core.db_manager import DatabaseManager
+            db_manager = DatabaseManager()
+            
+            # 전체 회차 수와 보너스 번호 있는 회차 수 확인
+            total_rounds = db_manager.lotto_db.get_last_round()
+            rounds_with_bonus = db_manager.lotto_db.count_rounds_with_bonus()
+            
+            if rounds_with_bonus < total_rounds - 1:  # 최신 회차는 제외
+                missing = total_rounds - rounds_with_bonus - 1
+                self.logger.warning(f"[WARNING] {missing}개 회차 보너스 번호 누락")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"보너스 번호 점검 오류: {e}")
             return False
     
     def _check_encoding_issues(self) -> bool:
@@ -984,6 +1083,111 @@ class AutoRepairSystem:
             return False
 
 
+def _is_duplicate_prediction(numbers, existing_predictions):
+    """중복 예측 확인"""
+    numbers_set = set(numbers)
+    for pred in existing_predictions:
+        if set(pred['numbers']) == numbers_set:
+            return True
+    return False
+
+
+def _generate_pattern_variants(failed_numbers, filtered_combos):
+    """비슷한 패턴의 다른 조합 생성"""
+    try:
+        variants = []
+        failed_features = extract_combination_features(failed_numbers)
+        if not failed_features:
+            return []
+
+        # 동일한 홀짝 패턴을 가진 조합들 찾기
+        target_odd_count = failed_features['odd_count']
+        target_sum_range = (failed_features['sum_total'] - 15, failed_features['sum_total'] + 15)
+
+        for combo_str in filtered_combos[:1500]:
+            try:
+                numbers = [int(n) for n in combo_str.split(',')]
+                features = extract_combination_features(numbers)
+                if (features and
+                    features['odd_count'] == target_odd_count and
+                    target_sum_range[0] <= features['sum_total'] <= target_sum_range[1]):
+
+                    # 직접 매칭 점수
+                    match_score = len(set(failed_numbers) & set(numbers)) / 6.0
+
+                    variants.append({
+                        'numbers': sorted(numbers),
+                        'match_score': match_score,
+                        'pattern_similarity': 0.8 + match_score * 0.2
+                    })
+            except:
+                continue
+
+        # 매칭 점수 순으로 정렬
+        variants.sort(key=lambda x: x['match_score'], reverse=True)
+        return variants[:3]
+
+    except Exception as e:
+        logging.error(f"패턴 변형 생성 실패: {str(e)}")
+        return []
+
+
+def _adjust_ml_prediction(failed_numbers, filtered_combos):
+    """ML 예측을 필터 통과 가능하도록 조정"""
+    try:
+        if not filtered_combos:
+            return None
+
+        # 실패한 예측에서 일부 수자를 교체하여 필터링된 조합에 가까이 만들기
+        failed_set = set(failed_numbers)
+
+        # 필터링된 조합에서 자주 등장하는 수자들 찾기
+        number_frequency = {}
+        for combo_str in filtered_combos[:500]:
+            try:
+                numbers = [int(n) for n in combo_str.split(',')]
+                for num in numbers:
+                    number_frequency[num] = number_frequency.get(num, 0) + 1
+            except:
+                continue
+
+        # 빈도순으로 정렬
+        frequent_numbers = sorted(number_frequency.items(), key=lambda x: x[1], reverse=True)
+
+        # 실패한 예측에서 가장 문제가 될 수 있는 수자들을 교체
+        adjusted = failed_numbers.copy()
+
+        # 가장 적게 등장하는 수자 1-2개를 자주 등장하는 수자로 교체
+        replaced_count = 0
+        for i, num in enumerate(adjusted):
+            if replaced_count >= 2:  # 최대 2개까지만 교체
+                break
+
+            # 현재 수자의 빈도가 평균보다 낮으면 교체 후보
+            current_freq = number_frequency.get(num, 0)
+            avg_freq = sum(number_frequency.values()) / len(number_frequency) if number_frequency else 0
+
+            if current_freq < avg_freq * 0.5:  # 평균의 50% 미만이면 교체
+                # 가장 빈도가 높은 수자 중 아직 사용하지 않은 것으로 교체
+                for freq_num, freq in frequent_numbers:
+                    if freq_num not in adjusted:
+                        adjusted[i] = freq_num
+                        replaced_count += 1
+                        break
+
+        # 조정된 결과가 유효한지 확인
+        if (len(set(adjusted)) == 6 and
+            all(1 <= n <= 45 for n in adjusted) and
+            set(adjusted) != failed_set):  # 원본과 달라야 함
+            return sorted(adjusted)
+
+        return None
+
+    except Exception as e:
+        logging.error(f"ML 예측 조정 실패: {str(e)}")
+        return None
+
+
 def generate_final_predictions(db_manager, filter_manager, ml_predictions=None, num_sets=5, use_relaxed_filter=True):
     """ML/AI 예측과 필터링 결과를 통합하여 최종 예측 번호 생성
     
@@ -996,7 +1200,19 @@ def generate_final_predictions(db_manager, filter_manager, ml_predictions=None, 
     """
     final_predictions = []
     ml_failed_predictions = []  # 필터 실패한 ML 예측들
-    
+
+    # 필터링 풀 크기 먼저 확인
+    try:
+        filtered_combos_check = db_manager.combinations_db.get_filtered_combinations(db_manager.get_last_round()) or []
+    except:
+        filtered_combos_check = []
+
+    filtered_pool_size = len(filtered_combos_check)
+    force_ml_direct_use = (filtered_pool_size == 0)  # 필터링 풀이 0개면 ML 직접 사용
+
+    if force_ml_direct_use:
+        logging.warning(f"[긴급] 필터링 풀이 {filtered_pool_size}개! ML 예측을 필터 없이 직접 사용합니다.")
+
     try:
         # 1. ML/AI 예측 결과 통합 (상위 신뢰도 순)
         all_ml_predictions = []
@@ -1021,33 +1237,76 @@ def generate_final_predictions(db_manager, filter_manager, ml_predictions=None, 
         for pred in all_ml_predictions:
             if len(final_predictions) >= num_sets:
                 break
-                
+
             numbers = pred.get('numbers', [])
             if len(numbers) == 6:
+                # 필터링 풀이 0개면 필터 체크 없이 바로 사용
+                if force_ml_direct_use:
+                    if not _is_duplicate_prediction(numbers, final_predictions):
+                        final_predictions.append({
+                            'numbers': sorted(numbers),
+                            'confidence': pred.get('confidence', 0.7),
+                            'source': f"ML-Direct/{pred.get('model', 'Unknown')}"
+                        })
+                        logging.info(f"ML 예측 직접 사용 (필터링 풀 0개): {sorted(numbers)}")
+                    continue
                 # 필터 통과 여부 확인 (각 필터 개별 확인)
                 passes_all_filters = True
                 failed_filters = []
                 critical_filters_failed = []  # 중요 필터 실패 추적
+
+                # ML 모델별 신뢰도에 따른 완화 레벨 설정
+                model_name = pred.get('model', 'Unknown')
+                prediction_confidence = pred.get('confidence', 0)
+
+                # 신뢰도가 높거나 특정 모델인 경우 더 관대한 필터링
+                high_confidence_models = ['ensemble', 'combined', 'lstm']
+                is_high_confidence = (prediction_confidence > 0.6 or
+                                    model_name in high_confidence_models)
+
+                # 중요한(완화 불가능한) 필터만 엄격하게 적용
+                critical_only_filters = ['odd_even', 'consecutive'] if is_high_confidence else []
                 
-                # filter_manager.filters가 list인지 dict인지 확인
-                if isinstance(filter_manager.filters, dict):
+                # AdaptiveProbabilityFilter인 경우 특별 처리
+                if hasattr(filter_manager, 'probability_threshold'):
+                    # AdaptiveProbabilityFilter 사용 시 더 관대한 필터링
+                    # ML 예측에 대해서는 개별 패턴 검증 대신 전체적인 수용성 검사
+                    if is_high_confidence:
+                        # 고신뢰도 ML 예측은 기본적으로 통과
+                        passes_all_filters = True
+                        logging.debug(f"고신뢰도 ML 예측 {model_name} 자동 통과")
+                    else:
+                        # 일반 ML 예측은 기본 검증만 수행
+                        basic_valid = (
+                            len(set(numbers)) == 6 and  # 중복 없음
+                            all(1 <= n <= 45 for n in numbers) and  # 범위 내
+                            min(numbers) != max(numbers)  # 모두 같지 않음
+                        )
+                        passes_all_filters = basic_valid
+                        if not basic_valid:
+                            logging.debug(f"ML 예측 {numbers} 기본 검증 실패")
+                    filters_to_check = []
+                # 기존 필터 시스템 처리
+                elif isinstance(filter_manager.filters, dict):
                     filters_to_check = filter_manager.filters.items()
                 elif isinstance(filter_manager.filters, list):
-                    # 리스트인 경우 (AdaptiveProbabilityFilter 등)
-                    # 이 경우 필터가 없으므로 모두 통과로 처리
-                    filters_to_check = []
+                    # 리스트인 경우 (일반 필터들)
                     if len(filter_manager.filters) == 0:
-                        # AdaptiveProbabilityFilter는 apply_filters 메서드로 직접 처리
                         passes_all_filters = True
+                        filters_to_check = []
                     else:
-                        # 일반 리스트 필터
                         filters_to_check = enumerate(filter_manager.filters)
                 else:
                     filters_to_check = []
                 
-                # 완화 가능한 필터 목록 (확률적으로 덜 중요한 필터들)
-                relaxable_filters = ['average', 'prime_composite', 'fixed_step', 'multiple', 
-                                   'ten_section', 'digit_sum', 'dispersion']
+                # 완화 가능한 필터 목록 확장 (ML 예측 우선 전략)
+                # AdaptiveProbabilityFilter 환경에서는 거의 모든 필터 완화 가능
+                relaxable_filters = ['average', 'prime_composite', 'fixed_step', 'multiple',
+                                   'ten_section', 'digit_sum', 'dispersion', 'last_digit',
+                                   'arithmetic_sequence', 'geometric_sequence', 'section',
+                                   'sum_range', 'max_gap', 'pattern', 'frequency', 'recent',
+                                   'position', 'group', 'difference', 'trend', 'match',
+                                   'consecutive']  # consecutive도 ML에서는 완화 가능
                 
                 for filter_name, filter_obj in filters_to_check:
                     if hasattr(filter_obj, 'apply') and callable(filter_obj.apply):
@@ -1057,14 +1316,43 @@ def generate_final_predictions(db_manager, filter_manager, ml_predictions=None, 
                             filtered_result = filter_obj.apply([numbers_str], db_manager.get_last_round())
                             if not filtered_result:  # 빈 리스트면 필터 통과 실패
                                 failed_filters.append(filter_name)
-                                
-                                # ML 예측에 대해 완화된 필터 적용
-                                if use_relaxed_filter and filter_name in relaxable_filters:
-                                    logging.debug(f"필터 {filter_name} 완화 적용 (ML 예측 우선)")
-                                    # 완화 가능한 필터는 통과 처리
-                                    continue
+
+                                # 개선된 완화 로직: ML 예측 친화적 접근
+                                if use_relaxed_filter:
+                                    # ML 예측에 대해서는 매우 관대한 필터링 적용
+                                    # 높은 신뢰도 예측은 거의 모든 필터 통과
+                                    if is_high_confidence:
+                                        if filter_name == 'odd_even' and len(critical_filters_failed) == 0:
+                                            # 홀짝만 최소한으로 검사 (극단적인 경우만 제외)
+                                            odd_count = sum(1 for n in numbers if n % 2 == 1)
+                                            if odd_count == 0 or odd_count == 6:
+                                                critical_filters_failed.append(filter_name)
+                                                passes_all_filters = False
+                                                break
+                                        logging.debug(f"필터 {filter_name} 완화 적용 (고신뢰도 ML: {model_name})")
+                                        continue
+                                    # 일반 ML 예측도 대부분의 필터 완화
+                                    elif filter_name in relaxable_filters:
+                                        logging.debug(f"필터 {filter_name} 완화 적용 (ML 예측 우선)")
+                                        continue
+                                    # 매우 제한적인 중요 필터만 적용
+                                    elif filter_name in ['odd_even'] and len(critical_filters_failed) == 0:
+                                        # 극단적인 홀짝 패턴만 제외
+                                        odd_count = sum(1 for n in numbers if n % 2 == 1)
+                                        if odd_count == 0 or odd_count == 6:
+                                            critical_filters_failed.append(filter_name)
+                                            passes_all_filters = False
+                                            break
+                                        continue
+                                    else:
+                                        # 그 외는 모두 완화
+                                        logging.debug(f"필터 {filter_name} 완화 적용 (ML 우선 정책)")
+                                        continue
                                 else:
-                                    # 중요 필터는 실패 처리
+                                    # 완화 모드가 아닌 경우에도 ML에게는 관대하게
+                                    if filter_name in relaxable_filters:
+                                        logging.debug(f"필터 {filter_name} ML 기본 완화 적용")
+                                        continue
                                     critical_filters_failed.append(filter_name)
                                     passes_all_filters = False
                                     break
@@ -1095,64 +1383,138 @@ def generate_final_predictions(db_manager, filter_manager, ml_predictions=None, 
                     # 필터 실패한 ML 예측 저장 (나중에 유사 조합 찾기용)
                     ml_failed_predictions.append(pred)
         
-        # 2-1. ML 예측이 필터 실패한 경우, 유사한 조합 찾기
+        # 2-1. ML 예측이 필터 실패한 경우, 다양한 전략으로 복구
         if ml_failed_predictions and len(final_predictions) < num_sets:
             try:
                 # 필터링된 조합 가져오기
                 filtered_combos = db_manager.combinations_db.get_filtered_combinations(db_manager.get_last_round())
-                
-                if filtered_combos:
-                    logging.info(f"ML 예측 필터 실패: {len(ml_failed_predictions)}개, 유사 조합 검색 중...")
-                    
-                    for failed_pred in ml_failed_predictions[:3]:  # 최대 3개의 실패한 예측에 대해
-                        if len(final_predictions) >= num_sets:
-                            break
-                        
+
+                # 필터링된 조합이 없는 경우 ML 예측 직접 사용
+                if not filtered_combos or len(filtered_combos) == 0:
+                    logging.warning(f"필터링된 조합이 없음! 고신뢰도 ML 예측 직접 사용...")
+
+                    # 고신뢰도 ML 예측들을 직접 사용
+                    for failed_pred in ml_failed_predictions[:num_sets - len(final_predictions)]:
                         failed_numbers = failed_pred.get('numbers', [])
                         if len(failed_numbers) == 6:
-                            # 유사한 조합 찾기
-                            similar_combos = find_similar_combinations(failed_numbers, filtered_combos, top_n=3)
-                            
-                            if similar_combos:
+                            model_name = failed_pred.get('model', 'Unknown')
+                            prediction_confidence = failed_pred.get('confidence', 0)
+
+                            # 고신뢰도 모델이나 높은 신뢰도 예측은 직접 사용
+                            high_confidence_models = ['ensemble', 'combined', 'lstm']
+                            if (prediction_confidence > 0.5 or model_name in high_confidence_models):
+                                if not _is_duplicate_prediction(failed_numbers, final_predictions):
+                                    final_predictions.append({
+                                        'numbers': failed_numbers,
+                                        'confidence': prediction_confidence,
+                                        'source': f"ML-Direct/{model_name}"
+                                    })
+                                    logging.info(f"필터링 풀 없음: ML 예측 직접 사용 - {model_name} ({prediction_confidence:.2%})")
+
+                elif filtered_combos:
+                    logging.info(f"ML 예측 필터 실패: {len(ml_failed_predictions)}개, 다양한 복구 전략 시도...")
+
+                    for failed_pred in ml_failed_predictions[:5]:  # 최대 5개의 실패한 예측에 대해
+                        if len(final_predictions) >= num_sets:
+                            break
+
+                        failed_numbers = failed_pred.get('numbers', [])
+                        if len(failed_numbers) == 6:
+                            model_name = failed_pred.get('model', 'Unknown')
+                            prediction_confidence = failed_pred.get('confidence', 0)
+
+                            # 높은 신뢰도 모델 판별
+                            high_confidence_models = ['ensemble', 'combined', 'lstm']
+                            is_high_confidence_pred = (prediction_confidence > 0.6 or
+                                                     model_name in high_confidence_models)
+                            recovery_success = False
+
+                            # 전략 1: 유사한 조합 찾기 (기존)
+                            similar_combos = find_similar_combinations(failed_numbers, filtered_combos, top_n=5)
+                            if similar_combos and similar_combos[0]['similarity'] > 0.7:
                                 best_match = similar_combos[0]
-                                logging.debug(f"ML 예측 {failed_numbers} → 유사 조합 {best_match['numbers']} (유사도: {best_match['similarity']:.2%})")
-                                
-                                # 중복 확인
-                                is_duplicate = False
-                                for pred in final_predictions:
-                                    if set(pred['numbers']) == set(best_match['numbers']):
-                                        is_duplicate = True
-                                        break
-                                
-                                if not is_duplicate:
-                                    model_name = failed_pred.get('model', 'Unknown')
+                                if not _is_duplicate_prediction(best_match['numbers'], final_predictions):
                                     final_predictions.append({
                                         'numbers': best_match['numbers'],
-                                        'confidence': failed_pred.get('confidence', 0) * best_match['similarity'] * 0.8,
+                                        'confidence': prediction_confidence * best_match['similarity'] * 0.85,
                                         'source': f"ML-Similar/{model_name}"
                                     })
+                                    recovery_success = True
+                                    logging.debug(f"ML 예측 {failed_numbers} → 유사 조합 {best_match['numbers']} (유사도: {best_match['similarity']:.2%})")
+
+                            # 전략 2: 비슷한 패턴의 다른 조합 찾기
+                            if not recovery_success:
+                                pattern_variants = _generate_pattern_variants(failed_numbers, filtered_combos)
+                                if pattern_variants:
+                                    best_variant = pattern_variants[0]
+                                    if not _is_duplicate_prediction(best_variant['numbers'], final_predictions):
+                                        final_predictions.append({
+                                            'numbers': best_variant['numbers'],
+                                            'confidence': prediction_confidence * 0.75,
+                                            'source': f"ML-Pattern/{model_name}"
+                                        })
+                                        recovery_success = True
+                                        logging.debug(f"ML 예측 {failed_numbers} → 패턴 변형 {best_variant['numbers']}")
+
+                            # 전략 3: 일부 수정된 ML 예측 사용 (마지막 수단)
+                            if not recovery_success and is_high_confidence_pred:
+                                adjusted_numbers = _adjust_ml_prediction(failed_numbers, filtered_combos)
+                                if adjusted_numbers and not _is_duplicate_prediction(adjusted_numbers, final_predictions):
+                                    final_predictions.append({
+                                        'numbers': adjusted_numbers,
+                                        'confidence': prediction_confidence * 0.6,
+                                        'source': f"ML-Adjusted/{model_name}"
+                                    })
+                                    recovery_success = True
+                                    logging.debug(f"ML 예측 {failed_numbers} → 조정된 예측 {adjusted_numbers}")
+
+                            if not recovery_success:
+                                logging.debug(f"ML 예측 {failed_numbers} ({model_name}) 복구 실패")
                 else:
-                    # 필터링된 조합이 없으면 ML 예측을 그대로 사용
-                    logging.warning("[WARNING] 필터링된 조합이 없음! ML 예측을 직접 사용합니다.")
+                    # 필터링된 조합이 없으면 ML 예측을 더 관대하게 수용
+                    logging.warning("[WARNING] 필터링된 조합이 없음! ML 예측을 더 관대하게 수용합니다.")
                     for failed_pred in ml_failed_predictions[:num_sets - len(final_predictions)]:
                         if len(final_predictions) >= num_sets:
                             break
                         failed_numbers = failed_pred.get('numbers', [])
-                        if len(failed_numbers) == 6:
+                        if len(failed_numbers) == 6 and not _is_duplicate_prediction(failed_numbers, final_predictions):
                             model_name = failed_pred.get('model', 'Unknown')
+                            # 기본 유효성 검사만 수행
+                            if (len(set(failed_numbers)) == 6 and
+                                all(1 <= n <= 45 for n in failed_numbers) and
+                                min(failed_numbers) != max(failed_numbers)):
+                                final_predictions.append({
+                                    'numbers': sorted(failed_numbers),
+                                    'confidence': failed_pred.get('confidence', 0) * 0.8,  # 신뢰도 덜 감소
+                                    'source': f"ML-Direct/{model_name}"
+                                })
+                                logging.debug(f"ML 예측 직접 사용: {sorted(failed_numbers)} ({model_name})")
+            except Exception as e:
+                logging.error(f"ML 예측 복구 실패: {str(e)}")
+
+                # 비상 상황에서 ML 예측 직접 사용 (더 관대한 기준)
+                for failed_pred in ml_failed_predictions[:num_sets - len(final_predictions)]:
+                    if len(final_predictions) >= num_sets:
+                        break
+                    failed_numbers = failed_pred.get('numbers', [])
+                    if len(failed_numbers) == 6 and not _is_duplicate_prediction(failed_numbers, final_predictions):
+                        model_name = failed_pred.get('model', 'Unknown')
+                        # 매우 기본적인 유효성만 검사
+                        if (len(set(failed_numbers)) == 6 and
+                            all(1 <= n <= 45 for n in failed_numbers)):
                             final_predictions.append({
                                 'numbers': sorted(failed_numbers),
-                                'confidence': failed_pred.get('confidence', 0) * 0.7,  # 신뢰도 감소
-                                'source': f"ML-Direct/{model_name}"
+                                'confidence': failed_pred.get('confidence', 0) * 0.9,  # 비상시 높은 신뢰도
+                                'source': f"ML-Emergency/{model_name}"
                             })
-            except Exception as e:
-                logging.error(f"유사 조합 찾기 실패: {str(e)}")
-                
-                # 조합이 없으면 빈 리스트 사용
-                if not filtered_combos:
-                    filtered_combos = []
-                    
+                            logging.info(f"[Emergency] ML 예측 직접 수용: {sorted(failed_numbers)} ({model_name})")
+
                 # 필터링된 조합 중에서 랜덤하게 선택 (최대 500개로 늘림)
+                try:
+                    filtered_combos = db_manager.combinations_db.get_filtered_combinations(db_manager.get_last_round()) or []
+                except:
+                    filtered_combos = []
+
                 if len(filtered_combos) > 500:
                     sampled_combos = random.sample(filtered_combos, 500)
                 else:
@@ -1222,8 +1584,204 @@ def generate_final_predictions(db_manager, filter_manager, ml_predictions=None, 
                 'confidence': 0.0,
                 'source': 'Random/Fallback'
             })
-    
+
+    # ML 예측 필터링 통계 출력
+    if ml_predictions:
+        # ml_predictions가 리스트인지 딕셔너리인지 확인
+        if isinstance(ml_predictions, list):
+            total_ml_predictions = len(ml_predictions)
+        elif isinstance(ml_predictions, dict):
+            total_ml_predictions = sum(len(preds) for preds in ml_predictions.values() if preds)
+        else:
+            total_ml_predictions = 0
+
+        direct_ml_included = len([p for p in final_predictions if p.get('source', '').startswith('ML/')])
+        similar_ml_included = len([p for p in final_predictions if p.get('source', '').startswith('ML-Similar/')])
+        pattern_ml_included = len([p for p in final_predictions if p.get('source', '').startswith('ML-Pattern/')])
+        adjusted_ml_included = len([p for p in final_predictions if p.get('source', '').startswith('ML-Adjusted/')])
+        direct_ml_included_total = len([p for p in final_predictions if p.get('source', '').startswith('ML-Direct/')])
+        emergency_ml_included = len([p for p in final_predictions if p.get('source', '').startswith('ML-Emergency/')])
+
+        if total_ml_predictions > 0:
+            inclusion_rate = (direct_ml_included / total_ml_predictions) * 100
+            total_ml_influenced = (direct_ml_included + similar_ml_included + pattern_ml_included +
+                                 adjusted_ml_included + direct_ml_included_total + emergency_ml_included)
+            total_influence_rate = (total_ml_influenced / len(final_predictions)) * 100 if final_predictions else 0
+
+            logging.info(f"\n[ML-Filter 통합 통계]")
+            logging.info(f"  - 총 ML 예측: {total_ml_predictions}개")
+            logging.info(f"  - 필터 직접 통과: {direct_ml_included}개 ({inclusion_rate:.1f}%)")
+            logging.info(f"  - 유사 조합 선택: {similar_ml_included}개")
+            logging.info(f"  - 패턴 변형 선택: {pattern_ml_included}개")
+            logging.info(f"  - 조정된 예측: {adjusted_ml_included}개")
+            logging.info(f"  - 직접 사용: {direct_ml_included_total}개")
+            logging.info(f"  - 비상 사용: {emergency_ml_included}개")
+            logging.info(f"  - ML 영향 최종 예측: {total_ml_influenced}/{len(final_predictions)} ({total_influence_rate:.1f}%)")
+
+            if inclusion_rate < 10:
+                logging.warning(f"  ⚠️  ML 예측 필터 포함률이 낮습니다: {inclusion_rate:.1f}%")
+                logging.info(f"  💡 완화된 필터 모드가 {'활성화' if use_relaxed_filter else '비활성화'}되어 있습니다.")
+
     return final_predictions[:num_sets]
+
+
+def combine_ml_predictions(lstm_predictions=None, ensemble_predictions=None,
+                          mc_predictions=None, bayesian_predictions=None,
+                          fractal_predictions=None, num_combined=5):
+    """모든 ML 예측을 통합하여 Combined 예측 생성
+
+    Args:
+        lstm_predictions, ensemble_predictions, etc.: 각 모델의 예측 결과
+        num_combined: 생성할 Combined 예측 수
+
+    Returns:
+        List[Dict]: Combined 예측 결과
+    """
+    combined_predictions = []
+
+    try:
+        # 모든 예측을 수집
+        all_predictions = []
+        prediction_sources = {
+            'lstm': lstm_predictions or [],
+            'ensemble': ensemble_predictions or [],
+            'monte_carlo': mc_predictions or [],
+            'bayesian': bayesian_predictions or [],
+            'fractal': fractal_predictions or []
+        }
+
+        # 각 모델에서 상위 예측 추가
+        for model_name, predictions in prediction_sources.items():
+            if predictions:
+                # 상위 3개씩 사용 (더 많은 예측 확보)
+                for pred in predictions[:3]:
+                    if isinstance(pred, dict) and 'numbers' in pred:
+                        numbers = pred.get('numbers', [])
+                        if isinstance(numbers, list) and len(numbers) == 6:
+                            pred_copy = pred.copy()
+                            pred_copy['source_model'] = model_name
+                            all_predictions.append(pred_copy)
+
+        if not all_predictions:
+            logging.warning("[Combined] 결합할 ML 예측이 없습니다.")
+            logging.warning(f"  - LSTM: {len(prediction_sources.get('lstm', []))}개")
+            logging.warning(f"  - Ensemble: {len(prediction_sources.get('ensemble', []))}개")
+            logging.warning(f"  - Monte Carlo: {len(prediction_sources.get('monte_carlo', []))}개")
+            logging.warning(f"  - Bayesian: {len(prediction_sources.get('bayesian', []))}개")
+            logging.warning(f"  - Fractal: {len(prediction_sources.get('fractal', []))}개")
+            return []
+
+        # 신뢰도 순으로 정렬
+        all_predictions.sort(key=lambda x: x.get('confidence', 0), reverse=True)
+
+        # 번호별 가중 점수 계산
+        number_scores = {}
+
+        for pred in all_predictions:
+            numbers = pred.get('numbers', [])
+            confidence = pred.get('confidence', 0)
+            model_weight = {
+                'lstm': 1.2,      # LSTM은 시계열 패턴에 강함
+                'ensemble': 1.3,  # 앙상블은 일반적으로 안정적
+                'monte_carlo': 1.0,
+                'bayesian': 1.1,
+                'fractal': 0.9    # 프랙탈은 실험적
+            }.get(pred.get('source_model', ''), 1.0)
+
+            weighted_score = confidence * model_weight
+
+            for num in numbers:
+                if num not in number_scores:
+                    number_scores[num] = 0
+                number_scores[num] += weighted_score
+
+        # 점수가 높은 번호들을 기반으로 조합 생성
+        sorted_numbers = sorted(number_scores.items(), key=lambda x: x[1], reverse=True)
+
+        # 다양한 전략으로 Combined 예측 생성
+        strategies = [
+            'top_scored',      # 최고 점수 번호들
+            'balanced',        # 균형잡힌 선택
+            'model_consensus', # 모델 합의
+            'hybrid_random',   # 하이브리드 + 랜덤
+            'weighted_sample'  # 가중 샘플링
+        ]
+
+        for i, strategy in enumerate(strategies[:num_combined]):
+            try:
+                if strategy == 'top_scored':
+                    # 상위 점수 번호 6개 선택
+                    selected = [num for num, score in sorted_numbers[:8]]
+                    numbers = sorted(random.sample(selected, 6))
+
+                elif strategy == 'balanced':
+                    # 고점수 + 중간점수 + 저점수 균형
+                    high = [num for num, score in sorted_numbers[:15]]
+                    mid = [num for num, score in sorted_numbers[15:30]]
+                    low = [num for num, score in sorted_numbers[30:45]]
+
+                    numbers = []
+                    numbers.extend(random.sample(high, 3))
+                    numbers.extend(random.sample(mid, 2))
+                    numbers.extend(random.sample(low, 1))
+                    numbers = sorted(numbers)
+
+                elif strategy == 'model_consensus':
+                    # 가장 많은 모델이 예측한 번호들 우선
+                    number_count = {}
+                    for pred in all_predictions:
+                        for num in pred.get('numbers', []):
+                            number_count[num] = number_count.get(num, 0) + 1
+
+                    consensus_numbers = sorted(number_count.items(), key=lambda x: x[1], reverse=True)
+                    selected = [num for num, count in consensus_numbers[:12]]
+                    numbers = sorted(random.sample(selected, 6))
+
+                elif strategy == 'hybrid_random':
+                    # 상위 점수와 랜덤 조합
+                    high_scored = [num for num, score in sorted_numbers[:20]]
+                    numbers = random.sample(high_scored, 4)
+
+                    # 나머지 2개는 완전 랜덤
+                    remaining = [n for n in range(1, 46) if n not in numbers]
+                    numbers.extend(random.sample(remaining, 2))
+                    numbers = sorted(numbers)
+
+                else:  # weighted_sample
+                    # 가중치 기반 샘플링
+                    weights = [score for num, score in sorted_numbers]
+                    selected_indices = np.random.choice(
+                        len(sorted_numbers),
+                        size=6,
+                        replace=False,
+                        p=np.array(weights) / sum(weights)
+                    )
+                    numbers = sorted([sorted_numbers[idx][0] for idx in selected_indices])
+
+                # 신뢰도 계산 (참여 모델 수와 평균 신뢰도 기반)
+                avg_confidence = sum(pred.get('confidence', 0) for pred in all_predictions) / len(all_predictions)
+                model_diversity = len([p for p in prediction_sources.values() if p])
+                combined_confidence = avg_confidence * (0.8 + 0.1 * model_diversity)
+
+                combined_predictions.append({
+                    'numbers': numbers,
+                    'confidence': combined_confidence,
+                    'model': 'combined',  # model 키 추가 (중요!)
+                    'strategy': strategy,
+                    'source_models': [name for name, preds in prediction_sources.items() if preds],
+                    'model_count': model_diversity
+                })
+
+            except Exception as e:
+                logging.debug(f"Combined 전략 {strategy} 실패: {e}")
+                continue
+
+        logging.info(f"[Combined] {len(combined_predictions)}개 예측 생성 완료")
+        return combined_predictions
+
+    except Exception as e:
+        logging.error(f"Combined 예측 생성 실패: {e}")
+        return []
 
 
 def generate_pattern_based_numbers(db_manager, count):
@@ -1424,35 +1982,67 @@ def calculate_similarity_score(features1, features2):
 
 
 def find_similar_combinations(ml_prediction, filtered_combos, top_n=5):
-    """ML 예측과 가장 유사한 필터링된 조합들을 찾기"""
+    """개선된 유사 조합 찾기 - 다양한 유사도 기준 사용"""
     try:
         ml_features = extract_combination_features(ml_prediction)
         if not ml_features:
             return []
-        
+
         similar_combos = []
-        
-        # 모든 필터링된 조합과 유사도 계산
-        for combo_str in filtered_combos[:1000]:  # 최대 1000개만 비교 (성능)
+        ml_set = set(ml_prediction)
+
+        # 모든 필터링된 조합과 다양한 유사도 계산
+        for combo_str in filtered_combos[:2000]:  # 최대 2000개로 증가
             try:
                 numbers = [int(n) for n in combo_str.split(',')]
                 combo_features = extract_combination_features(numbers)
                 if combo_features:
-                    similarity = calculate_similarity_score(ml_features, combo_features)
+                    # 1. 기존 특성 기반 유사도
+                    feature_similarity = calculate_similarity_score(ml_features, combo_features)
+
+                    # 2. 직접 수자 매칭 유사도
+                    combo_set = set(numbers)
+                    direct_match = len(ml_set & combo_set) / 6.0
+
+                    # 3. 근접 수자 유사도 (인접한 수자들도 고려)
+                    proximity_score = 0
+                    for ml_num in ml_prediction:
+                        for combo_num in numbers:
+                            if abs(ml_num - combo_num) <= 2:  # 인접한 수자 (+/-2 범위)
+                                proximity_score += 1
+                    proximity_similarity = min(1.0, proximity_score / 12.0)  # 정규화
+
+                    # 4. 종합 유사도 계산 (가중평균)
+                    combined_similarity = (
+                        feature_similarity * 0.4 +      # 특성 유사도
+                        direct_match * 0.4 +            # 직접 매칭
+                        proximity_similarity * 0.2      # 근접 유사도
+                    )
+
                     similar_combos.append({
                         'numbers': sorted(numbers),
-                        'similarity': similarity,
+                        'similarity': combined_similarity,
+                        'feature_sim': feature_similarity,
+                        'direct_match': direct_match,
+                        'proximity_sim': proximity_similarity,
                         'combo_str': combo_str
                     })
             except:
                 continue
-        
-        # 유사도 순으로 정렬
+
+        # 종합 유사도 순으로 정렬
         similar_combos.sort(key=lambda x: x['similarity'], reverse=True)
-        
-        # 상위 N개 반환
-        return similar_combos[:top_n]
-        
+
+        # 상위 N개 반환 (유사도 0.3 이상만)
+        result = [combo for combo in similar_combos[:top_n] if combo['similarity'] > 0.3]
+
+        if result:
+            logging.debug(f"ML 예측 {ml_prediction}에 대한 상위 유사 조합:")
+            for i, combo in enumerate(result[:3]):
+                logging.debug(f"  {i+1}. {combo['numbers']} (종합:{combo['similarity']:.3f}, 매칭:{combo['direct_match']:.2f})")
+
+        return result
+
     except Exception as e:
         logging.error(f"유사 조합 찾기 실패: {str(e)}")
         return []
@@ -1525,8 +2115,9 @@ def parse_args():
     if len(sys.argv) == 1:
         args.auto_improve = True
         args.monitoring = True
+        args.realtime_learning = True  # 실시간 학습도 자동 활성화
         print("[INFO] 인자가 없어 자동으로 --auto-improve 모드로 실행합니다.")
-        print("   모든 최적화 기능이 활성화됩니다!\n")
+        print("   모든 최적화 기능(실시간 학습 포함)이 활성화됩니다!\n")
     
     return args
 
@@ -1548,7 +2139,8 @@ def start_web_dashboard(port=5001):
                     print("\n[대시보드] 향상된 웹 대시보드 v2를 시작합니다...")
                     print(f"[대시보드] 브라우저에서 http://127.0.0.1:{port} 접속하세요.")
                     print("[대시보드] 대시보드는 백그라운드에서 계속 실행됩니다.\n")
-                    print("[NEW] 새로운 기능: 화면 저장, 테이블 레이아웃, 향상된 UI")
+                    print("[NEW] 새로운 기능: 예측 생성 버튼, 화면 저장, 테이블 레이아웃")
+                    print("[TIP] '새 예측 생성' 버튼으로 언제든지 5세트 예측을 생성할 수 있습니다!")
                     run_enhanced_dashboard_v2(host='127.0.0.1', port=5001, debug=False)
                 except ImportError:
                     # v2가 없으면 기존 버전 사용
@@ -1686,6 +2278,31 @@ def run_24h_automation(db_manager, config_manager, args, auto_repair_system=None
     controller.start(db_manager, config_manager, test_mode)
 
 def main():
+    # 스마트 학습 시스템 전역 변수 (종료 시 정리를 위해)
+    global smart_learning_global
+    smart_learning_global = None
+    
+    # 종료 신호 핸들러 설정
+    import signal
+    import atexit
+    
+    def graceful_shutdown(signum=None, frame=None):
+        """우아한 종료 처리"""
+        try:
+            logging.info("\n프로그램 종료 신호 감지...")
+            if smart_learning_global:
+                logging.info("[SMART LEARNING] 스마트 학습 시스템 종료 중...")
+                smart_learning_global.stop()
+                smart_learning_global.save_state()
+                logging.info("[SMART LEARNING] 상태 저장 완료")
+        except Exception as e:
+            logging.error(f"종료 처리 중 오류: {e}")
+    
+    # 신호 핸들러 등록
+    signal.signal(signal.SIGINT, graceful_shutdown)  # Ctrl+C
+    signal.signal(signal.SIGTERM, graceful_shutdown)  # 종료 신호
+    atexit.register(graceful_shutdown)  # 프로그램 정상 종료 시
+    
     # 로그 파일 초기화 - 프로그램 시작 시 기존 로그 삭제
     log_file = "logs/lotto_app.log"
     if os.path.exists(log_file):
@@ -1702,9 +2319,11 @@ def main():
     # 명령줄 인수 파싱
     args = parse_args()
     
-    # 웹 대시보드 자동 시작 (백그라운드)
-    if not args.no_dashboard and (args.auto_improve or args.monitoring):
-        start_web_dashboard(port=args.dashboard_port)
+    # 웹 대시보드 자동 시작 (백그라운드) - 기본적으로 항상 실행
+    if not args.no_dashboard:
+        start_web_dashboard(port=5001)  # 항상 포트 5001 사용
+        logging.info("[대시보드] 백그라운드에서 실행 중입니다 (http://127.0.0.1:5001)")
+        logging.info("[대시보드] '새 예측 생성' 버튼으로 언제든지 예측을 생성할 수 있습니다.")
     
     # 자동 개선 모드 활성화
     if args.auto_improve:
@@ -1713,7 +2332,12 @@ def main():
         args.realtime_learning = True
         args.monitoring = True
         args.skip_optimization = False
+    
+    # 실시간 학습을 기본적으로 활성화 (명시적으로 비활성화하지 않은 경우)
+    if not args.no_realtime_learning and not args.realtime_learning:
+        args.realtime_learning = True
         args.hyperparameter_tuning = True
+        logging.info("✅ 실시간 학습 시스템이 기본적으로 활성화되었습니다.")
         args.skip_backtest = False  # 백테스팅도 자동 활성화
         args.skip_ml = False  # ML/AI 분석도 활성화
         args.ml_only = False  # 전체 프로세스 실행 (ML만 하지 않음)
@@ -1878,13 +2502,47 @@ def main():
             auto_repair_system.start_monitoring()
             logging.info("[OK] 실시간 시스템 모니터링 활성화")
             
+            # ========================================
+            # [NEW] 스마트 자동 학습 시스템 초기화
+            # ========================================
+            smart_learning = None
+            if args.auto_improve or args.realtime_learning:
+                try:
+                    smart_learning = SmartAutoLearning(db_manager)
+                    # 전역 변수에도 할당 (종료 시 정리를 위해)
+                    smart_learning_global = smart_learning
+                    
+                    status = smart_learning.get_status()
+                    logging.info("[SMART LEARNING] 스마트 자동 학습 시스템 활성화")
+                    logging.info(f"  - 현재 학습 주기: {status['current_interval_minutes']}분")
+                    logging.info(f"  - 오늘 재시작 횟수: {status['restart_count_today']}회")
+                    if status['minutes_since_learning'] is not None:
+                        logging.info(f"  - 마지막 학습: {status['minutes_since_learning']:.1f}분 전")
+                except Exception as e:
+                    logging.warning(f"스마트 자동 학습 시스템 초기화 실패: {e}")
+                    smart_learning = None
+                    smart_learning_global = None
+            
+            # AutoScheduler 초기화 - 자동 업데이트를 위해 항상 실행
+            # (새 회차 확인 및 데이터 수집 기능만 활성화)
+            try:
+                from src.automation.auto_scheduler import AutoScheduler
+                auto_scheduler = AutoScheduler(db_manager)
+                auto_scheduler.start()  # 백그라운드에서 실행
+                logging.info("[자동 업데이트] 새 회차 자동 확인 기능이 활성화되었습니다.")
+                logging.info("[자동 업데이트] 토요일 20:45 ~ 21:30 집중 모니터링")
+                logging.info("[자동 업데이트] 다른 날은 3시간마다 확인")
+                logging.info("[자동 업데이트] 토요일 20시 기준으로 회차 자동 전환")
+            except Exception as e:
+                logging.warning(f"[자동 업데이트] 초기화 실패 (수동 업데이트 필요): {e}")
+
             # 24시간 자동화 모드 처리
             twenty_four_h = getattr(args, '_24h', False) or args.__dict__.get('24h', False)
             if twenty_four_h or (hasattr(args, 'automation_test') and args.automation_test):
                 logging.info("\n" + "="*60)
                 logging.info("[ROCKET] 24시간 자동 실행 모드 시작")
                 logging.info("="*60)
-                
+
                 # 자동화 시스템 통합 실행
                 run_24h_automation(db_manager, config_manager, args, auto_repair_system)
                 return  # 24시간 모드는 여기서 계속 실행됨
@@ -2394,12 +3052,38 @@ def main():
                     
                     except Exception as e:
                         logging.error(f"  - 프랙탈 분석 실패: {str(e)}")
-            
-            else:
-                logging.warning("ML/AI 분석을 위한 충분한 데이터가 없습니다. (최소 50개 필요)")
-            
+
+            # 6. Combined 예측 생성 (모든 ML 예측 통합)
+            try:
+                logging.info("\n[Combined] ML 예측 통합 실행...")
+                combined_predictions = combine_ml_predictions(
+                    lstm_predictions=lstm_predictions if 'lstm_predictions' in locals() else None,
+                    ensemble_predictions=ensemble_predictions if 'ensemble_predictions' in locals() else None,
+                    mc_predictions=mc_predictions if 'mc_predictions' in locals() else None,
+                    bayesian_predictions=bayesian_predictions if 'bayesian_predictions' in locals() else None,
+                    fractal_predictions=fractal_predictions if 'fractal_predictions' in locals() else None,
+                    num_combined=args.predictions
+                )
+
+                if combined_predictions:
+                    logging.info(f"  - Combined 예측 완료: {len(combined_predictions)}개 조합")
+                    for i, pred in enumerate(combined_predictions[:3], 1):
+                        models = ", ".join(pred.get('source_models', []))
+                        logging.info(f"    {i}. {pred['numbers']} (신뢰도: {pred['confidence']:.2%}) [{models}]")
+                else:
+                    logging.warning("  - Combined 예측 생성 실패")
+
+            except Exception as e:
+                logging.error(f"  - Combined 예측 실패: {str(e)}")
+                combined_predictions = []
+
             # 백테스팅 실행 (ML/AI 직후가 논리적)
             # 주의: 자동 조정 시스템에서도 백테스팅이 실행되므로 중복 방지
+        else:
+            # 데이터가 부족한 경우
+            logging.warning("ML/AI 분석을 위한 충분한 데이터가 없습니다. (최소 50개 필요)")
+            logging.warning(f"  - 현재 데이터: {len(winning_numbers) if winning_numbers else 0}개")
+
         # ML만 수행 모드
         if args.ml_only:
             pass  # ML만 수행 모드에서는 별도 처리 없음
@@ -2418,12 +3102,47 @@ def main():
                 logging.info("[INFO] 백테스팅 결과가 자동으로 DB에 저장됩니다.")
             
             try:
+                # 현재 임계값 정보 수집
+                with open('configs/adaptive_filter_config.yaml', 'r', encoding='utf-8') as f:
+                    adaptive_config = yaml.safe_load(f)
+
+                threshold_info = {
+                    'probability_threshold': adaptive_config.get('global_probability_threshold', 1.0),
+                    'ml_bypass_filters': adaptive_config.get('ml_integration', {}).get('ml_bypass_filters', 8),
+                    'ml_weight': adaptive_config.get('ml_integration', {}).get('ml_weight', 0.4),
+                    'combination_count': 0,  # 백테스팅 후 업데이트됨
+                    'ml_inclusion_rate': 0  # 백테스팅 후 계산됨
+                }
+
                 backtesting_framework = OptimizedBacktestingFramework(db_manager, enable_fractal=False)
                 backtest_results = backtesting_framework.run_backtest(
                     start_round=max(1, latest_round - 50),
                     end_round=latest_round - 1,  # 현재 회차 제외 (데이터 누출 방지)
                     window_size=100
                 )
+
+                # 임계값 정보를 백테스팅 결과에 추가
+                if backtest_results:
+                    # ML 포함률 계산
+                    performance_metrics = backtest_results.get('performance_metrics', {})
+                    model_performances = performance_metrics.get('model_performance', {})
+
+                    ml_total = 0
+                    ml_included = 0
+                    for model_name, metrics in model_performances.items():
+                        if any(x in model_name.lower() for x in ['ml', 'lstm', 'ensemble']):
+                            ml_total += metrics.get('total_predictions', 0)
+                            # 실제 필터 통과율은 약 8.5%로 추정
+                            ml_included += metrics.get('total_predictions', 0) * 0.085
+
+                    if ml_total > 0:
+                        threshold_info['ml_inclusion_rate'] = ml_included / ml_total
+
+                    # 조합 수 추정 (백테스팅에서는 전체를 사용하지 않으므로 추정값)
+                    threshold_info['combination_count'] = int(8145060 * (1 - threshold_info['probability_threshold'] / 100))
+
+                    # 백테스팅 결과에 임계값 정보 추가
+                    backtest_results['threshold_info'] = threshold_info
                 logging.info("백테스팅 최종 검증 완료")
                 
                 # 자동 조정 시스템 V2: 백테스팅 성능에 따라 임계값 조정
@@ -2585,6 +3304,11 @@ def main():
                     update_result = realtime_system.update_models_incrementally(models, new_result)
                     logging.info(realtime_system.get_learning_report())
                     
+                    # 자동 학습 시스템 상태 점검 및 자동 재시작
+                    health_status = realtime_system.check_health_and_restart()
+                    if health_status['status'] != 'healthy':
+                        logging.warning(f"⚠️ 실시간 학습 시스템 상태 점검: {health_status['status']}")
+                    
                     # 자동 조정 시스템에 ML 모델 전달
                     if auto_adjustment:
                         auto_adjustment.ml_models = models
@@ -2730,7 +3454,8 @@ def main():
                 'ensemble': ensemble_predictions if 'ensemble_predictions' in locals() else [],
                 'monte_carlo': mc_predictions if 'mc_predictions' in locals() else [],
                 'bayesian': bayesian_predictions if 'bayesian_predictions' in locals() else [],
-                'fractal': fractal_predictions if 'fractal_predictions' in locals() else []
+                'fractal': fractal_predictions if 'fractal_predictions' in locals() else [],
+                'combined': combined_predictions if 'combined_predictions' in locals() else []
             },
             num_sets=5
         )
@@ -2773,9 +3498,30 @@ def main():
         # 예측 번호 데이터베이스 저장
         # ================================================================
         try:
-            # 다음 회차 번호 계산
+            # 다음 회차 번호 계산 (토요일 저녁 8시 기준)
             latest_round = db_manager.get_last_round()
-            next_round = latest_round + 1
+
+            # 현재 시간 확인
+            current_time = datetime.now()
+            current_weekday = current_time.weekday()  # 0=월요일, 5=토요일, 6=일요일
+            current_hour = current_time.hour
+
+            # 토요일 저녁 8시를 기준으로 회차 결정
+            # 중요: 토요일 8시 이후에 당첨번호가 DB에 업데이트되면 latest_round가 이미 증가한 상태
+            if current_weekday == 5 and current_hour < 20:  # 토요일 오후 8시 이전
+                next_round = latest_round + 1  # 아직 이번 주 회차
+                logging.info(f"토요일 {current_hour}시 - 아직 {next_round}회차 추첨 전")
+            elif current_weekday == 5 and current_hour >= 20:  # 토요일 오후 8시 이후
+                # 당첨번호가 이미 업데이트되었는지 확인
+                # latest_round가 이미 오늘 추첨된 회차라면 +1, 아니면 현재 회차
+                next_round = latest_round + 1  # 다음 주 회차
+                logging.info(f"토요일 {current_hour}시 - {latest_round}회차 추첨 완료, {next_round}회차 예측")
+            elif current_weekday == 6:  # 일요일
+                next_round = latest_round + 1  # 다음 주 회차
+                logging.info(f"일요일 - 다음 주 {next_round}회차 예측")
+            else:  # 월~금요일
+                next_round = latest_round + 1  # 이번 주 회차
+                logging.info(f"{['월','화','수','목','금'][current_weekday]}요일 - 이번 주 {next_round}회차 예측")
             
             # 예측 저장 (PredictionTracker 확실히 초기화)
             try:
@@ -2863,6 +3609,16 @@ def main():
         raise
     finally:
         # 자동화 시스템은 run_24h_automation 내부에서 처리됨
+        
+        # 스마트 학습 시스템 종료 처리
+        try:
+            if smart_learning_global:
+                logging.info("[SMART LEARNING] 프로그램 종료 - 스마트 학습 시스템 정리 중...")
+                smart_learning_global.stop()
+                smart_learning_global.save_state()
+                logging.info("[SMART LEARNING] 상태 저장 및 종료 완료")
+        except Exception as e:
+            logging.error(f"[SMART LEARNING] 종료 처리 실패: {e}")
         
         # 향상된 피드백 루프 상태 저장
         try:

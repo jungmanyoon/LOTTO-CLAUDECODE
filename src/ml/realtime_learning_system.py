@@ -100,7 +100,13 @@ class RealtimeLearningSystem:
         # 저장된 상태 로드
         self._load_state()
         
+        # 자동 학습 지속성을 위한 안전장치
+        self.last_health_check = datetime.now()
+        self.health_check_interval = 3600  # 1시간마다 상태 점검
+        self.auto_restart_enabled = True  # 자동 재시작 활성화
+        
         logging.info("실시간 학습 시스템 초기화 완료")
+        logging.info("✅ 자동 학습 안전장치 활성화: 1시간마다 상태 점검 및 자동 재시작")
     
     def update_models_incrementally(self, models: Dict[str, Any], 
                                   new_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -644,3 +650,175 @@ class RealtimeLearningSystem:
             report.append(f"  {model_type}: {len(buffer)}/{buffer_max}")
         
         return "\n".join(report)
+    
+    def check_health_and_restart(self) -> Dict[str, Any]:
+        """시스템 상태 점검 및 자동 재시작"""
+        now = datetime.now()
+        time_since_check = (now - self.last_health_check).total_seconds()
+        
+        health_report = {
+            'status': 'healthy',
+            'issues': [],
+            'actions_taken': [],
+            'last_check': now.isoformat()
+        }
+        
+        # 정기 상태 점검 (1시간마다)
+        if time_since_check >= self.health_check_interval:
+            logging.info("🔍 실시간 학습 시스템 정기 상태 점검 시작...")
+            
+            # 1. 모델별 최근 업데이트 상태 확인
+            for model_type, state in self.model_states.items():
+                last_update = state.get('last_update')
+                if last_update:
+                    hours_since_update = (now - last_update).total_seconds() / 3600
+                    if hours_since_update > 24:  # 24시간 이상 업데이트 없음
+                        health_report['issues'].append(f"{model_type} 모델이 {hours_since_update:.1f}시간 동안 업데이트되지 않음")
+                        
+                        # 자동 복구 시도
+                        if self.auto_restart_enabled:
+                            self._restart_model_learning(model_type)
+                            health_report['actions_taken'].append(f"{model_type} 모델 학습 재시작")
+            
+            # 2. 학습 버퍼 상태 확인
+            for model_type, buffer in self.learning_buffers.items():
+                if len(buffer) == 0:
+                    health_report['issues'].append(f"{model_type} 학습 버퍼가 비어있음")
+                    
+                    # 버퍼 재초기화
+                    if self.auto_restart_enabled:
+                        self._reinitialize_buffer(model_type)
+                        health_report['actions_taken'].append(f"{model_type} 학습 버퍼 재초기화")
+            
+            # 3. 성능 기록 확인
+            for model_type, history in self.performance_history.items():
+                if len(history) == 0:
+                    health_report['issues'].append(f"{model_type} 성능 기록이 없음")
+            
+            self.last_health_check = now
+            
+            # 상태 저장
+            self._save_state()
+            
+            if health_report['issues']:
+                health_report['status'] = 'issues_detected'
+                logging.warning(f"⚠️ 실시간 학습 시스템에서 {len(health_report['issues'])}개 문제 발견")
+                for issue in health_report['issues']:
+                    logging.warning(f"  - {issue}")
+                    
+                if health_report['actions_taken']:
+                    logging.info("🔧 자동 복구 조치 수행:")
+                    for action in health_report['actions_taken']:
+                        logging.info(f"  - {action}")
+            else:
+                logging.info("✅ 실시간 학습 시스템 상태 양호")
+        
+        return health_report
+    
+    def _restart_model_learning(self, model_type: str):
+        """특정 모델의 학습 재시작"""
+        try:
+            # 모델 상태 초기화
+            self.model_states[model_type]['last_update'] = datetime.now()
+            self.model_states[model_type]['update_count'] = 0
+            
+            # 성능 기록 초기화 (기본값으로)
+            config = self.learning_config.get(model_type, self.default_config)
+            if model_type == 'lstm':
+                initial_performance = 0.05
+            elif model_type == 'ensemble':
+                initial_performance = 0.08
+            else:  # monte_carlo
+                initial_performance = 0.04
+                
+            self.performance_history[model_type] = deque(
+                [initial_performance], 
+                maxlen=config.get('performance_window', 10)
+            )
+            
+            logging.info(f"✅ {model_type} 모델 학습 재시작 완료")
+            
+        except Exception as e:
+            logging.error(f"❌ {model_type} 모델 학습 재시작 실패: {e}")
+    
+    def _reinitialize_buffer(self, model_type: str):
+        """학습 버퍼 재초기화"""
+        try:
+            config = self.learning_config.get(model_type, self.default_config)
+            buffer_size = config.get('buffer_size', 50)
+            
+            # 기존 버퍼 초기화
+            self.learning_buffers[model_type] = deque(maxlen=buffer_size)
+            
+            # DB에서 최근 데이터로 버퍼 채우기
+            try:
+                all_numbers = self.db_manager.get_all_numbers()
+                if all_numbers and len(all_numbers) >= 10:
+                    recent_data = all_numbers[-20:]  # 최근 20개 회차
+                    for round_num, numbers_str, draw_date in recent_data:
+                        numbers = list(map(int, numbers_str.split(',')))
+                        self.learning_buffers[model_type].append({
+                            'round': round_num, 
+                            'numbers': numbers
+                        })
+                    
+                    logging.info(f"✅ {model_type} 학습 버퍼 재초기화 완료 ({len(self.learning_buffers[model_type])}개 데이터)")
+                
+            except Exception as e:
+                logging.warning(f"⚠️ {model_type} 버퍼 데이터 로드 실패: {e}")
+                
+        except Exception as e:
+            logging.error(f"❌ {model_type} 학습 버퍼 재초기화 실패: {e}")
+    
+    def enable_auto_restart(self, enabled: bool = True):
+        """자동 재시작 기능 활성화/비활성화"""
+        self.auto_restart_enabled = enabled
+        status = "활성화" if enabled else "비활성화"
+        logging.info(f"🔄 자동 재시작 기능 {status}")
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """현재 시스템 건강 상태 반환"""
+        now = datetime.now()
+        status = {
+            'overall_status': 'healthy',
+            'models_status': {},
+            'buffers_status': {},
+            'last_health_check': self.last_health_check.isoformat(),
+            'auto_restart_enabled': self.auto_restart_enabled
+        }
+        
+        # 모델별 상태
+        for model_type, state in self.model_states.items():
+            last_update = state.get('last_update')
+            hours_since_update = 0
+            if last_update:
+                hours_since_update = (now - last_update).total_seconds() / 3600
+            
+            status['models_status'][model_type] = {
+                'update_count': state['update_count'],
+                'hours_since_update': hours_since_update,
+                'status': 'healthy' if hours_since_update < 24 else 'stale'
+            }
+        
+        # 버퍼 상태
+        for model_type, buffer in self.learning_buffers.items():
+            config = self.learning_config.get(model_type, self.default_config)
+            status['buffers_status'][model_type] = {
+                'current_size': len(buffer),
+                'max_size': config.get('buffer_size', 50),
+                'status': 'healthy' if len(buffer) > 0 else 'empty'
+            }
+        
+        # 전체 상태 결정
+        issues = []
+        for model_status in status['models_status'].values():
+            if model_status['status'] != 'healthy':
+                issues.append('model_stale')
+        for buffer_status in status['buffers_status'].values():
+            if buffer_status['status'] != 'healthy':
+                issues.append('buffer_empty')
+        
+        if issues:
+            status['overall_status'] = 'issues_detected'
+        
+        return status

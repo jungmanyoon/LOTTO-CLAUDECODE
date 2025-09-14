@@ -52,6 +52,15 @@ class FilterManager:
         # 증분식 필터링 캐시
         self.incremental_cache = {}
         
+        # 실시간 성능 추적기 초기화
+        try:
+            from .filter_performance_tracker import FilterPerformanceTracker
+            self.performance_tracker = FilterPerformanceTracker(db_manager)
+            logging.info("필터 성능 추적기 초기화 완료")
+        except Exception as e:
+            logging.warning(f"성능 추적기 초기화 실패: {e}")
+            self.performance_tracker = None
+        
         # 필터 자동 등록 (활성화된 필터만)
         self._auto_register_filters()
 
@@ -554,6 +563,10 @@ class FilterManager:
             initial_count = len(combinations)
             logging.info(f"필터링 시작: 초기 조합: {initial_count:,}개")
             
+            # 성능 추적기 세션 시작
+            if self.performance_tracker:
+                self.performance_tracker.start_filtering_session(latest_round, initial_count)
+            
             # 효율성 기준으로 최적화된 필터 순서 사용
             filtered_combinations = combinations
             
@@ -603,6 +616,10 @@ class FilterManager:
             except Exception as e:
                 logging.error(f"최종 조합 DB 저장 중 오류 발생: {str(e)}")
                 return False
+            
+            # 성능 추적기 세션 완료
+            if self.performance_tracker:
+                self.performance_tracker.complete_filtering_session(len(filtered_combinations))
             
             # 필터 버전 업데이트
             self.meta_manager.update_filter_version(self.current_filter_version)
@@ -1230,6 +1247,8 @@ class FilterManager:
             Optional[List[str]]: 필터링된 조합 목록, 실패시 None
         """
         try:
+            before_count = len(combinations)
+            
             # 필터 적용
             start_time = time.time()
             filtered_combinations = filter_instance.apply(combinations, round_num)
@@ -1242,20 +1261,31 @@ class FilterManager:
                 
             # 성능 측정
             elapsed_time = end_time - start_time
-            excluded_count = len(combinations) - len(filtered_combinations)
-            exclude_ratio = excluded_count / len(combinations) if combinations else 0
+            after_count = len(filtered_combinations)
+            excluded_count = before_count - after_count
+            exclude_ratio = excluded_count / before_count if before_count > 0 else 0
             
             # 필터 효율성 업데이트 (캐시)
             self.filter_efficiency[filter_name] = exclude_ratio
             
+            # 성능 추적기에 데이터 전송
+            if self.performance_tracker:
+                try:
+                    criteria = filter_instance.get_criteria() if hasattr(filter_instance, 'get_criteria') else {}
+                    self.performance_tracker.track_filter_application(
+                        filter_name, before_count, after_count, elapsed_time, criteria, round_num
+                    )
+                except Exception as e:
+                    logging.warning(f"성능 추적 데이터 전송 실패 ({filter_name}): {e}")
+            
             # 성능 로그 출력
-            if len(combinations) > 0:
-                processing_speed = len(combinations) / elapsed_time if elapsed_time > 0 else 0
+            if before_count > 0:
+                processing_speed = before_count / elapsed_time if elapsed_time > 0 else 0
                 logging.info(f"\n[필터 성능] {filter_name} 필터:")
                 logging.info(f"  ├─ 처리 시간: {elapsed_time:.3f}초")
                 logging.info(f"  ├─ 처리 속도: {processing_speed:,.0f} 조합/초")
-                logging.info(f"  ├─ 입력: {len(combinations):,}개")
-                logging.info(f"  ├─ 출력: {len(filtered_combinations):,}개")
+                logging.info(f"  ├─ 입력: {before_count:,}개")
+                logging.info(f"  ├─ 출력: {after_count:,}개")
                 logging.info(f"  └─ 제외율: {exclude_ratio*100:.2f}% ({excluded_count:,}개 제외)")
             
             # 필터링 결과 저장

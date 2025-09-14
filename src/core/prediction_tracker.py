@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
+import pytz  # 한국 시간대(KST) 처리 - 절대 제거하지 말 것!
 from src.utils.json_encoder import NumpyJSONEncoder, convert_numpy_to_python
 
 class PredictionTracker:
@@ -43,7 +44,7 @@ class PredictionTracker:
                 CREATE TABLE IF NOT EXISTS predictions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     round INTEGER NOT NULL,
-                    prediction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    prediction_date TIMESTAMP DEFAULT (datetime('now', 'localtime')),  -- KST 기준
                     set_number INTEGER NOT NULL,
                     numbers TEXT NOT NULL,
                     confidence REAL,
@@ -206,7 +207,9 @@ class PredictionTracker:
         """
         try:
             # 연도별 디렉토리 생성
-            year = datetime.now().year
+            # IMPORTANT: 한국 시간대(KST) 사용 - 절대 변경하지 말 것!
+            kst = pytz.timezone('Asia/Seoul')
+            year = datetime.now(kst).year
             json_dir = self.db_path.parent / str(year)
             json_dir.mkdir(exist_ok=True)
             
@@ -217,7 +220,7 @@ class PredictionTracker:
                 # 새로운 JSON 데이터 구성 (덮어쓰기)
                 json_data = {
                     "round": round_num,
-                    "prediction_date": datetime.now().isoformat(),
+                    "prediction_date": datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),  # KST 시간
                     "model_version": "2.0",
                     "predictions": []
                 }

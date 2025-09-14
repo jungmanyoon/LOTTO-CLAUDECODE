@@ -106,11 +106,12 @@ class DataCollector:
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, 'html.parser')
-                    numbers = self.parse_numbers(soup)
+                    result = self.parse_numbers(soup)
                     date = self.parse_date(soup)
                     
-                    if numbers and date:
-                        self.db_manager.insert_lotto_numbers(round_num, numbers, date)
+                    if result and date:
+                        numbers, bonus = result  # 튜플 언패킹
+                        self.db_manager.insert_lotto_numbers_with_bonus(round_num, numbers, bonus, date)
                         # logging.info(f"회차 {round_num} 데이터 수집 및 저장 성공") # 이 줄 제거
                         return True
                     
@@ -141,13 +142,15 @@ class DataCollector:
             return None
 
     def parse_numbers(self, soup):
-        """BeautifulSoup 객체에서 로또 번호를 추출"""
+        """BeautifulSoup 객체에서 로또 번호와 보너스 번호를 추출"""
         try:
             desc_tag = soup.find('meta', attrs={'name': 'description'})
             if desc_tag and 'content' in desc_tag.attrs:
                 numbers_match = re.search(r'당첨번호\s*([\d,]+)\+(\d+)', desc_tag['content'])
                 if numbers_match:
-                    return [int(num) for num in numbers_match.group(1).split(',')]
+                    main_numbers = [int(num) for num in numbers_match.group(1).split(',')]
+                    bonus_number = int(numbers_match.group(2))
+                    return (main_numbers, bonus_number)  # 튜플로 반환
             return None
         except Exception as e:
             logging.error(f"번호 파싱 중 에러 발생: {e}")

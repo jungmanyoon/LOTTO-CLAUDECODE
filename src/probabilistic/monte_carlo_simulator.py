@@ -27,13 +27,20 @@ class MonteCarloSimulator:
         self.probability_matrix = None
         self.transition_matrix = None
         
-        # 시뮬레이션 파라미터
+        # 시뮬레이션 파라미터 (CPU 코어 수에 따른 동적 조정)
+        cpu_count = mp.cpu_count()
+        optimal_simulations = min(10000, max(5000, cpu_count * 1000))  # CPU당 1000회, 최소 5000, 최대 10000
+        
         self.simulation_params = {
-            'n_simulations': 5000,  # CPU 사용률 최적화: 10000 -> 5000
+            'n_simulations': optimal_simulations,  # CPU 기반 동적 조정
             'confidence_level': 0.95,
             'convergence_threshold': 0.001,
-            'max_iterations': 1000000
+            'max_iterations': 1000000,
+            'adaptive_mode': True,  # 적응형 모드 활성화
+            'cpu_cores': cpu_count
         }
+        
+        logging.info(f"몬테카를로 시뮬레이션: {cpu_count}코어 감지, {optimal_simulations}회 시뮬레이션 설정")
         
         # 확률 모델 파라미터
         self.probability_model = {

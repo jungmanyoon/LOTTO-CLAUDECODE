@@ -186,12 +186,15 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             'performance_metrics': {}
         }
         
-        # 전체 당첨번호 데이터 가져오기
-        all_numbers = self.db_manager.get_all_numbers()
-        winning_numbers_dict = {
-            round_num: [int(n) for n in numbers.split(',')]
-            for round_num, numbers, _ in all_numbers  # 3개의 값 언패킹
-        }
+        # 전체 당첨번호 데이터 가져오기 (보너스 번호 포함)
+        all_numbers_with_bonus = self.db_manager.get_numbers_with_bonus()
+        winning_numbers_dict = {}
+        bonus_numbers_dict = {}
+        
+        for round_num, numbers_tuple in all_numbers_with_bonus:
+            # numbers_tuple: (n1, n2, n3, n4, n5, n6, bonus)
+            winning_numbers_dict[round_num] = list(numbers_tuple[:6])
+            bonus_numbers_dict[round_num] = numbers_tuple[6] if len(numbers_tuple) > 6 else None
         
         # 백테스팅 수행 - 배치 처리
         test_rounds = list(range(start_round, end_round + 1))
@@ -219,7 +222,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                     
                     future = executor.submit(
                         self._predict_for_round_optimized,
-                        test_round, train_start, train_end, winning_numbers_dict
+                        test_round, train_start, train_end, winning_numbers_dict, bonus_numbers_dict
                     )
                     futures.append((test_round, future))
                 
@@ -230,12 +233,14 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                     # 카운터 증가
                     self.counter_manager.increment('total_rounds')
                     
-                    # 실제 당첨번호와 비교
+                    # 실제 당첨번호와 비교 (보너스 번호 포함)
                     if test_round in winning_numbers_dict:
                         actual_numbers = winning_numbers_dict[test_round]
+                        bonus_number = bonus_numbers_dict.get(test_round)
                         prediction_result['actual_numbers'] = actual_numbers
+                        prediction_result['bonus_number'] = bonus_number
                         prediction_result['matches'] = self._calculate_matches(
-                            prediction_result['predictions'], actual_numbers
+                            prediction_result['predictions'], actual_numbers, bonus_number
                         )
                         
                         # 결과 저장
@@ -262,7 +267,8 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         return results
     
     def _predict_for_round_optimized(self, round_num: int, train_start: int, train_end: int,
-                                    winning_numbers_dict: Dict[int, List[int]]) -> Dict[str, Any]:
+                                    winning_numbers_dict: Dict[int, List[int]], 
+                                    bonus_numbers_dict: Dict[int, Optional[int]] = None) -> Dict[str, Any]:
         """최적화된 회차별 예측"""
         # 중복 체크
         if round_num in self.processed_rounds:
@@ -676,8 +682,8 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             result['filter_pass_rate'] = 0
             result['filtered_pool_inclusion_rate'] = 0
     
-    def _calculate_matches(self, predictions: Dict[str, List[List[int]]], actual: List[int]) -> Dict[str, Any]:
-        """예측과 실제 당첨번호 비교"""
+    def _calculate_matches(self, predictions: Dict[str, List[List[int]]], actual: List[int], bonus: Optional[int] = None) -> Dict[str, Any]:
+        """예측과 실제 당첨번호 비교 (보너스 번호 포함)"""
         matches = {}
         actual_set = set(actual)
         
@@ -689,6 +695,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             for pred in model_predictions:
                 pred_set = set(pred)
                 match_count = len(pred_set & actual_set)
+                bonus_match = bonus in pred_set if bonus else False
                 pred_tuple = tuple(pred)
                 
                 # 높은 일치 개수 통계적 검증
@@ -727,9 +734,24 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                     except Exception as e:
                         logging.debug(f"ENSEMBLE 모니터링 기록 실패: {e}")
                 
+                # 등수 계산 (보너스 포함)
+                rank = None
+                if match_count == 6:
+                    rank = 1  # 1등
+                elif match_count == 5 and bonus_match:
+                    rank = 2  # 2등 (5개 + 보너스)
+                elif match_count == 5:
+                    rank = 3  # 3등
+                elif match_count == 4:
+                    rank = 4  # 4등
+                elif match_count == 3:
+                    rank = 5  # 5등
+                    
                 model_matches.append({
                     'prediction': pred,
                     'match_count': match_count,
+                    'bonus_match': bonus_match,
+                    'rank': rank,
                     'matches': sorted(list(pred_set & actual_set)),
                     'contaminated': contaminated  # 오염 여부 기록
                 })
@@ -824,8 +846,24 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
     def _save_to_database(self, results: Dict[str, Any]):
         """백테스팅 결과를 데이터베이스에 저장"""
         try:
+            # NumPy 타입을 Python 기본 타입으로 변환
+            def convert_numpy_types(obj):
+                if isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                elif isinstance(obj, dict):
+                    return {key: convert_numpy_types(value) for key, value in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy_types(item) for item in obj]
+                return obj
+            
             # 상세 예측 결과를 PerformanceStatsManager가 기대하는 형식으로 변환
             formatted_results = self._format_results_for_db(results)
+            # NumPy 타입 변환 적용
+            formatted_results = convert_numpy_types(formatted_results)
             
             # DB에 저장
             session_id = self.performance_stats_manager.save_backtest_results(formatted_results)

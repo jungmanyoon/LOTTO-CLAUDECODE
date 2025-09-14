@@ -382,35 +382,102 @@ class EnhancedDynamicFilterManager(DynamicFilterManager):
         return dashboard
     
     def export_performance_report(self, output_path: str = 'filter_performance_report.json'):
-        """성능 보고서 내보내기"""
-        report = {
-            'generated_at': datetime.now().isoformat(),
-            'monitoring_period': {
-                'start': self.weight_manager.adjustment_history[0]['timestamp'].isoformat() 
-                        if self.weight_manager.adjustment_history else None,
-                'end': datetime.now().isoformat()
-            },
-            'filter_performances': {},
-            'weight_evolution': self.weight_manager.adjustment_history,
-            'real_time_dashboard': self.get_real_time_dashboard()
-        }
-        
-        # 각 필터의 상세 성능
-        for filter_name in self.filter_groups['essential'] + \
-                         self.filter_groups['optional_a'] + \
-                         self.filter_groups['optional_b']:
-            report['filter_performances'][filter_name] = {
-                'current_metrics': self.monitor.get_performance_metrics(filter_name),
-                'current_criteria': self.get_dynamic_criteria(filter_name),
-                'effectiveness_score': self.filter_effectiveness.get(filter_name, 0.0)
+        """성능 보고서 내보내기 (실제 필터링 데이터 사용)"""
+        try:
+            # 실제 필터 매니저의 성능 추적기에서 데이터 가져오기
+            real_time_stats = None
+            if hasattr(self, 'db_manager'):
+                try:
+                    from .core.filter_manager import FilterManager
+                    filter_manager = FilterManager(self.db_manager)
+                    if hasattr(filter_manager, 'performance_tracker') and filter_manager.performance_tracker:
+                        real_time_stats = filter_manager.performance_tracker.get_real_time_stats()
+                except Exception as e:
+                    logging.warning(f"실제 성능 데이터 로드 실패: {e}")
+            
+            # 기본 보고서 구조
+            report = {
+                'generated_at': datetime.now().isoformat(),
+                'monitoring_period': {
+                    'start': self.weight_manager.adjustment_history[0]['timestamp'].isoformat() 
+                            if self.weight_manager.adjustment_history else None,
+                    'end': datetime.now().isoformat()
+                },
+                'filter_performances': {},
+                'weight_evolution': self.weight_manager.adjustment_history,
+                'real_time_dashboard': self.get_real_time_dashboard(),
+                'actual_filtering_data': real_time_stats  # 실제 필터링 데이터 추가
             }
-        
-        # 파일로 저장
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(report, f, ensure_ascii=False, indent=2, default=str)
-        
-        logging.info(f"성능 보고서 저장됨: {output_path}")
-        return report
+            
+            # 실제 데이터가 있으면 우선 사용
+            if real_time_stats and 'filter_summary' in real_time_stats:
+                for filter_name, stats in real_time_stats['filter_summary'].items():
+                    report['filter_performances'][filter_name] = {
+                        'current_metrics': {
+                            'avg_pass_rate': stats['avg_pass_rate'] / 100.0,  # 0-1 범위로 정규화
+                            'avg_exclusion_rate': stats['avg_exclusion_rate'] / 100.0,
+                            'total_processed': stats['total_processed'],
+                            'total_excluded': stats['total_excluded'],
+                            'false_negative_rate': 0.0,  # 추후 계산 로직 추가
+                            'stability': min(1.0, len(stats.get('recent_performance', {}).get('processing_times', [])) / 10.0)
+                        },
+                        'current_criteria': self.get_dynamic_criteria(filter_name),
+                        'effectiveness_score': stats['avg_exclusion_rate'] / 100.0,
+                        'performance_details': {
+                            'avg_processing_time': stats['avg_processing_time'],
+                            'last_round': stats['last_round'],
+                            'recent_trends': stats.get('recent_performance', {})
+                        }
+                    }
+            else:
+                # 실제 데이터가 없으면 기존 방식 사용 (하지만 개선된 메트릭)
+                for filter_name in self.filter_groups.get('essential', []) + \
+                                 self.filter_groups.get('optional_a', []) + \
+                                 self.filter_groups.get('optional_b', []):
+                    # 실시간 통계에서 실제 데이터 찾기
+                    real_stats = self.real_time_stats.get(filter_name, {})
+                    total_processed = real_stats.get('total_processed', 0)
+                    total_excluded = real_stats.get('total_excluded', 0)
+                    
+                    if total_processed > 0:
+                        actual_exclusion_rate = total_excluded / total_processed
+                        actual_pass_rate = 1.0 - actual_exclusion_rate
+                    else:
+                        actual_exclusion_rate = 0.0
+                        actual_pass_rate = 1.0
+                    
+                    report['filter_performances'][filter_name] = {
+                        'current_metrics': {
+                            'avg_pass_rate': actual_pass_rate,
+                            'avg_exclusion_rate': actual_exclusion_rate,
+                            'total_processed': total_processed,
+                            'total_excluded': total_excluded,
+                            'false_negative_rate': 0.0,
+                            'stability': 1.0 if len(real_stats.get('processing_time', [])) > 5 else 0.5
+                        },
+                        'current_criteria': self.get_dynamic_criteria(filter_name),
+                        'effectiveness_score': actual_exclusion_rate
+                    }
+            
+            # 파일로 저장
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2, default=str)
+            
+            # 결과 디렉토리에도 저장
+            results_output = output_path.replace('.json', '_enhanced.json')
+            with open(f'results/{results_output}', 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2, default=str)
+            
+            logging.info(f"[개선된 성능 보고서] 저장 완료: {output_path}")
+            logging.info(f"실제 필터링 데이터 포함: {'예' if real_time_stats else '아니오'}")
+            
+            return report
+            
+        except Exception as e:
+            logging.error(f"성능 보고서 생성 실패: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return {}
 
 
 def main():

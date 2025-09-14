@@ -74,7 +74,7 @@ class AdaptiveProbabilityFilter:
     def generate_dynamic_criteria(self) -> Dict[str, Any]:
         """
         확률 임계값 기반으로 각 필터의 동적 기준 생성
-        
+
         Returns:
             필터별 동적 기준값
         """

@@ -27,7 +27,7 @@ class PerformanceStatsManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # 백테스팅 세션 테이블
+            # 백테스팅 세션 테이블 (임계값 추적 추가)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS backtest_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +36,11 @@ class PerformanceStatsManager:
                     test_start_round INTEGER,
                     test_end_round INTEGER,
                     session_config TEXT,
+                    probability_threshold REAL DEFAULT 1.0,
+                    ml_bypass_filters INTEGER DEFAULT 8,
+                    ml_weight REAL DEFAULT 0.4,
+                    combination_count INTEGER,
+                    ml_inclusion_rate REAL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -117,19 +122,29 @@ class PerformanceStatsManager:
                 test_start_round = min([p.get('round', 0) for p in predictions]) if predictions else 0
                 test_end_round = max([p.get('round', 0) for p in predictions]) if predictions else 0
                 
-                # 설정 정보 저장
+                # 설정 정보 저장 (임계값 정보 포함)
                 config_info = {
                     'filter_enabled': backtest_results.get('filter_enabled', True),
                     'model_types': list(performance_metrics.get('model_performance', {}).keys()),
                     'test_range': f"{test_start_round}-{test_end_round}"
                 }
-                
+
+                # 임계값 관련 정보 추출
+                threshold_info = backtest_results.get('threshold_info', {})
+                probability_threshold = threshold_info.get('probability_threshold', 1.0)
+                ml_bypass_filters = threshold_info.get('ml_bypass_filters', 8)
+                ml_weight = threshold_info.get('ml_weight', 0.4)
+                combination_count = threshold_info.get('combination_count', 0)
+                ml_inclusion_rate = threshold_info.get('ml_inclusion_rate', 0.0)
+
                 cursor.execute("""
-                    INSERT INTO backtest_sessions 
-                    (session_date, total_rounds, test_start_round, test_end_round, session_config)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (session_date, total_rounds, test_start_round, test_end_round, 
-                      json.dumps(config_info, ensure_ascii=False)))
+                    INSERT INTO backtest_sessions
+                    (session_date, total_rounds, test_start_round, test_end_round, session_config,
+                     probability_threshold, ml_bypass_filters, ml_weight, combination_count, ml_inclusion_rate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (session_date, total_rounds, test_start_round, test_end_round,
+                      json.dumps(config_info, ensure_ascii=False),
+                      probability_threshold, ml_bypass_filters, ml_weight, combination_count, ml_inclusion_rate))
                 
                 session_id = cursor.lastrowid
                 
@@ -386,6 +401,120 @@ class PerformanceStatsManager:
                 conn.commit()
                 
                 self.logger.info(f"데이터 정리 완료: 세션 {deleted_sessions}개, 성능 {deleted_performance}개, 상세 {deleted_details}개 삭제")
-                
+
         except Exception as e:
             self.logger.error(f"데이터 정리 실패: {e}")
+
+    def get_threshold_performance_history(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """임계값별 성능 이력 조회"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("""
+                    SELECT
+                        bs.session_date,
+                        bs.probability_threshold,
+                        bs.ml_bypass_filters,
+                        bs.ml_weight,
+                        bs.combination_count,
+                        bs.ml_inclusion_rate,
+                        AVG(mp.avg_matches) as avg_matches,
+                        MAX(mp.best_match) as best_match,
+                        AVG(mp.accuracy_3plus) as accuracy_3plus,
+                        COUNT(DISTINCT mp.model_name) as model_count
+                    FROM backtest_sessions bs
+                    LEFT JOIN model_performance mp ON bs.id = mp.session_id
+                    GROUP BY bs.id
+                    ORDER BY bs.created_at DESC
+                    LIMIT ?
+                """, (limit,))
+
+                columns = [desc[0] for desc in cursor.description]
+                results = []
+
+                for row in cursor.fetchall():
+                    result = dict(zip(columns, row))
+                    # 반올림 처리
+                    if result['avg_matches'] is not None:
+                        result['avg_matches'] = round(result['avg_matches'], 3)
+                    if result['accuracy_3plus'] is not None:
+                        result['accuracy_3plus'] = round(result['accuracy_3plus'], 2)
+                    if result['ml_inclusion_rate'] is not None:
+                        result['ml_inclusion_rate'] = round(result['ml_inclusion_rate'], 4)
+                    results.append(result)
+
+                return results
+
+        except Exception as e:
+            self.logger.error(f"임계값 성능 이력 조회 실패: {e}")
+            return []
+
+    def get_optimal_threshold_stats(self) -> Dict[str, Any]:
+        """최적 임계값 통계 분석"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 임계값별 평균 성능
+                cursor.execute("""
+                    SELECT
+                        probability_threshold,
+                        COUNT(*) as session_count,
+                        AVG(CAST(
+                            (SELECT AVG(avg_matches) FROM model_performance WHERE session_id = bs.id)
+                            as REAL
+                        )) as avg_performance,
+                        AVG(ml_inclusion_rate) as avg_ml_inclusion,
+                        AVG(combination_count) as avg_combinations
+                    FROM backtest_sessions bs
+                    WHERE probability_threshold IS NOT NULL
+                    GROUP BY probability_threshold
+                    ORDER BY avg_performance DESC
+                """)
+
+                threshold_stats = []
+                columns = [desc[0] for desc in cursor.description]
+                for row in cursor.fetchall():
+                    stat = dict(zip(columns, row))
+                    if stat['avg_performance'] is not None:
+                        stat['avg_performance'] = round(stat['avg_performance'], 3)
+                    if stat['avg_ml_inclusion'] is not None:
+                        stat['avg_ml_inclusion'] = round(stat['avg_ml_inclusion'], 4)
+                    threshold_stats.append(stat)
+
+                # 최적 임계값 찾기 (평균 매칭 기준)
+                cursor.execute("""
+                    SELECT
+                        bs.probability_threshold,
+                        bs.ml_bypass_filters,
+                        bs.ml_weight,
+                        AVG(mp.avg_matches) as avg_matches,
+                        bs.ml_inclusion_rate,
+                        bs.combination_count
+                    FROM backtest_sessions bs
+                    LEFT JOIN model_performance mp ON bs.id = mp.session_id
+                    WHERE bs.probability_threshold IS NOT NULL
+                    GROUP BY bs.id
+                    ORDER BY avg_matches DESC
+                    LIMIT 1
+                """)
+
+                best_session = cursor.fetchone()
+                best_threshold_info = None
+                if best_session:
+                    columns = ['probability_threshold', 'ml_bypass_filters', 'ml_weight',
+                              'avg_matches', 'ml_inclusion_rate', 'combination_count']
+                    best_threshold_info = dict(zip(columns, best_session))
+                    if best_threshold_info['avg_matches'] is not None:
+                        best_threshold_info['avg_matches'] = round(best_threshold_info['avg_matches'], 3)
+
+                return {
+                    'threshold_performance': threshold_stats,
+                    'best_threshold': best_threshold_info,
+                    'total_sessions_analyzed': len(threshold_stats)
+                }
+
+        except Exception as e:
+            self.logger.error(f"최적 임계값 통계 분석 실패: {e}")
+            return {}

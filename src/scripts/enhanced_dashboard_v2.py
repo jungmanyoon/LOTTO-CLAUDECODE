@@ -19,6 +19,7 @@ from flask import Flask, render_template_string, jsonify, request, send_file
 import logging
 import base64
 from io import BytesIO
+import pytz  # 한국 시간대 처리를 위해 추가
 
 # ConfigManager import 추가
 try:
@@ -38,12 +39,14 @@ class EnhancedLottoDashboard:
     """향상된 로또 대시보드 v2"""
     
     def __init__(self):
-        self.db_path = "data/combinations.db"  # Legacy DB
-        self.lotto_db_path = "data/lotto_numbers.db"  # Actual winning numbers DB
-        self.predictions_db_path = "data/predictions/predictions.db"
+        # 프로젝트 루트 디렉토리 기준으로 절대 경로 설정
+        self.project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.db_path = os.path.join(self.project_root, "data/combinations.db")  # Legacy DB
+        self.lotto_db_path = os.path.join(self.project_root, "data/lotto_numbers.db")  # Actual winning numbers DB
+        self.predictions_db_path = os.path.join(self.project_root, "data/predictions/predictions.db")
         self.logger = logging.getLogger(__name__)
         self.filter_validation_results = {}  # 필터 검증 결과 저장
-        
+
         # ConfigManager에서 필터 설정 가져오기
         self.filter_criteria = self._load_filter_criteria()
     
@@ -160,7 +163,7 @@ class EnhancedLottoDashboard:
                 actual_round = round_num
                 
                 cursor.execute("""
-                    SELECT numbers, draw_date 
+                    SELECT numbers, draw_date, bonus_number 
                     FROM lotto_numbers 
                     WHERE round = ?
                 """, (actual_round,))
@@ -171,9 +174,8 @@ class EnhancedLottoDashboard:
                     numbers_str = row[0]
                     numbers = [int(n) for n in numbers_str.split(',')]
                     
-                    # 보너스 번호는 현재 DB에 없으므로 마지막 번호 다음 번호로 임시 설정
-                    # 또는 랜덤하게 선택
-                    bonus = random.choice([n for n in range(1, 46) if n not in numbers])
+                    # 실제 보너스 번호 사용 (DB에서 조회)
+                    bonus = row[2] if row[2] is not None else random.choice([n for n in range(1, 46) if n not in numbers])
                     
                     return {
                         'numbers': numbers[:6],  # 첫 6개만 (보너스 제외)
@@ -250,9 +252,22 @@ class EnhancedLottoDashboard:
                 cursor.execute("SELECT COUNT(DISTINCT round) FROM predictions")
                 total_rounds = cursor.fetchone()[0]
                 
-                # 등수별 분포 (실제 결과가 있는 경우)
+                # 맞춘 개수별 분포 (실제 결과가 있는 경우)
                 cursor.execute("""
-                    SELECT 
+                    SELECT match_count, COUNT(*) as cnt
+                    FROM prediction_results
+                    GROUP BY match_count
+                    ORDER BY match_count
+                """)
+
+                match_distribution = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+                for row in cursor.fetchall():
+                    if row[0] is not None:
+                        match_distribution[row[0]] = row[1]
+
+                # 등수별 분포도 가져오기
+                cursor.execute("""
+                    SELECT
                         SUM(CASE WHEN rank = 1 THEN 1 ELSE 0 END) as rank1,
                         SUM(CASE WHEN rank = 2 THEN 1 ELSE 0 END) as rank2,
                         SUM(CASE WHEN rank = 3 THEN 1 ELSE 0 END) as rank3,
@@ -260,7 +275,7 @@ class EnhancedLottoDashboard:
                         SUM(CASE WHEN rank = 5 THEN 1 ELSE 0 END) as rank5
                     FROM prediction_results
                 """)
-                
+
                 row = cursor.fetchone()
                 if row and row[0] is not None:
                     rank_stats = {
@@ -278,7 +293,8 @@ class EnhancedLottoDashboard:
                     'total_rounds': total_rounds,
                     'avg_predictions_per_round': total_predictions / total_rounds if total_rounds > 0 else 0,
                     'rank_distribution': rank_stats,
-                    'total_wins': sum(rank_stats.values())
+                    'total_wins': sum(rank_stats.values()),
+                    'match_distribution': match_distribution
                 }
                 
         except Exception as e:
@@ -310,47 +326,268 @@ class EnhancedLottoDashboard:
     def get_backtest_performance(self) -> Dict:
         """백테스팅 성능 데이터 조회"""
         try:
-            # 백테스팅 결과 파일들을 찾아서 로드
+            # 먼저 데이터베이스에서 실제 백테스팅 성능 데이터 로드 시도
+            performance_db_path = os.path.join(self.project_root, "data/performance_stats.db")
+            self.logger.info(f"백테스팅 DB 경로 확인: {performance_db_path}, 존재: {os.path.exists(performance_db_path)}")
+
+            if os.path.exists(performance_db_path):
+                self.logger.info("데이터베이스에서 백테스팅 데이터 로드 시도...")
+                performance_summary = self._load_backtest_from_db(performance_db_path)
+                if performance_summary:
+                    self.logger.info(f"데이터베이스에서 백테스팅 데이터 로드 성공! 모델 수: {len(performance_summary.get('by_model', []))}")
+
+                    # API 응답용 데이터 구조로 변환
+                    result = {
+                        'demo_mode': False,
+                        'total_predictions': performance_summary['overall'].get('total_predictions', 0),
+                        'average_matches': performance_summary['overall'].get('avg_match_rate', 0),
+                        'test_period': performance_summary['overall'].get('test_period', 'N/A'),
+                        'model_performance': {}
+                    }
+
+                    # 모델별 성능 데이터 변환
+                    for model_data in performance_summary.get('by_model', []):
+                        model_name = model_data['model']
+                        result['model_performance'][model_name] = {
+                            'total_predictions': model_data['total_predictions'],
+                            'avg_matches': model_data['avg_matches'],
+                            'best_match': model_data['best_match'],
+                            'accuracy_3plus': model_data['avg_accuracy_3plus'],
+                            'match_distribution': model_data.get('match_distribution', {})
+                        }
+
+                    self.logger.info(f"API 응답 데이터 준비 완료: demo_mode={result['demo_mode']}, 총 예측={result['total_predictions']}")
+                    return result
+                else:
+                    self.logger.warning("데이터베이스에서 백테스팅 데이터 로드 실패")
+
+            # JSON 파일에서 백테스팅 결과 로드 (백업)
             backtest_files = []
             possible_paths = [
-                "logs/backtesting_results.json",
-                "cache/backtesting_results.json", 
-                "data/backtesting_results.json",
-                "backtesting_results.json"
+                os.path.join(self.project_root, "results/backtest_results_*.json"),
+                os.path.join(self.project_root, "logs/backtesting_results.json"),
+                os.path.join(self.project_root, "cache/backtesting_results.json"),
+                os.path.join(self.project_root, "data/backtesting_results.json"),
+                os.path.join(self.project_root, "backtesting_results.json")
             ]
-            
-            for path in possible_paths:
-                if os.path.exists(path):
-                    backtest_files.append(path)
-            
-            if not backtest_files:
-                # 데모 백테스팅 데이터 생성
-                return self._generate_demo_backtest_data()
-            
-            # 가장 최근 파일 로드
-            latest_file = max(backtest_files, key=os.path.getmtime)
-            
-            with open(latest_file, 'r', encoding='utf-8') as f:
-                backtest_data = json.load(f)
-            
-            # 백테스팅 데이터 구조 변환
-            return {
-                'available': True,
-                'demo_mode': False,
-                'last_updated': datetime.fromtimestamp(os.path.getmtime(latest_file)).strftime('%Y-%m-%d %H:%M'),
-                'performance_summary': self._process_backtest_data(backtest_data)
-            }
-            
+
+            import glob
+            for path_pattern in possible_paths:
+                if '*' in path_pattern:
+                    files = glob.glob(path_pattern)
+                    backtest_files.extend(files)
+                elif os.path.exists(path_pattern):
+                    backtest_files.append(path_pattern)
+
+            if backtest_files:
+                # 가장 최근 파일 로드
+                latest_file = max(backtest_files, key=os.path.getmtime)
+
+                with open(latest_file, 'r', encoding='utf-8') as f:
+                    backtest_data = json.load(f)
+
+                # JSON 데이터를 API 응답 형식으로 변환
+                result = {
+                    'demo_mode': False,
+                    'total_predictions': 0,
+                    'average_matches': 0,
+                    'test_period': 'N/A',
+                    'model_performance': {}
+                }
+
+                # JSON 데이터에서 필요한 정보 추출
+                if 'summary' in backtest_data:
+                    summary = backtest_data['summary']
+                    result['test_period'] = f"{summary.get('test_start', 'N/A')}-{summary.get('test_end', 'N/A')}회차"
+
+                if 'model_performance' in backtest_data:
+                    for model_name, model_data in backtest_data['model_performance'].items():
+                        result['model_performance'][model_name] = {
+                            'total_predictions': model_data.get('total_predictions', 0),
+                            'avg_matches': model_data.get('avg_matches', 0),
+                            'best_match': model_data.get('max_matches', 0),
+                            'accuracy_3plus': model_data.get('three_plus_rate', 0),
+                            'match_distribution': model_data.get('match_distribution', {})
+                        }
+                        result['total_predictions'] += model_data.get('total_predictions', 0)
+                        result['average_matches'] += model_data.get('avg_matches', 0) * model_data.get('total_predictions', 0)
+
+                if result['total_predictions'] > 0:
+                    result['average_matches'] /= result['total_predictions']
+
+                self.logger.info(f"JSON 파일에서 백테스팅 데이터 로드: demo_mode={result['demo_mode']}, 총 예측={result['total_predictions']}")
+                return result
+
+            # 실제 데이터가 없을 경우 데모 데이터 생성
+            self.logger.warning("백테스팅 데이터를 찾을 수 없습니다. 데모 모드로 전환합니다.")
+            return self._generate_demo_backtest_data_api()
+
         except Exception as e:
             self.logger.warning(f"백테스팅 데이터 로드 실패: {e}")
-            return self._generate_demo_backtest_data()
-    
+            return self._generate_demo_backtest_data_api()
+
+    def _load_backtest_from_db(self, db_path: str) -> Optional[Dict]:
+        """데이터베이스에서 백테스팅 성능 데이터 로드"""
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+
+                # 최신 세션 정보 조회
+                cursor.execute("""
+                    SELECT id, session_date, total_rounds, test_start_round, test_end_round
+                    FROM backtest_sessions
+                    ORDER BY id DESC
+                    LIMIT 1
+                """)
+                session_row = cursor.fetchone()
+
+                if not session_row:
+                    self.logger.warning("백테스팅 세션이 없습니다.")
+                    return None
+
+                session_id, session_date, total_rounds, start_round, end_round = session_row
+
+                # 최신 세션의 모델 성능 데이터 조회
+                cursor.execute("""
+                    SELECT model_name, total_predictions, avg_matches, best_match,
+                           accuracy_3plus, match_0, match_1, match_2, match_3, match_4, match_5, match_6
+                    FROM model_performance
+                    WHERE session_id = ?
+                    ORDER BY model_name
+                """, (session_id,))
+
+                model_rows = cursor.fetchall()
+
+                if not model_rows:
+                    self.logger.warning(f"세션 {session_id}의 모델 성능 데이터가 없습니다.")
+                    return None
+
+                # 백테스팅 데이터 구조 생성
+                model_performance = []
+                total_predictions_sum = 0
+                total_matches_sum = 0
+                best_session_match = 0
+
+                for row in model_rows:
+                    model_name, total_preds, avg_matches, best_match, accuracy_3plus, \
+                    match_0, match_1, match_2, match_3, match_4, match_5, match_6 = row
+
+                    model_performance.append({
+                        'model': model_name,
+                        'total_predictions': total_preds,
+                        'avg_matches': avg_matches,
+                        'avg_accuracy_3plus': accuracy_3plus or 0.0,
+                        'best_match': best_match,
+                        'sessions': 1,  # 현재는 하나의 세션만 표시
+                        'match_distribution': {
+                            'match_0': match_0 or 0,
+                            'match_1': match_1 or 0,
+                            'match_2': match_2 or 0,
+                            'match_3': match_3 or 0,
+                            'match_4': match_4 or 0,
+                            'match_5': match_5 or 0,
+                            'match_6': match_6 or 0
+                        }
+                    })
+
+                    total_predictions_sum += total_preds
+                    total_matches_sum += avg_matches * total_preds
+                    best_session_match = max(best_session_match, best_match)
+
+                # 전체 통계 계산
+                avg_match_rate = total_matches_sum / total_predictions_sum if total_predictions_sum > 0 else 0
+
+                return {
+                    'overall': {
+                        'total_sessions': 1,
+                        'avg_match_rate': avg_match_rate,
+                        'best_session_match': best_session_match,
+                        'total_predictions': total_predictions_sum,
+                        'test_period': f"{start_round}-{end_round}회차",
+                        'session_date': session_date
+                    },
+                    'by_model': model_performance,
+                    'filter_performance': {
+                        'total_combinations_before': 8145060,  # 고정값 (전체 조합 수)
+                        'total_combinations_after': 300000,   # 예상 필터링 후 조합 수
+                        'reduction_rate': 96.3,               # 예상 감소율
+                        'hit_rate_in_filtered_pool': 85.0     # 예상 히트율
+                    }
+                }
+
+        except Exception as e:
+            self.logger.error(f"데이터베이스에서 백테스팅 데이터 로드 실패: {e}")
+            return None
+
+    def _generate_demo_backtest_data_api(self) -> Dict:
+        """API 응답용 데모 백테스팅 데이터 생성"""
+        return {
+            'demo_mode': True,
+            'total_predictions': 1000,
+            'average_matches': 0.875,
+            'test_period': '1139-1188회차',
+            'model_performance': {
+                'lstm': {
+                    'total_predictions': 250,
+                    'avg_matches': 0.76,
+                    'best_match': 3,
+                    'accuracy_3plus': 2.4,
+                    'match_distribution': {
+                        'match_0': 108,
+                        'match_1': 100,
+                        'match_2': 36,
+                        'match_3': 6,
+                        'match_4': 0
+                    }
+                },
+                'ensemble': {
+                    'total_predictions': 250,
+                    'avg_matches': 1.08,
+                    'best_match': 3,
+                    'accuracy_3plus': 5.6,
+                    'match_distribution': {
+                        'match_0': 70,
+                        'match_1': 106,
+                        'match_2': 63,
+                        'match_3': 11,
+                        'match_4': 0
+                    }
+                },
+                'monte_carlo': {
+                    'total_predictions': 250,
+                    'avg_matches': 0.74,
+                    'best_match': 3,
+                    'accuracy_3plus': 1.2,
+                    'match_distribution': {
+                        'match_0': 104,
+                        'match_1': 109,
+                        'match_2': 34,
+                        'match_3': 3,
+                        'match_4': 0
+                    }
+                },
+                'combined': {
+                    'total_predictions': 250,
+                    'avg_matches': 0.91,
+                    'best_match': 3,
+                    'accuracy_3plus': 4.4,
+                    'match_distribution': {
+                        'match_0': 89,
+                        'match_1': 108,
+                        'match_2': 45,
+                        'match_3': 8,
+                        'match_4': 0
+                    }
+                }
+            }
+        }
+
     def _generate_demo_backtest_data(self) -> Dict:
         """데모 백테스팅 데이터 생성"""
         return {
             'available': True,
             'demo_mode': True,
-            'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M'),
+            'last_updated': datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M'),  # KST 시간대 적용
             'performance_summary': {
                 'overall': {
                     'total_sessions': 5,
@@ -408,6 +645,33 @@ class EnhancedLottoDashboard:
                 }
             }
         }
+    
+    def _convert_to_kst(self, datetime_str):
+        """UTC 시간을 KST로 변환 - 예측 번호는 그대로 유지, 시간만 보정"""
+        if not datetime_str:
+            return datetime_str
+        
+        try:
+            # IMPORTANT: 한국 시간대(KST) 유지 - 절대 변경하지 말 것!
+            # 이 부분은 예측 번호를 변경하지 않고 시간 표시만 KST로 보정합니다.
+            
+            # 데이터베이스의 시간이 UTC로 저장된 경우 9시간 추가
+            # 형식: "YYYY-MM-DD HH:MM:SS"
+            if ' ' in datetime_str:
+                from datetime import datetime
+                dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
+                
+                # UTC를 KST로 변환 (UTC + 9시간)
+                kst_dt = dt.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('Asia/Seoul'))
+                
+                # 한국 시간대로 표시 - 예측 번호는 그대로 유지
+                return kst_dt.strftime('%Y-%m-%d %H:%M:%S')
+                
+        except Exception:
+            # 변환 실패 시 원본 그대로 반환 (예측 번호 보존)
+            pass
+            
+        return datetime_str
     
     def _process_backtest_data(self, raw_data: Dict) -> Dict:
         """원본 백테스팅 데이터를 대시보드용으로 가공"""
@@ -480,7 +744,7 @@ class EnhancedLottoDashboard:
         from datetime import datetime, timedelta
         
         # 임의의 날짜 생성 (7일 전부터 오늘까지)
-        today = datetime.now()
+        today = datetime.now(pytz.timezone('Asia/Seoul'))  # KST 시간대 적용
         dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7, -1, -1)]
         
         # 데모 예측 생성
@@ -498,7 +762,7 @@ class EnhancedLottoDashboard:
                     'confidence': round(random.uniform(60, 95), 1),
                     'source': random.choice(['ML/monte_carlo', 'ML/lstm', 'ML/ensemble']),
                     'characteristics': {'demo': True},
-                    'datetime': f'{date_str} {random.randint(10, 18):02d}:{random.randint(0, 59):02d}:00',
+                    'datetime': f'{date_str} {random.randint(10, 18):02d}:{random.randint(0, 59):02d}:00',  # 이미 KST 기준
                     'date': date_str,
                     'matches': random.choices([0, 1, 2, 3, 4], weights=[30, 35, 25, 8, 2])[0],
                     'bonus_match': random.random() < 0.15,
@@ -583,7 +847,7 @@ class EnhancedLottoDashboard:
                         'confidence': row[4],
                         'source': row[5],
                         'characteristics': json.loads(row[6]) if row[6] else {},
-                        'datetime': row[7],
+                        'datetime': self._convert_to_kst(row[7]),  # KST로 변환
                         'date': date_str
                     }
                     
@@ -709,7 +973,37 @@ HTML_TEMPLATE_V2 = """
         .save-button:hover {
             background: #218838;
         }
-        
+
+        /* 예측 생성 버튼 스타일 */
+        button[onclick*="generateNewPredictions"] {
+            background: #28a745 !important;
+            color: white !important;
+            font-weight: bold;
+            padding: 10px 20px !important;
+            border-radius: 8px;
+            transition: all 0.3s;
+            border: 2px solid #28a745 !important;
+        }
+
+        button[onclick*="generateNewPredictions"]:hover {
+            background: #218838 !important;
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        button[onclick*="generateNewPredictions"]:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
+        /* 예측 카드 하이라이트 애니메이션 */
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+            100% { transform: scale(1); }
+        }
+
         /* 당첨번호 섹션 */
         .winning-section {
             background: linear-gradient(135deg, #ffd89b 0%, #19547b 100%);
@@ -1140,6 +1434,9 @@ HTML_TEMPLATE_V2 = """
                     <option value="">회차 선택...</option>
                 </select>
                 <button onclick="loadRoundData()">조회</button>
+                <button onclick="generateNewPredictions()" style="background: #28a745; color: white; font-weight: bold; padding: 10px 20px;">
+                    🎯 새 예측 생성 (5세트)
+                </button>
                 <button onclick="loadLatestRound()">최신 회차</button>
             </div>
         </header>
@@ -1204,36 +1501,50 @@ HTML_TEMPLATE_V2 = """
         let allRounds = [];
         
         // 페이지 로드 시 초기화
-        window.onload = function() {
-            loadRounds();
-            loadLatestRound();
+        window.onload = async function() {
+            await loadRounds();  // loadRounds가 완료될 때까지 대기
+            await loadLatestRound();  // 그 다음 최신 회차 로드
         };
         
         // 회차 목록 로드
         async function loadRounds() {
             try {
+                console.log('Loading rounds...');
                 const response = await fetch('/api/rounds');
+                if (!response.ok) {
+                    throw new Error('HTTP error! status: ' + response.status);
+                }
                 allRounds = await response.json();
-                
+                console.log('Loaded rounds:', allRounds);
+
                 const select = document.getElementById('roundSelect');
+                if (!select) {
+                    console.error('roundSelect element not found');
+                    return;
+                }
                 select.innerHTML = '<option value="">회차 선택...</option>';
-                
+
                 allRounds.forEach(round => {
                     const option = document.createElement('option');
                     option.value = round;
                     option.textContent = round + '회차';
                     select.appendChild(option);
                 });
+                console.log('Rounds added to select');
             } catch (error) {
                 console.error('회차 로드 실패:', error);
+                alert('회차 목록을 불러올 수 없습니다. 서버 연결을 확인해주세요.');
             }
         }
         
         // 최신 회차 로드
         async function loadLatestRound() {
-            if (allRounds.length > 0) {
+            console.log('loadLatestRound called, allRounds:', allRounds);
+            if (allRounds && allRounds.length > 0) {
                 document.getElementById('roundSelect').value = allRounds[0];
-                loadWeekData();  // 일주일 데이터 로드로 변경
+                await loadWeekData();  // 일주일 데이터 로드로 변경
+            } else {
+                console.error('No rounds available');
             }
         }
         
@@ -1748,7 +2059,8 @@ HTML_TEMPLATE_V2 = """
             const backtestSection = document.getElementById('backtestPerformance');
             const statsGrid = document.getElementById('backtestStatsGrid');
             
-            if (!backtestStats.available) {
+            // API 응답 구조 확인
+            if (!backtestStats || (!backtestStats.total_predictions && !backtestStats.model_performance)) {
                 backtestSection.innerHTML = `
                     <div style="text-align: center; color: #999; padding: 20px;">
                         <h3>🎯 백테스팅 성능</h3>
@@ -1776,20 +2088,19 @@ HTML_TEMPLATE_V2 = """
                 backtestSection.insertBefore(demoNotice, backtestSection.firstChild);
             }
             
-            // 주요 통계 카드들
-            const overall = backtestStats.performance_summary.overall || {};
-            const modelData = backtestStats.performance_summary.by_model || [];
+            // 주요 통계 카드들 - 새로운 API 구조에 맞게 수정
+            const modelData = Object.values(backtestStats.model_performance || {});
             
             const keyStats = [];
-            if (modelData.length > 0) {
+            if (modelData.length > 0 || backtestStats.total_predictions > 0) {
                 const avgMatches = modelData.map(m => m.avg_matches || 0);
-                const bestAvg = Math.max(...avgMatches);
-                const totalPredictions = modelData.reduce((sum, m) => sum + (m.total_predictions || 0), 0);
-                const avgAccuracy = modelData.reduce((sum, m) => sum + (m.avg_accuracy_3plus || 0), 0) / modelData.length;
-                
+                const bestAvg = Math.max(...avgMatches) || backtestStats.average_matches || 0;
+                const totalPredictions = backtestStats.total_predictions || modelData.reduce((sum, m) => sum + (m.total_predictions || 0), 0);
+                const avgAccuracy = modelData.reduce((sum, m) => sum + (m.accuracy_3plus || 0), 0) / modelData.length || 0;
+
                 keyStats.push(
-                    { label: '총 세션', value: overall.total_sessions || 0 },
-                    { label: '최고 평균 일치', value: bestAvg.toFixed(3) },
+                    { label: '테스트 기간', value: backtestStats.test_period || 'N/A' },
+                    { label: '평균 일치', value: backtestStats.average_matches?.toFixed(3) || bestAvg.toFixed(3) },
                     { label: '총 예측 수', value: totalPredictions.toLocaleString() },
                     { label: '평균 3+ 정확도', value: avgAccuracy.toFixed(1) + '%' }
                 );
@@ -1847,17 +2158,23 @@ HTML_TEMPLATE_V2 = """
             }
             
             const rankData = stats.rank_distribution;
-            
-            // 예시 데이터 (실제로는 DB에서 가져와야 함)
-            const matchAnalysis = {
-                0: Math.max(0, stats.total_predictions - stats.total_wins - 100),
-                1: Math.floor((stats.total_predictions || 0) * 0.35),
-                2: Math.floor((stats.total_predictions || 0) * 0.25),
-                3: rankData['5등'] || 19,
-                4: rankData['4등'] || 8, 
-                5: (rankData['3등'] || 0) + (rankData['2등'] || 0),
-                6: rankData['1등'] || 0
-            };
+
+            // 실제 데이터 사용 (match_distribution이 있으면 사용, 없으면 rank_distribution 기반 추정)
+            let matchAnalysis;
+            if (stats.match_distribution) {
+                matchAnalysis = stats.match_distribution;
+            } else {
+                // 백업: rank_distribution 기반 추정 (정확하지 않음)
+                matchAnalysis = {
+                    0: Math.max(0, stats.total_predictions - stats.total_wins - 100),
+                    1: Math.floor((stats.total_predictions || 0) * 0.35),
+                    2: Math.floor((stats.total_predictions || 0) * 0.25),
+                    3: rankData['5등'] || 0,
+                    4: rankData['4등'] || 0,
+                    5: (rankData['3등'] || 0) + (rankData['2등'] || 0),
+                    6: rankData['1등'] || 0
+                };
+            }
             
             const totalPredictions = Object.values(matchAnalysis).reduce((sum, val) => sum + val, 0) || 1;
             
@@ -1952,13 +2269,91 @@ HTML_TEMPLATE_V2 = """
                 overlay.classList.remove('active');
             }
         }
+
+        // 새 예측 생성 기능
+        async function generateNewPredictions() {
+            const btn = event.target;
+            const originalText = btn.innerText;
+
+            try {
+                // 버튼 비활성화 및 로딩 표시
+                btn.disabled = true;
+                btn.innerText = '⏳ 생성 중...';
+                btn.style.opacity = '0.6';
+
+                // API 호출
+                const response = await fetch('/api/generate-predictions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // 성공 메시지
+                    var message = '✅ ' + result.round + '회차 예측 5세트가 생성되었습니다!\\n\\n';
+                    message += '생성된 예측:\\n';
+                    result.predictions.forEach(function(p, i) {
+                        message += (i+1) + '. [' + p.numbers.join(', ') + '] (신뢰도: ' + Math.round(p.confidence * 100) + '%)\\n';
+                    });
+                    alert(message);
+
+                    // 회차 목록 새로고침
+                    await loadRounds();
+
+                    // 새로 생성된 회차 선택
+                    document.getElementById('roundSelect').value = result.round;
+
+                    // 새 예측 즉시 표시
+                    await loadRoundData();
+
+                    // 하이라이트 효과
+                    highlightNewPredictions();
+                } else {
+                    alert('❌ 예측 생성 실패:\\n' + (result.error || '알 수 없는 오류가 발생했습니다.'));
+                }
+            } catch (error) {
+                console.error('예측 생성 오류:', error);
+                alert('❌ 오류 발생:\\n' + error.message);
+            } finally {
+                // 버튼 복구
+                btn.disabled = false;
+                btn.innerText = originalText;
+                btn.style.opacity = '1';
+            }
+        }
+
+        // 새로 생성된 예측 하이라이트 효과
+        function highlightNewPredictions() {
+            const predCards = document.querySelectorAll('.prediction-card');
+            predCards.forEach((card, idx) => {
+                setTimeout(() => {
+                    card.style.transition = 'all 0.5s';
+                    card.style.transform = 'scale(1.02)';
+                    card.style.boxShadow = '0 0 20px rgba(40, 167, 69, 0.5)';
+
+                    setTimeout(() => {
+                        card.style.transform = 'scale(1)';
+                        card.style.boxShadow = '';
+                    }, 2000);
+                }, idx * 100);
+            });
+        }
+
+        // 초기 로드 - 위의 window.onload와 중복되므로 제거
     </script>
 </body>
 </html>
 """
 
-# Flask 라우트
-dashboard = EnhancedLottoDashboard()
+# Flask 라우트 - 항상 새로운 인스턴스 생성
+def get_dashboard():
+    """매번 새로운 대시보드 인스턴스 반환"""
+    return EnhancedLottoDashboard()
+
+dashboard = get_dashboard()  # 초기 인스턴스
 
 @app.route('/')
 def index():
@@ -1998,8 +2393,163 @@ def get_performance():
 @app.route('/api/backtest-performance')
 def get_backtest_performance():
     """백테스팅 성능 API"""
-    backtest_data = dashboard.get_backtest_performance()
+    # 새로운 대시보드 인스턴스 사용하여 최신 데이터 보장
+    fresh_dashboard = EnhancedLottoDashboard()
+
+    # 디버깅을 위한 로그
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Flask API - 프로젝트 루트: {fresh_dashboard.project_root}")
+
+    performance_db_path = os.path.join(fresh_dashboard.project_root, "data/performance_stats.db")
+    logger.info(f"Flask API - DB 경로: {performance_db_path}")
+    logger.info(f"Flask API - DB 존재: {os.path.exists(performance_db_path)}")
+
+    backtest_data = fresh_dashboard.get_backtest_performance()
+    logger.info(f"Flask API - 데모 모드: {backtest_data.get('demo_mode', True)}")
+
     return jsonify(backtest_data)
+
+@app.route('/api/generate-predictions', methods=['POST'])
+def generate_new_predictions():
+    """캐시된 모델을 활용한 예측 생성 API"""
+    try:
+        # 프로젝트 루트 경로 설정
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        sys.path.insert(0, project_root)
+
+        # 필요한 모듈 import
+        from main import generate_final_predictions
+        from src.core.db_manager import DatabaseManager
+        from src.core.integrated_filter_manager import IntegratedFilterManager
+        from src.core.prediction_tracker import PredictionTracker
+        import pickle
+        import glob
+
+        logging.info("[API] 예측 생성 시작...")
+
+        # 기존 인스턴스 생성
+        db_manager = DatabaseManager()
+        filter_manager = IntegratedFilterManager(db_manager)
+
+        # 캐시된 ML 예측 로드
+        ml_predictions = {}
+        cache_dir = os.path.join(project_root, 'cache', 'models')
+
+        # 각 모델의 최신 캐시 파일 찾기
+        if os.path.exists(cache_dir):
+            # Ensemble 모델 캐시 찾기
+            ensemble_files = glob.glob(os.path.join(cache_dir, 'ensemble_*.pkl'))
+            if ensemble_files:
+                # 가장 최신 파일 선택
+                latest_ensemble = max(ensemble_files, key=os.path.getmtime)
+                try:
+                    with open(latest_ensemble, 'rb') as f:
+                        ensemble_data = pickle.load(f)
+                        # 예측 결과가 있으면 사용
+                        if 'predictions' in ensemble_data:
+                            ml_predictions['ensemble'] = ensemble_data['predictions'][:5]
+                            logging.info(f"Ensemble 캐시 로드: {len(ml_predictions['ensemble'])}개")
+                except Exception as e:
+                    logging.warning(f"Ensemble 캐시 로드 실패: {e}")
+
+            # 빈 ML 예측이면 기본값 설정
+            if not ml_predictions:
+                logging.info("캐시된 ML 예측이 없으므로 필터링된 조합에서 직접 생성")
+                ml_predictions = {
+                    'lstm': [],
+                    'ensemble': [],
+                    'monte_carlo': [],
+                    'bayesian': [],
+                    'fractal': [],
+                    'combined': []
+                }
+
+        # main.py와 동일한 예측 생성
+        final_predictions = generate_final_predictions(
+            db_manager=db_manager,
+            filter_manager=filter_manager,
+            ml_predictions=ml_predictions,
+            num_sets=5,
+            use_relaxed_filter=True
+        )
+
+        # 다음 회차 번호 계산 (토요일 저녁 8시 기준)
+        from datetime import datetime
+        latest_round = db_manager.get_last_round()
+
+        # 현재 시간 확인
+        current_time = datetime.now()
+        current_weekday = current_time.weekday()  # 0=월요일, 5=토요일, 6=일요일
+        current_hour = current_time.hour
+
+        # 토요일 저녁 8시를 기준으로 회차 결정
+        # 중요: 항상 latest_round + 1 (DB에 이미 최신 회차가 반영됨)
+        if current_weekday == 5 and current_hour < 20:  # 토요일 오후 8시 이전
+            next_round = latest_round + 1  # 아직 이번 주 회차
+            logging.info(f"[API] 토요일 {current_hour}시 - {next_round}회차 예측 생성")
+        elif current_weekday == 5 and current_hour >= 20:  # 토요일 오후 8시 이후
+            next_round = latest_round + 1  # 다음 주 회차 (DB가 이미 업데이트됨)
+            logging.info(f"[API] 토요일 {current_hour}시 - 추첨 완료, {next_round}회차 예측 생성")
+        elif current_weekday == 6:  # 일요일
+            next_round = latest_round + 1  # 다음 주 회차
+            logging.info(f"[API] 일요일 - {next_round}회차 예측 생성")
+        else:  # 월~금요일
+            next_round = latest_round + 1  # 이번 주 회차
+            logging.info(f"[API] {['월','화','수','목','금'][current_weekday]}요일 - {next_round}회차 예측 생성")
+
+        # 예측 저장
+        prediction_tracker = PredictionTracker()
+
+        # 예측 형식 변환 (main.py와 동일) - JSON 직렬화를 위해 numpy 타입을 Python 타입으로 변환
+        predictions_to_save = []
+        for idx, pred in enumerate(final_predictions, 1):
+            # 숫자 리스트를 Python int로 변환 (numpy int32 등을 처리)
+            numbers = pred['numbers'] if isinstance(pred, dict) else pred
+            if hasattr(numbers, 'tolist'):  # numpy array인 경우
+                numbers = numbers.tolist()
+            elif isinstance(numbers, list):  # 리스트인 경우 각 요소를 int로 변환
+                numbers = [int(num) for num in numbers]
+
+            predictions_to_save.append({
+                'numbers': numbers,
+                'confidence': float(pred.get('confidence', 0.7)) if isinstance(pred, dict) else 0.7,
+                'source': pred.get('source', 'Dashboard') if isinstance(pred, dict) else 'Dashboard',
+                'characteristics': pred.get('characteristics', {}) if isinstance(pred, dict) else {}
+            })
+
+        # 저장 (누적 저장)
+        success = prediction_tracker.save_predictions(
+            round_num=next_round,
+            predictions=predictions_to_save,
+            replace=False  # 기존 예측 유지
+        )
+
+        if success:
+            logging.info(f"[API] {next_round}회차 예측 5세트 생성 및 저장 완료")
+        else:
+            logging.warning(f"[API] {next_round}회차 예측 저장 실패")
+
+        return jsonify({
+            'success': success,
+            'round': int(next_round),  # numpy int를 Python int로 변환
+            'predictions': [
+                {
+                    'numbers': [int(num) for num in pred['numbers']],  # 각 숫자를 Python int로 변환
+                    'confidence': float(pred.get('confidence', 0.7)),  # numpy float을 Python float으로 변환
+                    'source': pred.get('source', 'Dashboard')
+                }
+                for pred in predictions_to_save
+            ],
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        logging.error(f"[API] 예측 생성 중 오류: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/save-screenshot', methods=['POST'])
 def save_screenshot():
@@ -2032,6 +2582,7 @@ def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001, debug=False):
     print(f"[INFO] Open browser: http://{host}:{port}")
     print(f"[INFO] Press Ctrl+C to stop.\n")
     print("\nNew Features:")
+    print("  - [NEW] Prediction generation button (5 sets)")
     print("  - Screenshot save button")
     print("  - Winning numbers at top")
     print("  - Compact table layout")
@@ -2042,4 +2593,4 @@ def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001, debug=False):
     app.run(host=host, port=port, debug=debug)
 
 if __name__ == '__main__':
-    run_enhanced_dashboard_v2(port=5002, debug=True)
+    run_enhanced_dashboard_v2(port=5001, debug=True)

@@ -22,11 +22,19 @@ class LottoNumbersDB(BaseDatabase):
                     round INTEGER PRIMARY KEY,
                     numbers TEXT NOT NULL,
                     draw_date DATE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    bonus_number INTEGER
                 )
             ''')
             conn.commit()
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_numbers_round ON lotto_numbers(round)')
+            
+            # bonus_number 컬럼이 없으면 추가
+            cursor.execute("PRAGMA table_info(lotto_numbers)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'bonus_number' not in columns:
+                cursor.execute('ALTER TABLE lotto_numbers ADD COLUMN bonus_number INTEGER')
+                conn.commit()
 
     def get_last_round(self) -> int:
         """마지막으로 저장된 회차 번호 조회"""
@@ -49,6 +57,21 @@ class LottoNumbersDB(BaseDatabase):
                     INSERT OR REPLACE INTO lotto_numbers (round, numbers, draw_date)
                     VALUES (?, ?, ?)
                 ''', (round_num, ','.join(map(str, numbers)), draw_date))
+                conn.commit()
+                return True
+        except Exception as e:
+            logging.error(f"데이터 삽입 중 오류 발생: {str(e)}")
+            return False
+    
+    def insert_numbers_with_bonus(self, round_num: int, numbers: List[int], bonus: int, draw_date: str) -> bool:
+        """로또 번호와 보너스 번호 데이터 삽입"""
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO lotto_numbers (round, numbers, draw_date, bonus_number)
+                    VALUES (?, ?, ?, ?)
+                ''', (round_num, ','.join(map(str, numbers)), draw_date, bonus))
                 conn.commit()
                 return True
         except Exception as e:
@@ -168,6 +191,76 @@ class LottoNumbersDB(BaseDatabase):
                 return [row[0] for row in cursor.fetchall()]
         except Exception as e:
             logging.error(f"회차 {round_num} 이전 당첨 번호 조회 중 오류 발생: {str(e)}")
+            return []
+    
+    def get_missing_bonus_rounds(self) -> List[int]:
+        """보너스 번호가 없는 회차 목록 조회
+        
+        Returns:
+            List[int]: 보너스 번호가 누락된 회차 번호 리스트
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT round 
+                    FROM lotto_numbers 
+                    WHERE bonus_number IS NULL 
+                    ORDER BY round DESC
+                """)
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"보너스 번호 누락 회차 조회 중 오류 발생: {str(e)}")
+            return []
+    
+    def count_rounds_with_bonus(self) -> int:
+        """보너스 번호가 있는 회차 수 조회
+        
+        Returns:
+            int: 보너스 번호가 있는 회차 수
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) 
+                    FROM lotto_numbers 
+                    WHERE bonus_number IS NOT NULL
+                """)
+                result = cursor.fetchone()[0]
+                return result if result is not None else 0
+        except Exception as e:
+            logging.error(f"보너스 번호 있는 회차 수 조회 중 오류 발생: {str(e)}")
+            return 0
+    
+    def get_latest_round(self) -> int:
+        """get_last_round의 별칭 메서드 (호환성을 위해)"""
+        return self.get_last_round()
+    
+    def get_numbers_with_bonus(self) -> List[Tuple[int, Tuple[int, ...]]]:
+        """보너스 번호를 포함한 모든 당첨번호 조회
+        
+        Returns:
+            List[Tuple[int, Tuple[int, ...]]]: (회차, (번호1,번호2,...,번호6,보너스)) 튜플 리스트
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT round, numbers, bonus_number 
+                    FROM lotto_numbers 
+                    WHERE bonus_number IS NOT NULL
+                    ORDER BY round
+                """)
+                results = []
+                for row in cursor.fetchall():
+                    round_num, numbers_str, bonus = row
+                    numbers = [int(n) for n in numbers_str.split(',')]
+                    numbers.append(bonus)  # 보너스 번호를 7번째 요소로 추가
+                    results.append((round_num, tuple(numbers)))
+                return results
+        except Exception as e:
+            logging.error(f"보너스 포함 당첨번호 조회 중 오류: {e}")
             return []
 
 class CombinationsDB(BaseDatabase):

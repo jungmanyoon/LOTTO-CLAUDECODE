@@ -1,9 +1,16 @@
+# 전체 시스템 성능 설정
+parallel_processing: true
+max_workers: 14
 batch_size: 10000
+
 database:
   batch_size: 10000
   max_batch_memory: 1000000
   storage_mode: optimized
 filter_manager:
+  batch_optimization: true
+  dynamic_workers: true
+  max_workers: 16
   parallel_workers: 14
 filtering:
   batch_size: 10000
@@ -21,7 +28,7 @@ filters:
       max_average: 32.0
       min_average: 14.0
     consecutive:
-      max_consecutive: 2
+      max_consecutive: 5
       min_gap: 1
     digit_sum:
       max_digit_sum: 60
