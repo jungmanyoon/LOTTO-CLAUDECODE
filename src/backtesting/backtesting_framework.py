@@ -265,9 +265,10 @@ class BacktestingFramework:
             from collections import Counter
             combo_counts = Counter([tuple(p) for p in predictions])
             top_combos = combo_counts.most_common(5)
-            
+
             return [list(combo) for combo, _ in top_combos]
-        except:
+        except Exception as e:
+            logging.error(f"백테스트 실패: {e}")
             return []
     
     def _combine_predictions(self, all_predictions: Dict[str, List[List[int]]]) -> List[List[int]]:

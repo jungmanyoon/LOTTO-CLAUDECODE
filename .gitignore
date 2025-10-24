@@ -47,7 +47,11 @@ Thumbs.db
 *.tmp
 *.temp
 *.bak
+*.backup
 *.cache
+*_old.py
+*_fixed.py
+cleanup_archive/
 
 # Output files
 results/
@@ -58,6 +62,28 @@ output/
 *.jpeg
 *.gif
 
+# Report files (keep only README.md and CLAUDE.md)
+*_REPORT.md
+*_SUMMARY.md
+*_PLAN.md
+*_ANALYSIS.md
+*_COMPLETE.md
+*_IMPLEMENTATION*.md
+BACKTESTING_*.md
+COMPREHENSIVE_*.md
+IMPROVEMENT_*.md
+FIXES_*.md
+JSON_*.md
+LOGGING_*.md
+TIER*.md
+LOG_*.md
+OPTIMIZATION_*.md
+REMAINING_*.md
+SYSTEM_*.md
+OUTLIER_*.md
+BALANCED_*.md
+DYNAMIC_*.md
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
@@ -67,3 +93,45 @@ output/
 # Data files (optional - comment out if you want to include)
 # data/
 # models/
+
+# Windows reserved names - CRITICAL: DO NOT CREATE FILES WITH THESE NAMES
+nul
+NUL
+CON
+PRN
+AUX
+COM1
+COM2
+COM3
+COM4
+COM5
+COM6
+COM7
+COM8
+COM9
+LPT1
+LPT2
+LPT3
+LPT4
+LPT5
+LPT6
+LPT7
+LPT8
+LPT9
+debug_output.txt
+# 임시 파일 자동 제외 (cleanup_temp_files.py)
+test_*.py
+check_*.py
+verify_*.py
+run_*.py
+*_FIX*.md
+*_QUICK_REF.md
+temp_*.txt
+# JSON 결과 파일
+db_index_optimization_results_*.json
+duplicate_index_check_*.json
+test_detailed_analysis.json
+test_performance_report.json
+filter_performance_report.json
+bayesian_beliefs.json
+fractal_analysis.json

@@ -24,41 +24,60 @@ class AutoMLOptimizer:
         self.db_manager = db_manager
         self.optimization_history = []
         self.best_params = {}
-        
+
+        # Optuna 데이터베이스 경로 설정
+        self.optuna_db_path = os.path.join('data', 'optuna_study.db')
+        os.makedirs('data', exist_ok=True)
+
         # 최적화 설정
         self.optimization_config = {
-            'min_performance_threshold': 1.0,  # 최소 평균 일치 개수
-            'target_performance': 1.5,         # 목표 평균 일치 개수
+            'min_performance_threshold': 0.9,  # 최소 평균 일치 개수
+            'target_performance': 1.2,         # 최대로 추구할 목표 평균 일치 개수
             'max_iterations': 10,              # 최대 반복 횟수
             'patience': 3,                     # 조기 종료 patience
-            'improvement_threshold': 0.1       # 개선 임계값
+            'improvement_threshold': 0.05      # 성능 향상 임계값
         }
-        
-        logging.info("ML 모델 자동 최적화 시스템 초기화 완료")
-    
-    def optimize_based_on_backtest(self, model, backtest_results: Dict, 
-                                   model_type: str = 'ensemble') -> Dict[str, Any]:
+
+        logging.info(f"ML 모델 자동 최적화 시스템 초기화 완료 (Optuna DB: {self.optuna_db_path})")
+
+    def optimize_based_on_backtest(self, model, backtest_results: Dict, model_type: str = 'ensemble') -> Dict[str, Any]:
         """백테스팅 결과를 기반으로 모델 최적화
-        
+
         Args:
             model: 최적화할 ML 모델
             backtest_results: 백테스팅 결과
             model_type: 모델 유형 ('ensemble', 'lstm', 'monte_carlo')
-            
+
         Returns:
             Dict: 최적화 결과
         """
         logging.info(f"\n[AutoML] {model_type} 모델 자동 최적화 시작...")
-        
-        # 현재 성능 확인
+
+        # 모델이 None인지 확인
+        if model is None:
+            logging.warning(f"AutoML: {model_type} 모델이 None입니다. 최적화를 건너뜁니다.")
+            return {
+                'optimized': False,
+                'reason': 'model_is_none',
+                'model_type': model_type
+            }
+
         current_performance = self._extract_performance(backtest_results, model_type)
         logging.info(f"현재 성능: 평균 일치 {current_performance:.2f}개")
-        
-        if current_performance >= self.optimization_config['target_performance']:
-            logging.info("목표 성능을 이미 달성했습니다.")
-            return {'optimized': False, 'reason': 'already_optimal'}
-        
-        # 모델별 최적화 실행
+
+        improvement_threshold = self.optimization_config.get('improvement_threshold', 0.05)
+        min_threshold = self.optimization_config.get('min_performance_threshold', 0.9)
+        configured_target = self.optimization_config.get('target_performance', 1.2)
+
+        desired_target = max(min_threshold, current_performance + improvement_threshold)
+        target_performance = min(configured_target, desired_target)
+
+        logging.info(f"[AutoML] 목표 성능: {target_performance:.3f} (현재 {current_performance:.3f})")
+
+        if current_performance >= target_performance - 1e-6:
+            logging.info("현재 성능이 목표치를 이미 충족했습니다.")
+            return {'optimized': False, 'reason': 'already_optimal', 'target_performance': target_performance}
+
         if model_type == 'ensemble':
             optimized_model = self._optimize_ensemble(model, backtest_results)
         elif model_type == 'lstm':
@@ -68,25 +87,29 @@ class AutoMLOptimizer:
         else:
             logging.warning(f"지원하지 않는 모델 유형: {model_type}")
             return {'optimized': False, 'reason': 'unsupported_model'}
-        
-        # 최적화 결과 저장
+
         result = {
             'optimized': True,
             'model_type': model_type,
             'before_performance': current_performance,
+            'target_performance': target_performance,
             'best_params': self.best_params.get(model_type, {}),
             'optimization_time': datetime.now().isoformat()
         }
-        
+
         self.optimization_history.append(result)
         self._save_optimization_history()
-        
+
         return result
-    
+
     def _optimize_ensemble(self, ensemble_model, backtest_results: Dict) -> Any:
         """앙상블 모델 최적화"""
+        if ensemble_model is None:
+            logging.warning("AutoML: 앙상블 모델이 None입니다. 최적화를 건너뜁니다.")
+            return None
+
         logging.info("앙상블 모델 하이퍼파라미터 최적화 중...")
-        
+
         # Optuna를 사용한 베이지안 최적화
         def objective(trial):
             # Random Forest 파라미터
@@ -125,7 +148,16 @@ class AutoMLOptimizer:
         
         # 최적화 실행 (과도한 학습 방지를 위해 trial 수 감소)
         n_trials = 10  # 50 → 10으로 감소 (Optuna trials)
-        study = optuna.create_study(direction='maximize')
+
+        # SQLite storage for persistent study
+        storage_url = f"sqlite:///{self.optuna_db_path}"
+
+        study = optuna.create_study(
+            study_name='ensemble_optimization',
+            storage=storage_url,
+            load_if_exists=True,  # Resume existing study
+            direction='maximize'
+        )
         
         # 조기 종료 콜백 추가
         def early_stopping_callback(study, trial):
@@ -152,8 +184,12 @@ class AutoMLOptimizer:
     
     def _optimize_lstm(self, lstm_model, backtest_results: Dict) -> Any:
         """LSTM 모델 최적화"""
+        if lstm_model is None:
+            logging.warning("AutoML: LSTM 모델이 None입니다. 최적화를 건너뜁니다.")
+            return None
+
         logging.info("LSTM 모델 아키텍처 및 하이퍼파라미터 최적화 중...")
-        
+
         def objective(trial):
             # LSTM 아키텍처 파라미터
             params = {
@@ -183,7 +219,15 @@ class AutoMLOptimizer:
                         study.stop()
         
         # 최적화 실행
-        study = optuna.create_study(direction='maximize')
+        # SQLite storage for persistent study
+        storage_url = f"sqlite:///{self.optuna_db_path}"
+
+        study = optuna.create_study(
+            study_name='lstm_optimization',
+            storage=storage_url,
+            load_if_exists=True,  # Resume existing study
+            direction='maximize'
+        )
         n_trials = 10  # 30 → 10으로 감소 (LSTM trials)
         study.optimize(objective, n_trials=n_trials, callbacks=[early_stopping_callback])
         
@@ -199,8 +243,12 @@ class AutoMLOptimizer:
     
     def _optimize_monte_carlo(self, mc_model, backtest_results: Dict) -> Any:
         """Monte Carlo 시뮬레이션 최적화"""
+        if mc_model is None:
+            logging.warning("AutoML: Monte Carlo 모델이 None입니다. 최적화를 건너뜁니다.")
+            return None
+
         logging.info("Monte Carlo 시뮬레이션 파라미터 최적화 중...")
-        
+
         def objective(trial):
             params = {
                 'n_simulations': trial.suggest_int('n_simulations', 5000, 50000),
@@ -229,7 +277,15 @@ class AutoMLOptimizer:
                         study.stop()
         
         # 최적화 실행
-        study = optuna.create_study(direction='maximize')
+        # SQLite storage for persistent study
+        storage_url = f"sqlite:///{self.optuna_db_path}"
+
+        study = optuna.create_study(
+            study_name='monte_carlo_optimization',
+            storage=storage_url,
+            load_if_exists=True,  # Resume existing study
+            direction='maximize'
+        )
         n_trials = 10  # 40 → 10으로 감소 (Monte Carlo trials)
         study.optimize(objective, n_trials=n_trials, callbacks=[early_stopping_callback])
         
@@ -279,9 +335,14 @@ class AutoMLOptimizer:
     
     def _quick_validation(self, model) -> float:
         """빠른 검증을 위한 간단한 테스트"""
+        # 모델이 None인 경우 체크
+        if model is None:
+            logging.warning("AutoML: 검증할 모델이 None입니다. 검증을 건너뜁니다.")
+            return 0.0
+
         # 최근 10회차로 빠른 검증
         recent_numbers = self.db_manager.get_recent_numbers(10)
-        
+
         score = 0
         for i in range(5):
             # recent_numbers는 (회차, 번호문자열, 추첨일) 튜플의 리스트
@@ -316,9 +377,14 @@ class AutoMLOptimizer:
     
     def _train_and_validate_lstm(self, lstm_model, params: Dict) -> float:
         """LSTM 모델 학습 및 검증"""
+        # 모델이 None인 경우 체크
+        if lstm_model is None:
+            logging.warning("AutoML: LSTM 모델이 None입니다. 학습 및 검증을 건너뜁니다.")
+            return 0.0
+
         # 데이터 준비
         all_numbers = self.db_manager.get_all_numbers()
-        
+
         if len(all_numbers) < 100:
             return 0.0
         
@@ -329,9 +395,14 @@ class AutoMLOptimizer:
     
     def _validate_monte_carlo(self, mc_model) -> float:
         """Monte Carlo 모델 검증"""
+        # 모델이 None인 경우 체크
+        if mc_model is None:
+            logging.warning("AutoML: Monte Carlo 모델이 None입니다. 검증을 건너뜁니다.")
+            return 0.0
+
         # 최근 데이터로 검증
         recent_numbers = self.db_manager.get_recent_numbers(20)
-        
+
         score = 0
         for i in range(10):
             predictions = mc_model.simulate(n_predictions=5)

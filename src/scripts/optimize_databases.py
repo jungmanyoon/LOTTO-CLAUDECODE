@@ -1,128 +1,235 @@
 #!/usr/bin/env python3
 """
 데이터베이스 최적화 스크립트
-모든 SQLite 데이터베이스의 무결성 검사 및 최적화 수행
+- VACUUM으로 파일 크기 최적화
+- 인덱스 추가로 쿼리 성능 향상
+- 데이터베이스 통계 분석
 """
+
+import sqlite3
 import os
-import sys
+import time
 import logging
-from glob import glob
+from pathlib import Path
+from typing import Dict, List, Tuple
 
-# 프로젝트 루트 경로 추가
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-from src.utils.db_connection_manager import DatabaseConnectionManager
-from src.core.db_manager import DatabaseManager
+class DatabaseOptimizer:
+    """데이터베이스 최적화 관리자"""
 
-def setup_logging():
-    """로깅 설정"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+    def __init__(self, base_path: str = "."):
+        self.base_path = Path(base_path)
+        self.db_stats = {}
 
-def find_all_databases(base_dir: str = 'data') -> list:
-    """모든 SQLite 데이터베이스 파일 찾기"""
-    db_files = []
-    
-    # .db 파일 찾기
-    for db_path in glob(os.path.join(base_dir, '**', '*.db'), recursive=True):
-        db_files.append(db_path)
-    
-    return db_files
+    def find_all_databases(self) -> List[Path]:
+        """모든 .db 파일 찾기"""
+        db_files = []
+        for pattern in ["**/*.db"]:
+            db_files.extend(self.base_path.glob(pattern))
+        return [db for db in db_files if db.stat().st_size > 0]  # 빈 파일 제외
 
-def optimize_all_databases():
-    """모든 데이터베이스 최적화"""
-    print("\n=== 데이터베이스 최적화 시작 ===\n")
-    
-    # 데이터베이스 파일 찾기
-    db_files = find_all_databases()
-    
-    if not db_files:
-        print("데이터베이스 파일을 찾을 수 없습니다.")
-        return
-    
-    print(f"총 {len(db_files)}개의 데이터베이스 파일을 발견했습니다.\n")
-    
-    success_count = 0
-    fail_count = 0
-    
-    for db_path in db_files:
-        print(f"\n처리 중: {db_path}")
-        
-        # 데이터베이스 정보 출력
-        info = DatabaseConnectionManager.get_database_info(db_path)
-        print(f"  - 파일 크기: {info['file_size']:,} bytes")
-        print(f"  - 페이지 수: {info['page_count']:,}")
-        print(f"  - 저널 모드: {info['journal_mode']}")
-        print(f"  - 테이블: {', '.join(info['tables'])}")
-        
-        # 무결성 검사
-        print("  - 무결성 검사 중...", end='')
-        if DatabaseConnectionManager.check_database_integrity(db_path):
-            print(" [통과]")
-            
-            # 최적화 수행
-            print("  - 최적화 수행 중...", end='')
-            if DatabaseConnectionManager.optimize_database(db_path):
-                print(" [완료]")
-                
-                # 최적화 후 정보
-                new_info = DatabaseConnectionManager.get_database_info(db_path)
-                size_reduction = info['file_size'] - new_info['file_size']
-                if size_reduction > 0:
-                    reduction_percent = (size_reduction / info['file_size']) * 100
-                    print(f"  - 파일 크기 감소: {size_reduction:,} bytes ({reduction_percent:.1f}%)")
-                
-                success_count += 1
-            else:
-                print(" [실패]")
-                fail_count += 1
-        else:
-            print(" [실패]")
-            print("  ! 무결성 검사 실패 - 데이터베이스가 손상되었을 수 있습니다.")
-            fail_count += 1
-    
-    # 결과 요약
-    print(f"\n\n=== 최적화 완료 ===")
-    print(f"성공: {success_count}개")
-    print(f"실패: {fail_count}개")
-    print(f"총 처리: {len(db_files)}개")
+    def analyze_database(self, db_path: Path) -> Dict:
+        """데이터베이스 분석"""
+        stats = {
+            'path': str(db_path),
+            'size_before': db_path.stat().st_size,
+            'tables': [],
+            'indexes': [],
+            'row_counts': {}
+        }
 
-def check_locked_databases():
-    """잠긴 데이터베이스 확인"""
-    print("\n=== 데이터베이스 잠금 상태 확인 ===\n")
-    
-    db_files = find_all_databases()
-    locked_count = 0
-    
-    for db_path in db_files:
         try:
-            # 간단한 쿼리로 접근 가능 여부 확인
-            with DatabaseConnectionManager.get_connection(db_path, timeout=5.0, max_retries=1) as conn:
-                conn.execute("SELECT 1")
-            print(f"[정상] {db_path}")
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            # 테이블 목록 가져오기
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = cursor.fetchall()
+            stats['tables'] = [t[0] for t in tables]
+
+            # 각 테이블의 행 수 확인
+            for table_name in stats['tables']:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    count = cursor.fetchone()[0]
+                    stats['row_counts'][table_name] = count
+                except Exception as e:
+                    logging.warning(f"테이블 {table_name} 분석 실패: {e}")
+
+            # 인덱스 목록 가져오기
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='index'")
+            indexes = cursor.fetchall()
+            stats['indexes'] = [i[0] for i in indexes if i[0] not in ['sqlite_autoindex_1']]
+
+            conn.close()
+
         except Exception as e:
-            if "database is locked" in str(e):
-                print(f"[잠김] {db_path}")
-                locked_count += 1
+            logging.error(f"데이터베이스 분석 실패 {db_path}: {e}")
+
+        return stats
+
+    def optimize_database(self, db_path: Path) -> Tuple[bool, Dict]:
+        """데이터베이스 최적화 수행"""
+        result = {
+            'path': str(db_path),
+            'size_before': db_path.stat().st_size,
+            'size_after': 0,
+            'reduction': 0,
+            'indexes_created': [],
+            'vacuum_success': False,
+            'error': None
+        }
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            # 1. 분석 수행
+            cursor.execute("ANALYZE")
+
+            # 2. 테이블별 인덱스 생성 (필요한 경우)
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = cursor.fetchall()
+
+            for table_name in [t[0] for t in tables]:
+                try:
+                    # 테이블 구조 확인
+                    cursor.execute(f"PRAGMA table_info({table_name})")
+                    columns = cursor.fetchall()
+
+                    # 주요 컬럼에 인덱스 생성 (이미 없는 경우)
+                    for col in columns:
+                        col_name = col[1]
+                        # ID, round, numbers 같은 주요 컬럼에 인덱스 생성
+                        if col_name in ['round', 'round_number', 'combination', 'pattern']:
+                            index_name = f"idx_{table_name}_{col_name}"
+                            try:
+                                cursor.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name}({col_name})")
+                                result['indexes_created'].append(index_name)
+                            except Exception as e:
+                                logging.debug(f"인덱스 생성 스킵 {index_name}: {e}")
+
+                except Exception as e:
+                    logging.debug(f"테이블 {table_name} 인덱스 처리 스킵: {e}")
+
+            # 3. VACUUM 수행
+            conn.execute("VACUUM")
+            result['vacuum_success'] = True
+
+            conn.commit()
+            conn.close()
+
+            # 4. 최적화 후 크기 확인
+            result['size_after'] = db_path.stat().st_size
+            result['reduction'] = result['size_before'] - result['size_after']
+
+            return True, result
+
+        except Exception as e:
+            result['error'] = str(e)
+            logging.error(f"최적화 실패 {db_path}: {e}")
+            return False, result
+
+    def run_optimization(self):
+        """전체 데이터베이스 최적화 실행"""
+        print("\n" + "="*60)
+        print("데이터베이스 최적화 시작")
+        print("="*60)
+
+        # 1. 모든 데이터베이스 찾기
+        db_files = self.find_all_databases()
+        print(f"\n발견된 데이터베이스: {len(db_files)}개")
+
+        # 2. 크기 기준으로 정렬 (큰 파일부터)
+        db_files.sort(key=lambda x: x.stat().st_size, reverse=True)
+
+        total_size_before = sum(db.stat().st_size for db in db_files)
+        total_size_after = 0
+        optimized_count = 0
+        failed_count = 0
+
+        print(f"총 데이터베이스 크기: {total_size_before / (1024**3):.2f}GB\n")
+
+        # 3. 각 데이터베이스 최적화
+        for i, db_path in enumerate(db_files, 1):
+            db_name = db_path.name
+            db_size_mb = db_path.stat().st_size / (1024**2)
+
+            print(f"[{i}/{len(db_files)}] {db_name} ({db_size_mb:.1f}MB) 최적화 중...", end=" ")
+
+            # 크기가 작은 파일은 스킵 가능
+            if db_size_mb < 1:  # 1MB 미만은 스킵
+                print("스킵 (1MB 미만)")
+                total_size_after += db_path.stat().st_size
+                continue
+
+            # 최적화 수행
+            success, result = self.optimize_database(db_path)
+
+            if success:
+                reduction_mb = result['reduction'] / (1024**2)
+                new_size_mb = result['size_after'] / (1024**2)
+                reduction_pct = (result['reduction'] / result['size_before']) * 100 if result['size_before'] > 0 else 0
+
+                print(f"완료! ({new_size_mb:.1f}MB, -{reduction_mb:.1f}MB, -{reduction_pct:.1f}%)")
+
+                if result['indexes_created']:
+                    print(f"  └─ 생성된 인덱스: {len(result['indexes_created'])}개")
+
+                total_size_after += result['size_after']
+                optimized_count += 1
             else:
-                print(f"[오류] {db_path}: {str(e)}")
-    
-    if locked_count > 0:
-        print(f"\n잠긴 데이터베이스: {locked_count}개")
-        print("프로그램을 종료하고 다시 시도하세요.")
-    else:
-        print("\n모든 데이터베이스가 정상적으로 접근 가능합니다.")
+                print(f"실패: {result.get('error', 'Unknown error')}")
+                total_size_after += db_path.stat().st_size
+                failed_count += 1
+
+        # 4. 결과 요약
+        print("\n" + "="*60)
+        print("최적화 완료 요약")
+        print("="*60)
+        print(f"처리된 데이터베이스: {optimized_count}/{len(db_files)}개")
+        print(f"실패: {failed_count}개")
+        print(f"이전 총 크기: {total_size_before / (1024**3):.2f}GB")
+        print(f"최적화 후 크기: {total_size_after / (1024**3):.2f}GB")
+
+        total_reduction = total_size_before - total_size_after
+        reduction_pct = (total_reduction / total_size_before) * 100 if total_size_before > 0 else 0
+        print(f"절약된 공간: {total_reduction / (1024**3):.2f}GB ({reduction_pct:.1f}%)")
+        print("="*60)
+
+        return {
+            'optimized': optimized_count,
+            'failed': failed_count,
+            'total_reduction': total_reduction,
+            'reduction_percentage': reduction_pct
+        }
 
 def main():
-    """메인 함수"""
-    setup_logging()
-    
-    # 자동으로 최적화 실행
-    check_locked_databases()
-    print("\n" + "="*50 + "\n")
-    optimize_all_databases()
+    """메인 실행 함수"""
+    import sys
+
+    # 경로 설정
+    if len(sys.argv) > 1:
+        base_path = sys.argv[1]
+    else:
+        base_path = "."
+
+    # 최적화 실행
+    optimizer = DatabaseOptimizer(base_path)
+    results = optimizer.run_optimization()
+
+    # 결과에 따른 종료 코드
+    if results['failed'] == 0:
+        sys.exit(0)  # 모두 성공
+    elif results['optimized'] > 0:
+        sys.exit(1)  # 일부 성공
+    else:
+        sys.exit(2)  # 모두 실패
 
 if __name__ == "__main__":
     main()

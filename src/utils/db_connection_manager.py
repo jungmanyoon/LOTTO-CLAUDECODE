@@ -91,13 +91,13 @@ class DatabaseConnectionManager:
                     if conn:
                         try:
                             conn.close()
-                        except:
-                            pass
+                        except sqlite3.Error as e:
+                            logging.debug(f"연결 닫기 실패 (무시): {e}")
                     # 락 해제
                     try:
                         db_lock.release()
-                    except:
-                        pass
+                    except sqlite3.Error as e:
+                        logging.debug(f"연결 정리 실패 (무시): {e}")
                     
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:

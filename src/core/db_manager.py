@@ -32,27 +32,35 @@ class DatabaseManager:
         # 이미 초기화되었으면 재초기화 방지
         if DatabaseManager._initialized:
             return
-        
+
         with DatabaseManager._lock:
             if DatabaseManager._initialized:
                 return
-            
+
             self.paths = DatabasePaths(base_dir)
-            
+
+            # 이벤트 콜백 시스템 초기화
+            self.event_callbacks = {
+                'new_round_added': [],
+                'data_updated': [],
+                'pattern_updated': [],
+                'filter_updated': []
+            }
+
             # 각 데이터베이스 초기화
             self.lotto_db = LottoNumbersDB(self.paths.lotto_numbers)
             self.combinations_db = CombinationsDB(self.paths.combinations)
             self.patterns_db = PatternsDB(self.paths.patterns)
-            
+
             # 기존 필터 데이터베이스 초기화
             self.filter_dbs: Dict[str, FilterDB] = {
                 filter_type: FilterDB(path)
                 for filter_type, path in self.paths.filter_paths.items()
             }
-            
+
             # 새로운 필터 데이터베이스 초기화 - 수정된 부분
             self._initialize_new_filter_dbs()
-            
+
             DatabaseManager._initialized = True
             logging.info("[SINGLETON] 데이터베이스 매니저 초기화 완료 (단일 인스턴스)")
 
@@ -120,17 +128,56 @@ class DatabaseManager:
             return None
 
     # 당첨 번호 관련 메서드들
+    def register_callback(self, event: str, callback: callable):
+        """
+        이벤트 콜백 등록
+
+        Args:
+            event: 이벤트 타입 ('new_round_added', 'data_updated', 'pattern_updated', 'filter_updated')
+            callback: 콜백 함수
+        """
+        if event in self.event_callbacks:
+            self.event_callbacks[event].append(callback)
+            logging.info(f"[DatabaseManager] {event} 콜백 등록됨")
+        else:
+            logging.warning(f"[DatabaseManager] 알 수 없는 이벤트: {event}")
+
+    def _trigger_callbacks(self, event: str, *args, **kwargs):
+        """
+        등록된 콜백 실행
+
+        Args:
+            event: 이벤트 타입
+            *args, **kwargs: 콜백 함수에 전달할 인자
+        """
+        if event in self.event_callbacks:
+            for callback in self.event_callbacks[event]:
+                try:
+                    callback(*args, **kwargs)
+                except Exception as e:
+                    logging.error(f"[DatabaseManager] {event} 콜백 실행 오류: {e}")
+
     def get_last_round(self) -> int:
         """마지막으로 저장된 회차 번호 조회"""
         return self.lotto_db.get_last_round()
 
     def insert_lotto_numbers(self, round_num: int, numbers: List[int], draw_date: str) -> bool:
         """로또 번호 데이터 삽입"""
-        return self.lotto_db.insert_numbers(round_num, numbers, draw_date)
-    
+        result = self.lotto_db.insert_numbers(round_num, numbers, draw_date)
+        if result:
+            # 새 회차 추가 이벤트 트리거
+            self._trigger_callbacks('new_round_added', round_num)
+            logging.info(f"[DatabaseManager] 새 회차 추가 이벤트 발생: {round_num}회차")
+        return result
+
     def insert_lotto_numbers_with_bonus(self, round_num: int, numbers: List[int], bonus: int, draw_date: str) -> bool:
         """로또 번호와 보너스 번호 데이터 삽입"""
-        return self.lotto_db.insert_numbers_with_bonus(round_num, numbers, bonus, draw_date)
+        result = self.lotto_db.insert_numbers_with_bonus(round_num, numbers, bonus, draw_date)
+        if result:
+            # 새 회차 추가 이벤트 트리거
+            self._trigger_callbacks('new_round_added', round_num)
+            logging.info(f"[DatabaseManager] 새 회차 추가 이벤트 발생: {round_num}회차")
+        return result
 
     def get_all_numbers(self) -> List[Tuple[int, str, str]]:
         """모든 로또 번호 데이터 조회"""
@@ -483,8 +530,8 @@ class DatabaseManager:
         with cls._lock:
             if cls._instance:
                 # 기존 연결 종료
-                if hasattr(cls._instance, 'close_connections'):
-                    cls._instance.close_connections()
+                if hasattr(cls._instance, 'close_all_connections'):
+                    cls._instance.close_all_connections()
                 cls._instance = None
                 cls._initialized = False
                 logging.info("[SINGLETON] DatabaseManager 인스턴스 리셋 완료")

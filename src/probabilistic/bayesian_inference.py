@@ -432,7 +432,8 @@ class BayesianFilter:
         # 언더플로우 방지를 위해 안전하게 변환
         try:
             likelihood = np.exp(log_likelihood)
-        except:
+        except Exception as e:
+            logging.error(f"베이지안 추론 실패: {e}")
             # 언더플로우 발생 시 매우 작은 값 반환
             likelihood = 1e-300
         

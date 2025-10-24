@@ -55,8 +55,8 @@ def check_log_file():
                 match = re.search(r'임계값:\s*([\d.]+)%', line)
                 if match:
                     threshold_value = float(match.group(1))
-            except:
-                pass
+            except Exception as e:
+                logging.error(f"검증 실패: {e}")
         
         if "AdaptiveProbabilityFilter" in line:
             checks["필터 생성"] = True

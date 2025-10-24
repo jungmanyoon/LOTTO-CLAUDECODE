@@ -17,13 +17,24 @@ try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
     from sklearn.neural_network import MLPClassifier
     from sklearn.preprocessing import StandardScaler, MinMaxScaler
-    from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+    from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold, KFold
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
     from sklearn.calibration import CalibratedClassifierCV
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
     logging.warning("scikit-learn not available. Ensemble predictor will work in limited mode.")
+
+# 클래스 불균형 처리 유틸리티 임포트
+try:
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from src.utils.class_balance_handler import ClassBalanceHandler, safe_cross_val_score, log_data_quality
+    BALANCE_HANDLER_AVAILABLE = True
+except ImportError:
+    BALANCE_HANDLER_AVAILABLE = False
+    logging.warning("Class balance handler not available. Using basic error handling.")
 
 try:
     import xgboost as xgb
@@ -83,6 +94,12 @@ class ImprovedEnsemblePredictor:
             'smoothing_alpha': 0.1,      # 라플라스 스무딩
             'temperature': 1.0           # 확률 분포 온도
         }
+
+        # 클래스 불균형 처리기 초기화
+        if BALANCE_HANDLER_AVAILABLE:
+            self.balance_handler = ClassBalanceHandler(min_samples_per_class=2, min_fold_size=2)
+        else:
+            self.balance_handler = None
         
         # 모델 초기화
         if SKLEARN_AVAILABLE:
@@ -508,36 +525,69 @@ class ImprovedEnsemblePredictor:
                 
             logging.info(f"{model_name} 모델 학습 중...")
             
-            # 교차 검증
+            # 교차 검증 (클래스 불균형 처리 개선)
             cv_scores = []
-            skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-            
+
             # 각 번호별 학습
             for num_idx in range(45):
                 y_binary = y_train[:, num_idx]
-                
-                # 클래스 불균형 처리
-                if y_binary.sum() > 0:  # 양성 샘플이 있는 경우만
+
+                # 클래스 불균형 및 최소 샘플 수 검사
+                positive_samples = y_binary.sum()
+                negative_samples = len(y_binary) - positive_samples
+
+                if positive_samples > 0 and negative_samples > 0:  # 양 클래스 모두 존재
                     model_copy = self._clone_model(model_name)
-                    
-                    # 교차 검증
-                    cv_score = cross_val_score(
-                        model_copy, X_train, y_binary, 
-                        cv=skf, scoring='f1'
-                    ).mean()
-                    cv_scores.append(cv_score)
-                    
+
+                    # 클래스별 최소 샘플 수 확인
+                    min_class_size = min(positive_samples, negative_samples)
+
+                    try:
+                        if min_class_size >= 2:  # StratifiedKFold 사용 가능
+                            # 안전한 fold 수 계산 (최소 클래스 크기의 절반)
+                            safe_folds = min(5, max(2, min_class_size // 2))
+                            skf = StratifiedKFold(n_splits=safe_folds, shuffle=True, random_state=42)
+
+                            # 교차 검증
+                            cv_score = cross_val_score(
+                                model_copy, X_train, y_binary,
+                                cv=skf, scoring='f1', error_score=0.0
+                            ).mean()
+                        else:
+                            # 클래스당 샘플이 1개씩만 있는 경우 KFold 사용
+                            kf = KFold(n_splits=min(3, len(y_binary)), shuffle=True, random_state=42)
+                            cv_score = cross_val_score(
+                                model_copy, X_train, y_binary,
+                                cv=kf, scoring='f1', error_score=0.0
+                            ).mean()
+
+                        cv_scores.append(cv_score)
+
+                    except Exception as e:
+                        logging.warning(f"{model_name} 번호 {num_idx+1} CV 실패: {e}. 단순 학습으로 대체")
+                        cv_scores.append(0.0)  # 기본값
+
                     # 전체 데이터로 학습
-                    model_copy.fit(X_train, y_binary)
-                    
-                    # 테스트 성능 평가
-                    y_pred = model_copy.predict(X_test)
-                    accuracy = accuracy_score(y_test[:, num_idx], y_pred)
-                    f1 = f1_score(y_test[:, num_idx], y_pred, zero_division=0)
-                    
-                    # 성능 저장
-                    self.model_performance[model_name]['accuracy'] += accuracy / 45
-                    self.model_performance[model_name]['f1'] += f1 / 45
+                    try:
+                        model_copy.fit(X_train, y_binary)
+
+                        # 테스트 성능 평가
+                        y_pred = model_copy.predict(X_test)
+                        accuracy = accuracy_score(y_test[:, num_idx], y_pred)
+                        f1 = f1_score(y_test[:, num_idx], y_pred, zero_division=0)
+
+                        # 성능 저장
+                        self.model_performance[model_name]['accuracy'] += accuracy / 45
+                        self.model_performance[model_name]['f1'] += f1 / 45
+
+                    except Exception as e:
+                        logging.warning(f"{model_name} 번호 {num_idx+1} 학습 실패: {e}")
+                        # 성능을 0으로 처리
+                        pass
+                else:
+                    # 한 클래스만 존재하는 경우 (예: 모든 샘플이 음성)
+                    logging.debug(f"번호 {num_idx+1}: 클래스 불균형 심각 (양성: {positive_samples}, 음성: {negative_samples})")
+                    cv_scores.append(0.0)  # 기본값
             
             logging.info(f"{model_name} CV F1 Score: {np.mean(cv_scores):.4f}")
     

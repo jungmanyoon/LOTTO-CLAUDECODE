@@ -183,10 +183,10 @@ class IntelligentCacheManager:
         
         # 2. 캐시된 결과 로드
         try:
-            # DB에서 필터링된 조합 로드
-            filtered = self.db_manager.combinations_db.get_filtered_combinations()
-            
-            if filtered:
+            # DB에서 필터링된 조합 개수 확인 (메모리 효율적)
+            filtered_count = self.db_manager.combinations_db.get_filtered_combinations_count()
+
+            if filtered_count > 0:
                 # 캐시 사용 시간 업데이트
                 with sqlite3.connect(self.cache_db_path) as conn:
                     conn.execute("""
@@ -195,8 +195,10 @@ class IntelligentCacheManager:
                         WHERE is_valid = 1
                     """, (datetime.now().isoformat(),))
                 
-                logging.info(f"캐시에서 {len(filtered):,}개 조합 로드 완료")
-                return filtered
+                # 조합 로드 성공
+                # 실제 조합 데이터는 필요시 스트림으로 로드
+                logging.info(f"캐시에서 조합 정보 확인: {filtered_count:,}개")
+                return f"cached:{filtered_count}"  # 캐시된 데이터 표시
             else:
                 logging.warning("캐시가 비어있습니다")
                 return None

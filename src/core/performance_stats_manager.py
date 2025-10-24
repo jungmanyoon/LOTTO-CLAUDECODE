@@ -26,7 +26,7 @@ class PerformanceStatsManager:
         """성능 통계 테이블 생성"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            
+
             # 백테스팅 세션 테이블 (임계값 추적 추가)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS backtest_sessions (
@@ -36,14 +36,17 @@ class PerformanceStatsManager:
                     test_start_round INTEGER,
                     test_end_round INTEGER,
                     session_config TEXT,
-                    probability_threshold REAL DEFAULT 1.0,
-                    ml_bypass_filters INTEGER DEFAULT 8,
-                    ml_weight REAL DEFAULT 0.4,
+                    probability_threshold REAL DEFAULT 1.5,
+                    ml_bypass_filters INTEGER DEFAULT 12,
+                    ml_weight REAL DEFAULT 0.5,
                     combination_count INTEGER,
                     ml_inclusion_rate REAL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # 기존 테이블에 누락된 컬럼 추가 (ALTER TABLE)
+            self._migrate_backtest_sessions_table(cursor)
             
             # 모델별 성능 지표 테이블
             cursor.execute("""
@@ -88,7 +91,7 @@ class PerformanceStatsManager:
             # 전체 통계 뷰 생성
             cursor.execute("""
                 CREATE VIEW IF NOT EXISTS performance_summary AS
-                SELECT 
+                SELECT
                     bs.session_date,
                     bs.total_rounds,
                     mp.model_name,
@@ -103,9 +106,108 @@ class PerformanceStatsManager:
                 JOIN model_performance mp ON bs.id = mp.session_id
                 ORDER BY bs.created_at DESC, mp.model_name
             """)
-            
+
+            # 성능 최적화를 위한 인덱스 생성
+            self._create_indexes(cursor)
+
             conn.commit()
-    
+
+    def _create_indexes(self, cursor):
+        """성능 최적화를 위한 인덱스 생성"""
+        try:
+            # model_performance 테이블 인덱스
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_model_performance_session
+                ON model_performance(session_id)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_model_performance_model
+                ON model_performance(model_name)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_model_performance_created
+                ON model_performance(created_at)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_model_performance_composite
+                ON model_performance(session_id, model_name)
+            """)
+
+            # prediction_details 테이블 인덱스
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prediction_details_session
+                ON prediction_details(session_id)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prediction_details_round
+                ON prediction_details(round_num)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prediction_details_model
+                ON prediction_details(model_name)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prediction_details_created
+                ON prediction_details(created_at)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prediction_details_composite
+                ON prediction_details(session_id, round_num)
+            """)
+
+            # backtest_sessions 테이블 인덱스
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_backtest_sessions_created
+                ON backtest_sessions(created_at)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_backtest_sessions_threshold
+                ON backtest_sessions(probability_threshold)
+            """)
+
+            self.logger.info("데이터베이스 인덱스 생성 완료")
+
+        except Exception as e:
+            self.logger.warning(f"인덱스 생성 중 오류 (무시 가능): {e}")
+
+    def _migrate_backtest_sessions_table(self, cursor):
+        """backtest_sessions 테이블 스키마 마이그레이션"""
+        try:
+            # 현재 테이블의 컬럼 정보 확인
+            cursor.execute("PRAGMA table_info(backtest_sessions)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+
+            # 필요한 컬럼 목록
+            required_columns = {
+                'probability_threshold': 'REAL DEFAULT 1.0',
+                'ml_bypass_filters': 'INTEGER DEFAULT 8',
+                'ml_weight': 'REAL DEFAULT 0.4',
+                'combination_count': 'INTEGER',
+                'ml_inclusion_rate': 'REAL'
+            }
+
+            # 누락된 컬럼 추가
+            for column_name, column_def in required_columns.items():
+                if column_name not in existing_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE backtest_sessions ADD COLUMN {column_name} {column_def}")
+                        self.logger.info(f"백테스팅 세션 테이블에 {column_name} 컬럼 추가 완료")
+                    except sqlite3.OperationalError as e:
+                        # 이미 존재하는 컬럼이면 무시
+                        if "duplicate column name" not in str(e).lower():
+                            self.logger.warning(f"컬럼 {column_name} 추가 실패: {e}")
+
+        except Exception as e:
+            self.logger.error(f"테이블 마이그레이션 중 오류: {e}")
+
     def save_backtest_results(self, backtest_results: Dict[str, Any]) -> int:
         """백테스팅 결과를 데이터베이스에 저장"""
         try:
@@ -137,14 +239,41 @@ class PerformanceStatsManager:
                 combination_count = threshold_info.get('combination_count', 0)
                 ml_inclusion_rate = threshold_info.get('ml_inclusion_rate', 0.0)
 
-                cursor.execute("""
-                    INSERT INTO backtest_sessions
-                    (session_date, total_rounds, test_start_round, test_end_round, session_config,
-                     probability_threshold, ml_bypass_filters, ml_weight, combination_count, ml_inclusion_rate)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (session_date, total_rounds, test_start_round, test_end_round,
-                      json.dumps(config_info, ensure_ascii=False),
-                      probability_threshold, ml_bypass_filters, ml_weight, combination_count, ml_inclusion_rate))
+                # 컬럼 존재 여부 확인 및 안전한 INSERT
+                cursor.execute("PRAGMA table_info(backtest_sessions)")
+                existing_columns = {row[1] for row in cursor.fetchall()}
+
+                # 기본 컬럼들 (항상 존재해야 함)
+                base_columns = ['session_date', 'total_rounds', 'test_start_round', 'test_end_round', 'session_config']
+                base_values = [session_date, total_rounds, test_start_round, test_end_round,
+                              json.dumps(config_info, ensure_ascii=False)]
+
+                # 선택적 컬럼들 (존재할 경우에만 포함)
+                optional_columns = {
+                    'probability_threshold': probability_threshold,
+                    'ml_bypass_filters': ml_bypass_filters,
+                    'ml_weight': ml_weight,
+                    'combination_count': combination_count,
+                    'ml_inclusion_rate': ml_inclusion_rate
+                }
+
+                # 존재하는 컬럼만 포함하여 INSERT 문 생성
+                insert_columns = base_columns[:]
+                insert_values = base_values[:]
+
+                for col_name, col_value in optional_columns.items():
+                    if col_name in existing_columns:
+                        insert_columns.append(col_name)
+                        insert_values.append(col_value)
+
+                # 동적 INSERT 문 실행
+                columns_str = ', '.join(insert_columns)
+                placeholders = ', '.join(['?'] * len(insert_values))
+
+                cursor.execute(f"""
+                    INSERT INTO backtest_sessions ({columns_str})
+                    VALUES ({placeholders})
+                """, insert_values)
                 
                 session_id = cursor.lastrowid
                 

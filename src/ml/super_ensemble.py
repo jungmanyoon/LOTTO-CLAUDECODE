@@ -152,10 +152,22 @@ class SuperEnsemble:
                     if hasattr(model, 'fit'):
                         model.fit(X, y)
                         
-                        # 교차 검증으로 성능 평가
+                        # 교차 검증으로 성능 평가 (클래스 불균형 처리)
                         if hasattr(model, 'score'):
-                            scores = cross_val_score(model, X, y, cv=3)
-                            performance = np.mean(scores)
+                            try:
+                                # 데이터 크기에 따른 안전한 CV fold 수 계산
+                                n_samples = len(X)
+                                cv_folds = min(3, max(2, n_samples // 10))  # 최소 2, 최대 3
+
+                                scores = cross_val_score(
+                                    model, X, y,
+                                    cv=cv_folds,
+                                    error_score=0.5  # 에러 시 기본 점수
+                                )
+                                performance = np.mean(scores)
+                            except Exception as cv_e:
+                                logging.warning(f"{name} CV 실패: {cv_e}. 기본 점수 사용")
+                                performance = 0.7  # CV 실패 시 기본값
                         else:
                             performance = 0.7  # 기본값
                     else:

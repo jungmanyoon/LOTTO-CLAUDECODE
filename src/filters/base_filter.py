@@ -71,57 +71,87 @@ class BaseFilter(ABC):
     
     def apply_early_termination(self, combinations: List[str], round_num: int = None) -> List[str]:
         """조합에 빠른 실패 전략 적용
-        
+
         먼저 빠르게 실패하는 조건을 확인하여 필터링 효율성을 높입니다.
-        
+
         Args:
             combinations: 확인할 조합 리스트
             round_num: (선택) 회차 번호
-            
+
         Returns:
             List[str]: 필터링된 조합 목록
         """
         filtered_combinations = []
         total = len(combinations)
         processed = 0
-        
-        # 1개 조합 처리 시 불필요한 로그 제거
-        if total > 1:
-            logging.info(f"[빠른실패] {total}개 조합에 빠른 실패 전략 적용 중...")
-        else:
-            logging.debug(f"[DEBUG-빠른실패] {total}개 조합에 빠른 실패 전략 적용 중...")
-        
+        excluded_count = 0
+        start_time = time.time()
+
+        # Progress tracking milestones (10%, 25%, 50%, 75%, 100%)
+        milestones = [int(total * p / 100) for p in [10, 25, 50, 75, 100]]
+        milestone_idx = 0
+
+        # Only log start for batches > 1000 combinations
+        if total > 1000:
+            logging.info(
+                f"[{self.get_filter_name()}] Starting early termination | "
+                f"Total: {total:,} combinations"
+            )
+
         for combo in combinations:
             processed += 1
-            
+
             # 캐시 확인
             cache_key = f"{round_num or 'none'}_{combo}"
             if cache_key in self.early_termination_cache:
                 if self.early_termination_cache[cache_key]:
                     filtered_combinations.append(combo)
+                else:
+                    excluded_count += 1
                 continue
-                
+
             # 조합 검사 - 빠른 실패 조건 확인
             if self.check_combination(combo, round_num):
                 filtered_combinations.append(combo)
                 self.early_termination_cache[cache_key] = True
             else:
                 self.early_termination_cache[cache_key] = False
-            
-            # 진행 상황 로깅 (1% 단위)
-            if processed % max(1, total // 100) == 0:
-                progress = (processed / total) * 100
-                if progress % 10 == 0:  # 10% 단위로만 로깅
-                    logging.info(f"빠른 실패 처리 진행 중: {progress:.0f}% ({processed:,}/{total:,})")
-        
-        # 필터링 결과
+                excluded_count += 1
+
+            # Progress logging at milestones (10%, 25%, 50%, 75%, 100%)
+            if milestone_idx < len(milestones) and processed >= milestones[milestone_idx]:
+                elapsed = time.time() - start_time
+                progress_pct = (milestone_idx + 1) * [10, 25, 50, 75, 100][milestone_idx] / 100
+                exclusion_rate = (excluded_count / processed) * 100 if processed > 0 else 0
+
+                if total > 1000:  # Only log for large batches
+                    logging.info(
+                        f"[{self.get_filter_name()}] Progress: {progress_pct:.0f}% | "
+                        f"Processed: {processed:,} | "
+                        f"Excluded: {excluded_count:,} ({exclusion_rate:.1f}%) | "
+                        f"Duration: {elapsed:.2f}s"
+                    )
+                milestone_idx += 1
+
+        # Final summary
         remaining = len(filtered_combinations)
         excluded = total - remaining
-        # 1개 조합 처리 결과는 DEBUG로 처리
-        if total > 1:
-            logging.info(f"[빠른실패] 완료: {remaining:,}개 남음, {excluded:,}개 제외됨 ({(excluded/total)*100:.2f}%)")
+        elapsed_total = time.time() - start_time
+        exclusion_rate = (excluded / total) * 100 if total > 0 else 0
+
+        if total > 1000:
+            logging.info(
+                f"[{self.get_filter_name()}] Completed | "
+                f"Remaining: {remaining:,} | "
+                f"Excluded: {excluded:,} ({exclusion_rate:.1f}%) | "
+                f"Duration: {elapsed_total:.2f}s"
+            )
         else:
-            logging.debug(f"[DEBUG-빠른실패] 완료: {remaining:,}개 남음, {excluded:,}개 제외됨 ({(excluded/total)*100:.2f}%)")
+            # Small batches go to DEBUG level
+            logging.debug(
+                f"[{self.get_filter_name()}] Completed | "
+                f"Remaining: {remaining:,} | Excluded: {excluded:,} ({exclusion_rate:.1f}%)"
+            )
         
         return filtered_combinations
     

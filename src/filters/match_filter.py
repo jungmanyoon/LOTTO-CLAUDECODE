@@ -72,7 +72,7 @@ class MatchFilter(BaseFilter):
 
             # max_match=6인 경우 특별 처리 (유사도 기반 필터링)
             if self.criteria['max_match'] == 6:
-                logging.info("max_match=6: 유사도 기반 지능형 필터링 적용")
+                logging.debug("max_match=6: 유사도 기반 지능형 필터링 적용")
                 return self._similarity_based_filtering(combinations, winning_arrays)
             
             # 일반적인 경우: 최적화된 청크 단위 처리
@@ -205,12 +205,17 @@ class MatchFilter(BaseFilter):
                     elif sim >= similarity_threshold:
                         logging.debug(f"제외: {comb} (유사도: {sim:.2f})")
             
-            # 필터링 결과 로깅
+            # 필터링 결과 로깅 (조건부)
             excluded_count = len(combinations) - len(filtered_combinations)
             exclusion_rate = (excluded_count / len(combinations)) * 100
-            logging.info(f"유사도 기반 필터링 완료: {len(filtered_combinations):,}/{len(combinations):,}개 남음 "
-                        f"({excluded_count:,}개 제외, {exclusion_rate:.2f}%)")
-            
+
+            # 실제로 제외된 조합이 있을 때만 INFO 레벨로 로깅
+            if excluded_count > 0:
+                logging.info(f"유사도 기반 필터링 완료: {len(filtered_combinations):,}/{len(combinations):,}개 남음 "
+                            f"({excluded_count:,}개 제외, {exclusion_rate:.2f}%)")
+            else:
+                logging.debug(f"유사도 기반 필터링 완료: {len(filtered_combinations):,}/{len(combinations):,}개 남음 (제외 없음)")
+
             return filtered_combinations
             
         except Exception as e:

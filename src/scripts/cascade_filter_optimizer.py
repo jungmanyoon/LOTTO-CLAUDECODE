@@ -82,7 +82,8 @@ class CascadeFilterOptimizer:
             with open('predictions_20250728_185706.json', 'r') as f:
                 data = json.load(f)
             return [pred['numbers'] for pred in data['predictions']]
-        except:
+        except Exception as e:
+            logging.error(f"최적화 실패: {e}")
             return [
                 [7, 13, 17, 22, 34, 45],
                 [11, 15, 20, 27, 34, 45],

@@ -764,8 +764,8 @@ class FractalPatternAnalyzer:
                 ax.set_xlabel('시간')
                 ax.set_ylabel('스케일')
                 plt.colorbar(im, ax=ax)
-            except:
-                pass
+            except (ImportError, AttributeError) as e:
+                logging.debug(f"프랙탈 분석 실패 (무시): {e}")
         
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')

@@ -9,17 +9,24 @@ import json
 
 class PatternManager:
     """당첨 번호의 패턴을 분석하고 관리하는 클래스"""
-    
+
     def __init__(self, db_manager):
         """PatternManager 초기화
-        
+
         Args:
             db_manager: DatabaseManager 인스턴스
         """
         self.db_manager = db_manager  # db_manager 저장
         self.db = db_manager.patterns_db
         self.winning_numbers = []  # 빈 리스트로 초기화
-        
+
+        # ============================================================
+        # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 캐싱
+        # ============================================================
+        # 패턴 분석 결과 캐시 (data_hash -> patterns)
+        self._pattern_cache = {}
+        self._last_data_hash = None
+
         # 당첨 번호 데이터 로드 시도
         try:
             self._sync_winning_numbers(db_manager.lotto_db)
@@ -46,7 +53,7 @@ class PatternManager:
                 round_num, numbers, draw_date = row
                 self.db.save_winning_numbers(round_num, numbers, draw_date)
                 
-            logging.info(f"[DEBUG] 당첨 번호 동기화 완료: {len(rows)}개")
+            logging.debug(f"당첨 번호 동기화 완료: {len(rows)}개")
                 
         except Exception as e:
             logging.error(f"당첨 번호 동기화 중 오류 발생: {str(e)}")
@@ -68,28 +75,44 @@ class PatternManager:
             logging.error(f"당첨 번호 로드 중 오류 발생: {str(e)}")
             self.winning_numbers = []  # 오류 발생 시 빈 리스트로 초기화
 
+    def _get_data_hash(self, winning_numbers: List[str]) -> str:
+        """데이터 해시값 생성 (캐시 키로 사용)"""
+        import hashlib
+        data_str = '|'.join(sorted(winning_numbers))
+        return hashlib.md5(data_str.encode()).hexdigest()
+
     def analyze_patterns(self, round_num: int = None) -> bool:
-        """전체 패턴 분석 수행"""
+        """전체 패턴 분석 수행 (캐싱 지원)"""
         try:
             logging.info("\n" + "="*60)
             logging.info("🔍 [패턴 분석 시스템] 분석 시작")
             logging.info("="*60)
-            
+
             if round_num is None:
                 round_num = self.db_manager.lotto_db.get_last_round()
-                
+
             if round_num is None:
                 logging.error("분석할 회차 정보를 찾을 수 없습니다.")
                 return False
-                
+
             winning_numbers = self.winning_numbers
             if not winning_numbers:
                 logging.error("분석할 당첨 번호가 없습니다.")
                 return False
-                
+
+            # ============================================================
+            # 🚀 PERFORMANCE OPTIMIZATION: 캐시 확인
+            # ============================================================
+            data_hash = self._get_data_hash(winning_numbers)
+            if data_hash == self._last_data_hash and data_hash in self._pattern_cache:
+                logging.info(f"✅ 캐시된 패턴 분석 결과 사용 (hash: {data_hash[:8]}...)")
+                patterns = self._pattern_cache[data_hash]
+                self.db_manager.save_pattern_analysis(round_num, patterns)
+                return True
+
             logging.info(f"✅ 분석 대상: {round_num}회차")
             logging.info(f"✅ 분석할 데이터: {len(winning_numbers)}개 회차")
-            
+
             patterns = {}
             successful_patterns = []
             failed_patterns = []
@@ -142,15 +165,22 @@ class PatternManager:
             
             if failed_patterns:
                 logging.info(f"  - 실패한 패턴: {', '.join(failed_patterns)}")
-            
+
             if any(patterns.values()):
+                # ============================================================
+                # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 결과 캐싱
+                # ============================================================
+                self._pattern_cache[data_hash] = patterns
+                self._last_data_hash = data_hash
+                logging.info(f"✅ 패턴 분석 결과 캐시 저장 (hash: {data_hash[:8]}...)")
+
                 self.db_manager.save_pattern_analysis(round_num, patterns)
                 self._log_pattern_analysis(patterns)
                 return True
             else:
                 logging.error("모든 패턴 분석이 실패했습니다.")
                 return False
-            
+
         except Exception as e:
             logging.error(f"패턴 분석 중 오류 발생: {str(e)}")
             return False

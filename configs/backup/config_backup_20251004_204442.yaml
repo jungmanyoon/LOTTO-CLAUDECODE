@@ -1,0 +1,194 @@
+parallel_processing: true
+max_workers: 12
+batch_size: 60000
+database:
+  batch_size: 60000
+  max_batch_memory: 2000000000
+  storage_mode: optimized
+  connection_pool_size: 8
+filter_manager:
+  batch_optimization: true
+  dynamic_workers: true
+  max_workers: 12
+  parallel_workers: 12
+  memory_per_worker: 250000000
+  adaptive_batch_sizing: true
+filtering:
+  batch_size: 60000
+  max_workers: 12
+  use_parallel: true
+  chunk_size: 5000
+  queue_timeout: 30
+filters:
+  criteria:
+    arithmetic_sequence:
+      excluded_lengths:
+      - 5
+      - 6
+      min_sequence: 5
+    average:
+      exclude_extremes: true
+      max_average: 32.0
+      min_average: 14.0
+    consecutive:
+      max_consecutive: 5
+      min_gap: 1
+    digit_sum:
+      max_digit_sum: 62
+      max_digit_sum_range: 12
+      min_digit_sum: 16
+      min_digit_sum_range: 2
+    dispersion:
+      max_avg_gap: 9.0
+      max_max_gap: 30
+      max_min_gap: 5
+      max_std_dev: 253.0
+      max_variance: 460.0
+      min_avg_gap: 2.5
+      min_max_gap: 4
+      min_min_gap: 1
+      min_std_dev: -230.0
+      min_variance: 34.0
+    fixed_step:
+      all_steps:
+        required_matches: 6
+        steps_to_exclude:
+        - 2
+        - 3
+      four_steps:
+        required_matches: 5
+        steps_to_exclude:
+        - 2
+        - 3
+      partial_steps:
+        required_matches: 6
+        steps_to_exclude:
+        - 2
+        - 3
+      three_steps:
+        required_matches: 5
+        steps_to_exclude:
+        - 2
+        - 3
+    geometric_sequence:
+      excluded_lengths:
+      - 4
+      - 5
+      - 6
+      min_sequence: 4
+    last_digit:
+      min_same_last_digits: 3
+    match:
+      max_match: 5
+    max_gap:
+      max_allowed_gap: 30
+    multiple:
+      global_threshold: 1.0
+      multiples:
+        2:
+        - 0
+        - 5
+        3:
+        - 1
+        - 5
+        4:
+        - 0
+        - 3
+        5:
+        - 0
+        - 3
+    odd_even:
+      excluded_counts:
+      - 0
+      - 6
+    prime_composite:
+      max_allowed: 5
+      min_allowed: 0
+      valid_prime_counts:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+    section:
+      exclude_all_section: true
+      max_numbers_per_section: 5
+    sum_range:
+      max_sum: 197
+      min_sum: 83
+    ten_section:
+      section_limits:
+        section1:
+        - 6
+        section2:
+        - 6
+        section3:
+        - 6
+        section4:
+        - 6
+        section5:
+        - 5
+        - 6
+  enabled_filters:
+  - match
+  - odd_even
+  - consecutive
+  - sum_range
+  - fixed_step
+  - last_digit
+  - max_gap
+  - section
+  - average
+  - multiple
+  - ten_section
+  - arithmetic_sequence
+  - geometric_sequence
+  - prime_composite
+  - digit_sum
+  - dispersion
+  filter_efficiency:
+    arithmetic_sequence: 0.18
+    average: 0.1
+    consecutive: 0.3
+    digit_sum: 0.2
+    dispersion: 0.18
+    fixed_step: 0.15
+    geometric_sequence: 0.2
+    last_digit: 0.1
+    match: 0.05
+    max_gap: 0.25
+    multiple: 0.08
+    odd_even: 0.15
+    prime_composite: 0.15
+    section: 0.22
+    sum_range: 0.45
+    ten_section: 0.12
+logging:
+  backup_count: 5
+  file: logs/lotto_app.log
+  format: '%(asctime)s - %(levelname)s - %(message)s'
+  level: INFO
+  max_size: 10485760
+performance:
+  enable_monitoring: true
+  cpu_threshold: 85
+  memory_threshold: 80
+  auto_scaling: true
+ml_models:
+  monte_carlo:
+    n_simulations: 6000
+    parallel_workers: 8
+    batch_size: 750
+  backtesting:
+    parallel_workers: 10
+    chunk_size: 20
+    cache_size: 100
+  lstm:
+    batch_size: 64
+    epochs: 50
+  ensemble:
+    n_estimators: 100
+    parallel_jobs: 4
+progress_display:
+  disable_all: false
+  simple_mode: true

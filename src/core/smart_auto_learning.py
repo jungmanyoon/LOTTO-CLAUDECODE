@@ -128,11 +128,13 @@ class SmartAutoLearning:
                 })
                 if len(self.state['restart_history']) > 10:
                     self.state['restart_history'] = self.state['restart_history'][-10:]
+                    self.save_state()  # 재시작 이력 업데이트 후 저장
                 
                 # 평균 재시작 간격 계산
                 if len(self.state['restart_history']) >= 3:
                     intervals = [h['interval_minutes'] for h in self.state['restart_history'][-5:]]
                     self.state['average_restart_interval'] = sum(intervals) / len(intervals)
+                    self.save_state()  # 평균 재시작 간격 업데이트 후 저장
             
             # 오늘 재시작 횟수 추적
             today = now.date()
@@ -147,6 +149,7 @@ class SmartAutoLearning:
             
             self.state['last_restart_time'] = now.isoformat()
             self.state['total_restart_count'] += 1
+            self.save_state()  # 재시작 정보 업데이트 후 저장
         
         # 즉시 학습 필요 여부 판단
         should_learn = False
@@ -170,9 +173,6 @@ class SmartAutoLearning:
         # 동적 학습 주기 조정
         if self.config.get('dynamic_adjustment', True):
             self.adjust_learning_interval()
-        
-        # 상태 저장
-        self.save_state()
         
         # 즉시 학습 실행
         if should_learn:
@@ -200,7 +200,7 @@ class SmartAutoLearning:
             logging.info(f"[SMART LEARNING] 안정적 실행: 학습 주기를 {new_interval}분으로 유지")
         
         self.state['current_interval_minutes'] = new_interval
-        self.save_state()
+        self.save_state()  # 학습 주기 변경 후 저장
     
     def trigger_learning(self, reason: str = "정기 학습"):
         """학습 트리거"""
@@ -218,7 +218,7 @@ class SmartAutoLearning:
             
             self.state['last_learning_time'] = now.isoformat()
             self.state['total_learning_count'] += 1
-            self.save_state()
+            self.save_state()  # 학습 정보 업데이트 후 저장
             
             # 실제 학습 로직 호출 (비동기)
             threading.Thread(target=self.run_learning, args=(reason,), daemon=True).start()
@@ -275,6 +275,7 @@ class SmartAutoLearning:
                         json.dump(auto_state, f, indent=2, ensure_ascii=False)
                 
                 self.state['last_learning_success'] = True
+                self.save_state()  # 학습 성공 상태 저장
                 
             except ImportError as e:
                 logging.warning(f"[SMART LEARNING] 향상된 피드백 루프 사용 불가: {e}")
@@ -285,17 +286,18 @@ class SmartAutoLearning:
                     result = backtesting.run_backtest(test_rounds=50)
                     logging.info(f"[SMART LEARNING] 백테스팅 완료: 평균 매치 {result.get('average_matches', 0):.2f}개")
                     self.state['last_learning_success'] = True
+                    self.save_state()  # 학습 성공 상태 저장
                 except Exception as e2:
                     logging.error(f"[SMART LEARNING] 대체 학습도 실패: {e2}")
                     self.state['last_learning_success'] = False
+                    self.save_state()  # 대체 학습 실패 상태 저장
             
             logging.info(f"[SMART LEARNING] 학습 완료: {reason}")
-            self.save_state()
             
         except Exception as e:
             logging.error(f"[SMART LEARNING] 학습 실행 실패: {e}")
             self.state['last_learning_success'] = False
-            self.save_state()
+            self.save_state()  # 학습 실패 상태 저장
     
     def start_scheduler(self):
         """백그라운드 학습 스케줄러 시작"""

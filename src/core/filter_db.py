@@ -328,6 +328,10 @@ class FilterDB:
         """데이터베이스 연결 확인 및 재연결"""
         if not self.conn:
             import sqlite3
-            self.conn = sqlite3.connect(self.db_path)
+            self.conn = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,  # Allow multi-threading access
+                timeout=30.0
+            )
             if not self.initialized:
                 self.init_database() 

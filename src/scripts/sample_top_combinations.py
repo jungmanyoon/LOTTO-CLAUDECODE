@@ -43,8 +43,9 @@ class TopCombinationSampler:
                 
             logger.info(f"ML 예측 결과 로드 완료: {len(predictions)}개")
             return predictions
-            
-        except:
+
+        except Exception as e:
+            logging.error(f"샘플링 실패: {e}")
             # 파일이 없으면 하드코딩된 값 사용
             logger.warning("예측 파일을 찾을 수 없어 기본값 사용")
             return [

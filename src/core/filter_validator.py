@@ -4,6 +4,7 @@
 """
 
 import logging
+import os
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import json
@@ -71,7 +72,7 @@ class FilterValidator:
                             f"낮은 점수 ({filter_result.get('score', 0)}점)를 받음!"
                         )
             else:
-                self.logger.info(
+                self.logger.debug(
                     f"✅ {round_num}회차 당첨번호가 가중치 시스템을 통과함 "
                     f"(점수: {evaluation['total_score']:.1f}/100)"
                 )
@@ -101,20 +102,26 @@ class FilterValidator:
                                 'name': filter_name,
                                 'reason': self._get_filter_failure_reason(filter_obj, winning_numbers)
                             })
-                            
-                            self.logger.warning(f"🚨 경고: {round_num}회차 당첨번호가 {filter_name} 필터에 의해 제외됨!")
+
+                            # 🔧 FIX: 당첨번호는 실제로 나온 번호이므로 경고가 아닌 정보성 메시지로 변경
+                            # 필터는 예측 조합을 걸러내는 용도이지, 당첨번호를 검증하는 용도가 아님
+                            self.logger.debug(f"ℹ️  정보: {round_num}회차 당첨번호가 {filter_name} 필터 기준을 벗어남 (정상)")
                 except Exception as e:
                     self.logger.error(f"필터 검증 중 오류 ({filter_name}): {e}")
         
-        # 경고 레벨 설정
+        # 경고 레벨 설정 (DEBUG로 변경)
+        # 🔧 FIX: 당첨번호가 필터를 통과하지 못하는 것은 정상적인 현상
+        # 필터는 확률적으로 낮은 패턴을 제외하는 것이므로, 당첨번호가 이례적 패턴일 수 있음
         if not result['passed_all_filters']:
             failed_count = len(result['failed_filters'])
+            failed_filter_names = [f['name'] for f in result['failed_filters']]
+
             if failed_count >= 3:
                 result['warning_level'] = 'critical'
-                self.logger.critical(f"🚨🚨🚨 치명적: {round_num}회차 당첨번호가 {failed_count}개 필터에서 제외됨!")
+                self.logger.debug(f"ℹ️  {round_num}회차 당첨번호가 {failed_count}개 필터 기준 벗어남: {', '.join(failed_filter_names)}")
             elif failed_count >= 1:
                 result['warning_level'] = 'warning'
-                self.logger.warning(f"⚠️ 주의: {round_num}회차 당첨번호가 {failed_count}개 필터에서 제외됨")
+                self.logger.debug(f"ℹ️  {round_num}회차 당첨번호가 {failed_count}개 필터 기준 벗어남: {', '.join(failed_filter_names)}")
         
         # 결과 저장
         self.validation_results.append(result)
@@ -338,21 +345,16 @@ class FilterValidator:
         return suggestions
     
     def _save_validation_result(self, result: Dict):
-        """검증 결과 저장"""
+        """검증 결과 저장 - SQLite 데이터베이스 사용"""
+        import sqlite3
+
         try:
-            # JSON 파일로 저장
-            filename = f"results/filter_validation_{datetime.now().strftime('%Y%m')}.json"
-            
-            # 기존 데이터 읽기
-            try:
-                with open(filename, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-            except:
-                data = []
-            
-            # 새 결과 추가
-            data.append(result)
-            
+            # results 디렉토리 확인
+            os.makedirs('results', exist_ok=True)
+
+            # SQLite 데이터베이스 파일 경로
+            db_path = f"results/filter_validation_{datetime.now().strftime('%Y%m')}.db"
+
             # numpy 타입을 Python 타입으로 변환
             def convert_numpy(obj):
                 if isinstance(obj, np.integer):
@@ -361,17 +363,68 @@ class FilterValidator:
                     return float(obj)
                 elif isinstance(obj, np.ndarray):
                     return obj.tolist()
+                elif isinstance(obj, list):
+                    return [convert_numpy(item) for item in obj]
+                elif isinstance(obj, dict):
+                    return {k: convert_numpy(v) for k, v in obj.items()}
                 return obj
-            
-            # JSON 직렬화 가능한 형태로 변환
-            json_data = json.loads(json.dumps(data, default=convert_numpy))
-            
-            # 저장
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(json_data, f, ensure_ascii=False, indent=2)
-                
+
+            # 모든 numpy 타입 변환
+            clean_result = convert_numpy(result)
+
+            # SQLite 연결 (자동으로 트랜잭션 관리 및 락킹)
+            conn = sqlite3.connect(
+                db_path,
+                check_same_thread=False,  # Allow multi-threading access
+                timeout=30.0
+            )
+            cursor = conn.cursor()
+
+            # 테이블 생성 (없으면)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS validations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    round INTEGER NOT NULL,
+                    winning_numbers TEXT NOT NULL,
+                    passed_all_filters INTEGER NOT NULL,
+                    failed_filters TEXT,
+                    warning_level TEXT,
+                    timestamp TEXT NOT NULL,
+                    UNIQUE(round, winning_numbers, timestamp)
+                )
+            ''')
+
+            # 인덱스 생성 (중복 방지 및 빠른 조회)
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_round
+                ON validations(round)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_timestamp
+                ON validations(timestamp)
+            ''')
+
+            # 데이터 삽입 (중복 무시)
+            cursor.execute('''
+                INSERT OR IGNORE INTO validations
+                (round, winning_numbers, passed_all_filters, failed_filters, warning_level, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                clean_result.get('round'),
+                json.dumps(clean_result.get('winning_numbers')),
+                1 if clean_result.get('passed_all_filters') else 0,
+                json.dumps(clean_result.get('failed_filters', [])),
+                clean_result.get('warning_level', 'normal'),
+                clean_result.get('timestamp')
+            ))
+
+            conn.commit()
+            conn.close()
+
         except Exception as e:
             self.logger.error(f"검증 결과 저장 실패: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
     
     def generate_validation_report(self) -> str:
         """검증 보고서 생성"""

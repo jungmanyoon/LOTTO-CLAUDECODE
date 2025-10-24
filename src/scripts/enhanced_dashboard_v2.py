@@ -21,6 +21,11 @@ import base64
 from io import BytesIO
 import pytz  # 한국 시간대 처리를 위해 추가
 
+# SECURITY: CSRF protection and Rate Limiting
+from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
 # ConfigManager import 추가
 try:
     from src.utils.config_manager import ConfigManager
@@ -34,6 +39,20 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
+
+# SECURITY: Configure secret key for CSRF protection
+app.config['SECRET_KEY'] = os.urandom(32).hex()  # Generate random secret key
+
+# SECURITY: Initialize CSRF protection
+csrf = CSRFProtect(app)
+
+# SECURITY: Initialize Rate Limiter
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",  # In-memory storage for simplicity
+)
 
 class EnhancedLottoDashboard:
     """향상된 로또 대시보드 v2"""
@@ -432,11 +451,11 @@ class EnhancedLottoDashboard:
             with sqlite3.connect(db_path) as conn:
                 cursor = conn.cursor()
 
-                # 최신 세션 정보 조회
+                # 최신 세션 정보 조회 - 캐시 무효화를 위해 매번 새로 조회
                 cursor.execute("""
                     SELECT id, session_date, total_rounds, test_start_round, test_end_round
                     FROM backtest_sessions
-                    ORDER BY id DESC
+                    ORDER BY session_date DESC, id DESC
                     LIMIT 1
                 """)
                 session_row = cursor.fetchone()
@@ -737,7 +756,91 @@ class EnhancedLottoDashboard:
         except Exception as e:
             self.logger.error(f"필터 검증 중 오류: {e}")
             return {'passed': None, 'failed_filters': [], 'warning_message': None}
-    
+
+    def validate_prediction_numbers(self, numbers: List[int], source: str = "Unknown") -> Dict:
+        """예측 번호가 필터에 위반되는지 확인 (새로운 검증 기능)"""
+        validation_result = {
+            'passed': True,
+            'failed_filters': [],
+            'warning_message': None,
+            'in_filtered_pool': False,
+            'filter_bypass_applied': False,
+            'recommendation': 'accept'
+        }
+
+        try:
+            # 기본 유효성 검사
+            if len(numbers) != 6 or len(set(numbers)) != 6 or not all(1 <= n <= 45 for n in numbers):
+                validation_result['passed'] = False
+                validation_result['failed_filters'].append('기본 유효성')
+                validation_result['recommendation'] = 'reject'
+                return validation_result
+
+            # 1. 홀짝 균형 필터 (극단적인 경우만 제외)
+            odd_count = len([n for n in numbers if n % 2 == 1])
+            if odd_count == 0 or odd_count == 6:
+                validation_result['failed_filters'].append(f'홀짝 균형 (홀수: {odd_count}개)')
+
+            # 2. 합계 범위 필터
+            total_sum = sum(numbers)
+            if total_sum < 68 or total_sum > 209:
+                validation_result['failed_filters'].append(f'합계 범위 (합: {total_sum})')
+
+            # 3. 연속 번호 필터 (3개 이상 연속)
+            sorted_numbers = sorted(numbers)
+            consecutive_count = 0
+            max_consecutive = 0
+            for i in range(len(sorted_numbers) - 1):
+                if sorted_numbers[i+1] - sorted_numbers[i] == 1:
+                    consecutive_count += 1
+                    max_consecutive = max(max_consecutive, consecutive_count + 1)
+                else:
+                    consecutive_count = 0
+
+            if max_consecutive >= 3:
+                validation_result['failed_filters'].append(f'연속 번호 ({max_consecutive}개 연속)')
+
+            # 4. 최대 간격 필터 (1-45 범위에서 너무 큰 간격)
+            max_gap = max(sorted_numbers[i+1] - sorted_numbers[i] for i in range(len(sorted_numbers) - 1))
+            if max_gap > 20:  # 20보다 큰 간격
+                validation_result['failed_filters'].append(f'최대 간격 (간격: {max_gap})')
+
+            # 실패한 필터가 있는지 확인
+            if validation_result['failed_filters']:
+                validation_result['passed'] = False
+
+                # ML 예측인 경우 완화 로직 적용
+                if source.startswith('ML/'):
+                    # 중요 필터만 체크 (홀짝, 합계)
+                    critical_failures = []
+                    for failed_filter in validation_result['failed_filters']:
+                        if '홀짝' in failed_filter or '합계' in failed_filter:
+                            critical_failures.append(failed_filter)
+
+                    if not critical_failures:
+                        # 중요 필터만 통과하면 완화 적용
+                        validation_result['filter_bypass_applied'] = True
+                        validation_result['passed'] = True
+                        validation_result['recommendation'] = 'accept_with_warning'
+                        validation_result['warning_message'] = f"⚠️ ML 예측 완화 적용: {', '.join(validation_result['failed_filters'])}"
+                    else:
+                        validation_result['recommendation'] = 'reject'
+                        validation_result['warning_message'] = f"❌ 중요 필터 실패: {', '.join(critical_failures)}"
+                else:
+                    validation_result['recommendation'] = 'reject'
+                    validation_result['warning_message'] = f"❌ 필터 실패: {', '.join(validation_result['failed_filters'])}"
+
+            # 필터링된 풀 확인 (실제 DB 확인은 성능상 생략, 데모 데이터 사용)
+            validation_result['in_filtered_pool'] = validation_result['passed']  # 간단한 근사치
+
+        except Exception as e:
+            self.logger.error(f"예측 번호 검증 중 오류: {e}")
+            validation_result['passed'] = False
+            validation_result['failed_filters'].append(f'검증 오류: {str(e)}')
+            validation_result['recommendation'] = 'reject'
+
+        return validation_result
+
     def _generate_demo_week_predictions(self, round_num: int) -> Dict:
         """데모 예측 데이터 생성"""
         import random
@@ -902,6 +1005,7 @@ HTML_TEMPLATE_V2 = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}"><!-- SECURITY: CSRF token -->
     <title>로또 예측 분석 대시보드 v2</title>
     <!-- html2canvas 라이브러리 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -1478,6 +1582,20 @@ HTML_TEMPLATE_V2 = """
         <div class="stats-section" id="statsSection" style="display: none;">
             <h2 class="section-title">📈 성능 통계</h2>
             
+            <!-- 백그라운드 최적화 상태 (새로 추가) -->
+            <div id="optimizerStatus" style="margin-bottom: 20px;">
+                <h3 style="color: #667eea; margin-bottom: 15px;">⚙️ 백그라운드 최적화</h3>
+                <div id="optimizerStatusGrid" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <!-- 최적화 상태가 여기 표시됩니다 -->
+                </div>
+                <div id="optimizerHistory" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 15px;">
+                    <h4 style="color: #667eea; margin-bottom: 10px;">최근 최적화 이력</h4>
+                    <div id="optimizerHistoryTable">
+                        <!-- 최적화 이력이 여기 표시됩니다 -->
+                    </div>
+                </div>
+            </div>
+
             <!-- 백테스팅 성능 통계 (새로 추가) -->
             <div id="backtestPerformance" style="display: none;">
                 <h3 style="color: #667eea; margin-bottom: 15px;">🎯 백테스팅 성능</h3>
@@ -1485,7 +1603,7 @@ HTML_TEMPLATE_V2 = """
                     <!-- 백테스팅 통계가 여기 표시됩니다 -->
                 </div>
             </div>
-            
+
             <!-- 기존 예측 통계 -->
             <div class="stats-grid" id="statsGrid">
                 <!-- 통계가 여기 표시됩니다 -->
@@ -1499,11 +1617,95 @@ HTML_TEMPLATE_V2 = """
     <script>
         let currentRound = null;
         let allRounds = [];
-        
+
+        // 필터 검증 함수
+        function validatePredictionFilter(numbers, source) {
+            const validation = {
+                passed: true,
+                failedFilters: [],
+                warning: null
+            };
+
+            // 기본 유효성 검사
+            if (!numbers || numbers.length !== 6 || new Set(numbers).size !== 6) {
+                return '<span style="color: #dc3545; font-size: 12px;">❌ 무효</span>';
+            }
+
+            if (!numbers.every(n => n >= 1 && n <= 45)) {
+                return '<span style="color: #dc3545; font-size: 12px;">❌ 범위초과</span>';
+            }
+
+            // 1. 홀짝 균형 필터 (극단적인 경우만)
+            const oddCount = numbers.filter(n => n % 2 === 1).length;
+            if (oddCount === 0 || oddCount === 6) {
+                validation.failedFilters.push('홀짝');
+            }
+
+            // 2. 합계 범위 필터
+            const sum = numbers.reduce((a, b) => a + b, 0);
+            if (sum < 68 || sum > 209) {
+                validation.failedFilters.push('합계');
+            }
+
+            // 3. 연속 번호 필터
+            const sorted = [...numbers].sort((a, b) => a - b);
+            let consecutiveCount = 0;
+            let maxConsecutive = 0;
+            for (let i = 0; i < sorted.length - 1; i++) {
+                if (sorted[i + 1] - sorted[i] === 1) {
+                    consecutiveCount++;
+                    maxConsecutive = Math.max(maxConsecutive, consecutiveCount + 1);
+                } else {
+                    consecutiveCount = 0;
+                }
+            }
+            if (maxConsecutive >= 3) {
+                validation.failedFilters.push('연속');
+            }
+
+            // 4. 최대 간격 필터
+            let maxGap = 0;
+            for (let i = 0; i < sorted.length - 1; i++) {
+                maxGap = Math.max(maxGap, sorted[i + 1] - sorted[i]);
+            }
+            if (maxGap > 20) {
+                validation.failedFilters.push('간격');
+            }
+
+            // 결과 판정
+            if (validation.failedFilters.length === 0) {
+                return '<span style="color: #28a745; font-size: 12px;">✅ 통과</span>';
+            }
+
+            // ML 예측인 경우 완화 로직
+            if (source && source.startsWith('ML/')) {
+                const criticalFilters = validation.failedFilters.filter(f =>
+                    f === '홀짝' || f === '합계'
+                );
+
+                if (criticalFilters.length === 0) {
+                    return '<span style="color: #ffc107; font-size: 12px;">⚠️ 완화</span>';
+                } else {
+                    return '<span style="color: #dc3545; font-size: 12px;">❌ 중요</span>';
+                }
+            }
+
+            // 일반 예측 실패
+            return '<span style="color: #dc3545; font-size: 12px;">❌ 실패</span>';
+        }
+
         // 페이지 로드 시 초기화
         window.onload = async function() {
             await loadRounds();  // loadRounds가 완료될 때까지 대기
             await loadLatestRound();  // 그 다음 최신 회차 로드
+
+            // 최적화 상태 자동 새로고침 (30초마다)
+            setInterval(() => {
+                const statsSection = document.getElementById('statsSection');
+                if (statsSection && statsSection.style.display !== 'none') {
+                    loadOptimizerStatus();
+                }
+            }, 30000);
         };
         
         // 회차 목록 로드
@@ -1699,7 +1901,7 @@ HTML_TEMPLATE_V2 = """
                     
                     statsDiv.innerHTML = `
                         <div style="font-size: 13px; line-height: 1.4;">
-                            <div style="font-weight: bold; margin-bottom: 8px;">📊 예측 성과 분석</div>
+                            <div style="font-weight: bold; margin-bottom: 8px;">📊 백테스팅 시뮬레이션 성과</div>
                             
                             <div style="margin-bottom: 8px;">
                                 <strong>기본 통계:</strong><br>
@@ -1734,6 +1936,7 @@ HTML_TEMPLATE_V2 = """
                             <th width="100">출처</th>
                             <th width="60">일치</th>
                             <th width="50">등수</th>
+                            <th width="80">필터 상태</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1780,10 +1983,13 @@ HTML_TEMPLATE_V2 = """
                             }
                         </td>
                         <td>
-                            ${data.winning_numbers && pred.rank ? 
-                                `<span class="rank-badge rank-${pred.rank}">${pred.rank}등</span>` : 
+                            ${data.winning_numbers && pred.rank ?
+                                `<span class="rank-badge rank-${pred.rank}">${pred.rank}등</span>` :
                                 `-`
                             }
+                        </td>
+                        <td>
+                            ${validatePredictionFilter(pred.numbers, pred.source || 'Unknown')}
                         </td>
                     </tr>
                 `;
@@ -1849,6 +2055,7 @@ HTML_TEMPLATE_V2 = """
                             <th width="120">출처</th>
                             <th width="80">일치</th>
                             <th width="60">등수</th>
+                            <th width="80">필터 상태</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1902,6 +2109,9 @@ HTML_TEMPLATE_V2 = """
                 }
                 
                 html += `
+                        </td>
+                        <td>
+                            ${validatePredictionFilter(pred.numbers, pred.source || 'Unknown')}
                         </td>
                     </tr>
                 `;
@@ -1976,11 +2186,135 @@ HTML_TEMPLATE_V2 = """
             `).join('');
         }
         
+        // 최적화 상태 로드 및 표시
+        async function loadOptimizerStatus() {
+            try {
+                const [statusResponse, historyResponse] = await Promise.all([
+                    fetch('/api/optimizer-status'),
+                    fetch('/api/optimizer-history')
+                ]);
+
+                const status = await statusResponse.json();
+                const history = await historyResponse.json();
+
+                displayOptimizerStatus(status);
+                displayOptimizerHistory(history);
+            } catch (error) {
+                console.error('최적화 상태 로드 실패:', error);
+                document.getElementById('optimizerStatusGrid').innerHTML = `
+                    <div style="text-align: center; color: #999; padding: 20px;">
+                        <p>최적화 상태를 불러올 수 없습니다.</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 최적화 상태 표시
+        function displayOptimizerStatus(status) {
+            const statusGrid = document.getElementById('optimizerStatusGrid');
+
+            const statusColor = status.running ? '#28a745' : '#6c757d';
+            const statusText = status.running ? '실행 중' : '대기 중';
+
+            let remainingTime = '';
+            if (status.remaining_minutes > 0) {
+                const hours = Math.floor(status.remaining_minutes / 60);
+                const minutes = Math.floor(status.remaining_minutes % 60);
+                remainingTime = hours > 0 ? `${hours}시간 ${minutes}분` : `${minutes}분`;
+            }
+
+            statusGrid.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <div class="stat-card">
+                        <div class="stat-value" style="color: ${statusColor};">${statusText}</div>
+                        <div class="stat-label">서비스 상태</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${status.total_runs || 0}회</div>
+                        <div class="stat-label">총 최적화 실행</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${status.total_trials || 0}회</div>
+                        <div class="stat-label">총 시도 횟수</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${remainingTime || 'N/A'}</div>
+                        <div class="stat-label">다음 실행까지</div>
+                    </div>
+                </div>
+                ${status.best_params ? `
+                    <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                        <h5 style="color: #667eea; margin-bottom: 10px;">현재 최적 파라미터</h5>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; font-size: 14px;">
+                            <div>
+                                <strong>Threshold:</strong> ${status.best_params.threshold?.toFixed(2) || 'N/A'}
+                            </div>
+                            <div>
+                                <strong>ML Bypass:</strong> ${status.best_params.ml_bypass || 'N/A'}
+                            </div>
+                            <div>
+                                <strong>ML Weight:</strong> ${status.best_params.ml_weight?.toFixed(2) || 'N/A'}
+                            </div>
+                            <div>
+                                <strong>Score:</strong> ${status.best_score?.toFixed(3) || 'N/A'}
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+                ${status.message ? `
+                    <div style="margin-top: 10px; padding: 10px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; color: #856404; font-size: 14px;">
+                        ${status.message}
+                    </div>
+                ` : ''}
+            `;
+        }
+
+        // 최적화 이력 표시
+        function displayOptimizerHistory(history) {
+            const historyTable = document.getElementById('optimizerHistoryTable');
+
+            if (!history || history.length === 0) {
+                historyTable.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">최적화 이력이 없습니다.</p>';
+                return;
+            }
+
+            historyTable.innerHTML = `
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                        <thead>
+                            <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                                <th style="padding: 10px; text-align: left;">날짜</th>
+                                <th style="padding: 10px; text-align: center;">시도</th>
+                                <th style="padding: 10px; text-align: center;">Threshold</th>
+                                <th style="padding: 10px; text-align: center;">ML Bypass</th>
+                                <th style="padding: 10px; text-align: center;">ML Weight</th>
+                                <th style="padding: 10px; text-align: center;">Score</th>
+                                <th style="padding: 10px; text-align: center;">Avg Matches</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${history.map(item => `
+                                <tr style="border-bottom: 1px solid #dee2e6;">
+                                    <td style="padding: 8px;">${new Date(item.date).toLocaleString('ko-KR')}</td>
+                                    <td style="padding: 8px; text-align: center;">${item.trials}</td>
+                                    <td style="padding: 8px; text-align: center;">${item.threshold?.toFixed(2) || 'N/A'}</td>
+                                    <td style="padding: 8px; text-align: center;">${item.ml_bypass || 'N/A'}</td>
+                                    <td style="padding: 8px; text-align: center;">${item.ml_weight?.toFixed(2) || 'N/A'}</td>
+                                    <td style="padding: 8px; text-align: center;">${item.score?.toFixed(3) || 'N/A'}</td>
+                                    <td style="padding: 8px; text-align: center;">${item.avg_matches?.toFixed(3) || 'N/A'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
         // 전체 통계 표시
         async function showStatistics() {
             try {
                 console.log('전체 통계 로드 시작...');
-                
+
                 // 통계 섹션만 표시 (다른 섹션은 그대로 유지)
                 const statsSection = document.getElementById('statsSection');
                 statsSection.style.display = 'block';
@@ -1991,13 +2325,16 @@ HTML_TEMPLATE_V2 = """
                         <p>통계 데이터를 불러오는 중...</p>
                     </div>
                 `;
-                
+
+                // 최적화 상태 로드
+                loadOptimizerStatus();
+
                 // 기본 통계와 백테스팅 성능 병렬로 로드
                 const [statsResponse, backtestResponse] = await Promise.all([
                     fetch('/api/stats'),
                     fetch('/api/backtest-performance')
                 ]);
-                
+
                 const stats = await statsResponse.json();
                 const backtestData = await backtestResponse.json();
                 
@@ -2007,22 +2344,36 @@ HTML_TEMPLATE_V2 = """
                 // 통계 섹션 재구성
                 statsSection.innerHTML = `
                     <h2 class="section-title">📈 성능 통계</h2>
-                    
+
+                    <!-- 백그라운드 최적화 상태 -->
+                    <div id="optimizerStatus" style="margin-bottom: 20px;">
+                        <h3 style="color: #667eea; margin-bottom: 15px;">⚙️ 백그라운드 최적화</h3>
+                        <div id="optimizerStatusGrid" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                            <!-- 최적화 상태가 여기 표시됩니다 -->
+                        </div>
+                        <div id="optimizerHistory" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 15px;">
+                            <h4 style="color: #667eea; margin-bottom: 10px;">최근 최적화 이력</h4>
+                            <div id="optimizerHistoryTable">
+                                <!-- 최적화 이력이 여기 표시됩니다 -->
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 백테스팅 성능 통계 -->
                     <div id="backtestPerformance">
-                        <h3 style="color: #667eea; margin-bottom: 15px;">🎯 백테스팅 성능</h3>
+                        <h3 style="color: #667eea; margin-bottom: 15px;">🎯 백테스팅 시뮬레이션 성능</h3>
                         <div id="backtestStatsGrid" class="stats-grid">
                             <!-- 백테스팅 통계가 여기 표시됩니다 -->
                         </div>
                     </div>
-                    
-                    <!-- 기존 예측 통계 -->
+
+                    <!-- 실제 예측 통계 -->
                     <div style="margin-top: 30px;">
-                        <h3 style="color: #667eea; margin-bottom: 15px;">📊 예측 성과 분석</h3>
+                        <h3 style="color: #667eea; margin-bottom: 15px;">📊 실제 예측 통계</h3>
                         <div class="stats-grid" id="statsGrid">
-                            <!-- 기본 통계가 여기 표시됩니다 -->
+                            <!-- 실제 예측 통계가 여기 표시됩니다 -->
                         </div>
-                        
+
                         <!-- 상세한 맞춘 개수별 통계 -->
                         <div id="matchDistributionDetail" style="margin-top: 20px;">
                             <!-- 상세 통계가 여기 표시됩니다 -->
@@ -2032,12 +2383,12 @@ HTML_TEMPLATE_V2 = """
                 
                 // 백테스팅 성능 표시
                 displayBacktestPerformance(backtestData);
-                
+
                 // 기본 통계 표시
                 displayBasicStats(stats);
-                
-                // 상세한 맞춘 개수별 분석 추가
-                displayDetailedMatchAnalysis(stats);
+
+                // 상세한 맞춘 개수별 분석 추가 (백테스팅 데이터도 함께 전달)
+                displayDetailedMatchAnalysis(stats, backtestData);
                 
                 console.log('전체 통계 표시 완료');
                 
@@ -2063,7 +2414,7 @@ HTML_TEMPLATE_V2 = """
             if (!backtestStats || (!backtestStats.total_predictions && !backtestStats.model_performance)) {
                 backtestSection.innerHTML = `
                     <div style="text-align: center; color: #999; padding: 20px;">
-                        <h3>🎯 백테스팅 성능</h3>
+                        <h3>🎯 백테스팅 시뮬레이션 성능</h3>
                         <p>백테스팅 데이터가 없습니다. main.py를 실행하여 백테스팅을 수행하세요.</p>
                         <small>python main.py (백테스팅 포함 실행)</small>
                     </div>
@@ -2122,65 +2473,120 @@ HTML_TEMPLATE_V2 = """
             `).join('');
         }
         
-        // 기본 통계 표시
+        // 기본 통계 표시 (실제 예측 데이터)
         function displayBasicStats(stats) {
             const statsGrid = document.getElementById('statsGrid');
-            
+
+            // 실제 예측 데이터의 match_distribution 확인
+            const matchDist = stats.match_distribution || {};
+            const totalActualPredictions = Object.values(matchDist).reduce((a, b) => a + b, 0);
+
             const basicStats = [
                 { label: '총 예측', value: stats.total_predictions || 0 },
                 { label: '분석 회차', value: stats.total_rounds || 0 },
                 { label: '회차당 평균', value: stats.avg_predictions_per_round ? stats.avg_predictions_per_round.toFixed(1) : '0' },
                 { label: '총 당첨', value: stats.total_wins || 0 }
             ];
-            
-            // 중복 방지: 기존 카드를 완전히 교체
-            statsGrid.innerHTML = basicStats.map(stat => `
+
+            // 기본 통계 카드
+            let html = basicStats.map(stat => `
                 <div class="stat-card">
                     <div class="stat-value">${stat.value}</div>
                     <div class="stat-label">${stat.label}</div>
                 </div>
             `).join('');
+
+            // 실제 예측 맞춘 개수 분포 추가
+            if (totalActualPredictions > 0) {
+                html += `
+                    <div style="grid-column: 1 / -1; margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 10px;">
+                        <h4 style="color: #495057; font-size: 14px; margin-bottom: 10px;">📊 실제 예측 결과 - 맞춘 개수별 분포:</h4>
+                        <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px;">
+                            ${[0,1,2,3,4,5,6].map(matches => {
+                                const count = matchDist[matches] || 0;
+                                const percentage = totalActualPredictions > 0 ? ((count / totalActualPredictions) * 100).toFixed(1) : '0';
+                                const bgColor = matches >= 3 ? (matches == 3 ? '#d4edda' : matches == 4 ? '#fff3cd' : matches == 5 ? '#f8d7da' : '#dc3545') : '#e9ecef';
+                                const textColor = matches >= 5 ? '#fff' : '#495057';
+                                return `
+                                    <div style="text-align: center; padding: 10px; background: ${bgColor}; color: ${textColor}; border-radius: 8px;">
+                                        <div style="font-size: 18px; font-weight: bold;">${count}</div>
+                                        <div style="font-size: 11px; margin-top: 3px;">
+                                            ${matches}개<br>
+                                            ${percentage}%
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                        <div style="margin-top: 10px; font-size: 12px; color: #666;">
+                            ※ 이것은 실제 예측 번호들의 결과입니다. (predictions.db 기준)
+                        </div>
+                    </div>
+                `;
+            }
+
+            statsGrid.innerHTML = html;
         }
         
         // 상세한 맞춘 개수별 분석 표시
-        function displayDetailedMatchAnalysis(stats) {
+        function displayDetailedMatchAnalysis(stats, backtestData) {
             const detailSection = document.getElementById('matchDistributionDetail');
-            
-            if (!stats.rank_distribution) {
+
+            if (!stats.rank_distribution && !backtestData) {
                 detailSection.innerHTML = `
                     <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center;">
-                        <h4 style="color: #667eea; margin-bottom: 10px;">📊 맞춘 개수별 상세 분석</h4>
+                        <h4 style="color: #667eea; margin-bottom: 10px;">📊 백테스팅 시뮬레이션 - 맞춘 개수별 분석</h4>
                         <p style="color: #666; margin: 0;">분석할 데이터가 부족합니다.</p>
                         <small style="color: #999;">더 많은 예측 데이터가 필요합니다.</small>
                     </div>
                 `;
                 return;
             }
-            
-            const rankData = stats.rank_distribution;
 
-            // 실제 데이터 사용 (match_distribution이 있으면 사용, 없으면 rank_distribution 기반 추정)
-            let matchAnalysis;
-            if (stats.match_distribution) {
-                matchAnalysis = stats.match_distribution;
-            } else {
-                // 백업: rank_distribution 기반 추정 (정확하지 않음)
-                matchAnalysis = {
-                    0: Math.max(0, stats.total_predictions - stats.total_wins - 100),
-                    1: Math.floor((stats.total_predictions || 0) * 0.35),
-                    2: Math.floor((stats.total_predictions || 0) * 0.25),
-                    3: rankData['5등'] || 0,
-                    4: rankData['4등'] || 0,
-                    5: (rankData['3등'] || 0) + (rankData['2등'] || 0),
-                    6: rankData['1등'] || 0
-                };
+            const rankData = stats.rank_distribution || {};
+
+            // 백테스팅 데이터에서 match_distribution 수집
+            let matchAnalysis = {};
+            let hasRealData = false;
+
+            // 백테스팅 데이터에서 실제 match_distribution 추출
+            if (backtestData && backtestData.model_performance) {
+                // 모든 모델의 match_distribution을 합산
+                for (const modelName in backtestData.model_performance) {
+                    const modelPerf = backtestData.model_performance[modelName];
+                    if (modelPerf.match_distribution) {
+                        hasRealData = true;
+                        for (let i = 0; i <= 6; i++) {
+                            const key = `match_${i}`;
+                            matchAnalysis[i] = (matchAnalysis[i] || 0) + (modelPerf.match_distribution[key] || 0);
+                        }
+                    }
+                }
+            }
+
+            // 실제 데이터가 없으면 기존 추정 로직 사용
+            if (!hasRealData) {
+                if (stats.match_distribution) {
+                    matchAnalysis = stats.match_distribution;
+                } else {
+                    // 백업: rank_distribution 기반 추정 (정확하지 않음)
+                    matchAnalysis = {
+                        0: Math.max(0, (stats.total_predictions || 100) - (stats.total_wins || 0) - 100),
+                        1: Math.floor((stats.total_predictions || 100) * 0.35),
+                        2: Math.floor((stats.total_predictions || 100) * 0.25),
+                        3: rankData['5등'] || 0,
+                        4: rankData['4등'] || 0,
+                        5: (rankData['3등'] || 0) + (rankData['2등'] || 0),
+                        6: rankData['1등'] || 0
+                    };
+                }
             }
             
             const totalPredictions = Object.values(matchAnalysis).reduce((sum, val) => sum + val, 0) || 1;
             
             detailSection.innerHTML = `
                 <div style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 25px; border-radius: 15px; border: 1px solid #dee2e6;">
-                    <h4 style="color: #667eea; margin-bottom: 20px; text-align: center;">📊 맞춘 개수별 상세 분석</h4>
+                    <h4 style="color: #667eea; margin-bottom: 20px; text-align: center;">📊 백테스팅 시뮬레이션 - 맞춘 개수별 분석</h4>
                     
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px;">
                         ${Object.entries(matchAnalysis).map(([matches, count]) => {
@@ -2213,12 +2619,13 @@ HTML_TEMPLATE_V2 = """
                         </div>
                         
                         <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; font-size: 12px; color: #666;">
-                            <strong>💡 해석:</strong> 
-                            ${matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6] > 0 
-                                ? `3개 이상 맞춘 예측이 ${matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6]}개 있어 시스템이 효과적으로 작동하고 있습니다.` 
+                            <strong>💡 해석:</strong>
+                            ${matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6] > 0
+                                ? `3개 이상 맞춘 예측이 ${matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6]}개 있어 시스템이 효과적으로 작동하고 있습니다.`
                                 : '아직 3개 이상 맞춘 예측이 없습니다. 더 많은 데이터 축적이 필요합니다.'
                             }
                             ${matchAnalysis[6] > 0 ? ` 🎉 6개 모두 맞춘 대박 예측이 ${matchAnalysis[6]}개 있습니다!` : ''}
+                            ${hasRealData ? '<br><span style="color: #28a745;">✅ 실제 백테스팅 데이터 기반</span>' : '<br><span style="color: #ffc107;">⚠️ 추정 데이터 (실제 백테스팅 실행 필요)</span>'}
                         </div>
                     </div>
                 </div>
@@ -2281,11 +2688,15 @@ HTML_TEMPLATE_V2 = """
                 btn.innerText = '⏳ 생성 중...';
                 btn.style.opacity = '0.6';
 
-                // API 호출
+                // SECURITY: Get CSRF token from meta tag
+                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+                // API 호출 with CSRF token
                 const response = await fetch('/api/generate-predictions', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken  // SECURITY: Include CSRF token
                     }
                 });
 
@@ -2353,7 +2764,7 @@ def get_dashboard():
     """매번 새로운 대시보드 인스턴스 반환"""
     return EnhancedLottoDashboard()
 
-dashboard = get_dashboard()  # 초기 인스턴스
+# dashboard = get_dashboard()  # 초기 인스턴스 - 캐싱 방지를 위해 비활성화 (각 API 호출마다 새 인스턴스 생성)
 
 @app.route('/')
 def index():
@@ -2363,31 +2774,41 @@ def index():
 @app.route('/api/rounds')
 def get_rounds():
     """회차 목록 API"""
-    rounds = dashboard.get_all_rounds()
+    # 최신 데이터를 위해 새 인스턴스 생성
+    fresh_dashboard = EnhancedLottoDashboard()
+    rounds = fresh_dashboard.get_all_rounds()
     return jsonify(rounds)
 
 @app.route('/api/predictions/<int:round_num>')
 def get_predictions(round_num):
     """특정 회차 예측 API"""
-    data = dashboard.get_predictions_by_round(round_num)
+    # 최신 데이터를 위해 새 인스턴스 생성
+    fresh_dashboard = EnhancedLottoDashboard()
+    data = fresh_dashboard.get_predictions_by_round(round_num)
     return jsonify(data)
 
 @app.route('/api/week-predictions/<int:round_num>')
 def get_week_predictions(round_num):
     """특정 회차 전 일주일간 예측 API"""
-    data = dashboard.get_week_predictions(round_num)
+    # 최신 데이터를 위해 새 인스턴스 생성
+    fresh_dashboard = EnhancedLottoDashboard()
+    data = fresh_dashboard.get_week_predictions(round_num)
     return jsonify(data)
 
 @app.route('/api/stats')
 def get_stats():
     """전체 통계 API"""
-    stats = dashboard.get_statistics()
+    # 최신 데이터를 위해 새 인스턴스 생성
+    fresh_dashboard = EnhancedLottoDashboard()
+    stats = fresh_dashboard.get_statistics()
     return jsonify(stats)
 
 @app.route('/api/performance')
 def get_performance():
     """최근 성능 API"""
-    performance = dashboard.get_recent_performance()
+    # 최신 데이터를 위해 새 인스턴스 생성
+    fresh_dashboard = EnhancedLottoDashboard()
+    performance = fresh_dashboard.get_recent_performance()
     return jsonify(performance)
 
 @app.route('/api/backtest-performance')
@@ -2411,8 +2832,12 @@ def get_backtest_performance():
     return jsonify(backtest_data)
 
 @app.route('/api/generate-predictions', methods=['POST'])
+@limiter.limit("5 per hour")  # SECURITY: Rate limit to 5 requests per hour
 def generate_new_predictions():
-    """캐시된 모델을 활용한 예측 생성 API"""
+    """캐시된 모델을 활용한 예측 생성 API
+
+    SECURITY: Rate limited to 5 requests per hour to prevent abuse.
+    """
     try:
         # 프로젝트 루트 경로 설정
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -2551,6 +2976,85 @@ def generate_new_predictions():
             'error': str(e)
         }), 500
 
+@app.route('/api/optimizer-status')
+def get_optimizer_status():
+    """백그라운드 최적화 상태 API"""
+    try:
+        status_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "data/optimizer_status.json"
+        )
+
+        if os.path.exists(status_file):
+            with open(status_file, 'r', encoding='utf-8') as f:
+                status = json.load(f)
+
+            # 다음 실행까지 남은 시간 계산
+            if status.get('next_run'):
+                from datetime import datetime
+                try:
+                    next_run = datetime.fromisoformat(status['next_run'])
+                    now = datetime.now()
+                    remaining_seconds = (next_run - now).total_seconds()
+                    status['remaining_seconds'] = max(0, remaining_seconds)
+                    status['remaining_minutes'] = max(0, remaining_seconds / 60)
+                except Exception as e:
+                    logging.debug(f"대시보드 실행 실패 (무시): {e}")
+                    status['remaining_seconds'] = 0
+                    status['remaining_minutes'] = 0
+
+            return jsonify(status)
+        else:
+            return jsonify({
+                'running': False,
+                'last_run': None,
+                'next_run': None,
+                'total_runs': 0,
+                'current_trial': 0,
+                'total_trials': 0,
+                'best_params': None,
+                'best_score': None,
+                'message': '백그라운드 최적화 서비스가 실행되지 않았습니다.'
+            })
+    except Exception as e:
+        logging.error(f"최적화 상태 조회 실패: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/optimizer-history')
+def get_optimizer_history():
+    """최적화 히스토리 API"""
+    try:
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "data/threshold_optimization.db"
+        )
+
+        if not os.path.exists(db_path):
+            return jsonify([])
+
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT session_date, n_trials, best_threshold, best_ml_bypass,
+                       best_ml_weight, best_score, avg_matches, ml_inclusion_rate,
+                       combination_count
+                FROM optimization_sessions
+                ORDER BY session_date DESC
+                LIMIT 20
+            """)
+
+            columns = ['date', 'trials', 'threshold', 'ml_bypass', 'ml_weight',
+                      'score', 'avg_matches', 'ml_inclusion_rate', 'combinations']
+
+            history = []
+            for row in cursor.fetchall():
+                history.append(dict(zip(columns, row)))
+
+            return jsonify(history)
+    except Exception as e:
+        logging.error(f"최적화 히스토리 조회 실패: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/save-screenshot', methods=['POST'])
 def save_screenshot():
     """스크린샷 저장 API"""
@@ -2573,8 +3077,12 @@ def save_screenshot():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001, debug=False):
-    """향상된 대시보드 v2 실행"""
+def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001):
+    """향상된 대시보드 v2 실행
+
+    SECURITY: debug parameter removed to prevent RCE vulnerability.
+    Debug mode enables Werkzeug debugger with arbitrary code execution.
+    """
     print("\n" + "="*60)
     print("Enhanced Lotto Prediction Dashboard v2")
     print("="*60)
@@ -2589,8 +3097,10 @@ def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001, debug=False):
     print("  - Enhanced UI/UX")
     print("  - Match distribution chart")
     print("="*60 + "\n")
-    
-    app.run(host=host, port=port, debug=debug)
+
+    # SECURITY: debug=False hardcoded to prevent RCE attacks
+    # Flask reloader 비활성화 (재시작 방지)
+    app.run(host=host, port=port, debug=False, use_reloader=False)
 
 if __name__ == '__main__':
-    run_enhanced_dashboard_v2(port=5001, debug=True)
+    run_enhanced_dashboard_v2(port=5001)

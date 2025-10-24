@@ -172,8 +172,8 @@ class DynamicFilterManager:
                 result = filter_instance.apply([combination], data['round'])
                 if result and len(result) > 0:
                     passed += 1
-            except:
-                passed += 1  # 오류 시 통과로 처리
+            except Exception as e:
+                logging.error(f"동적 필터 실패: {e}")
         
         pass_rate = passed / total_tests if total_tests > 0 else 1.0
         
@@ -184,7 +184,8 @@ class DynamicFilterManager:
         try:
             filtered = filter_instance.apply(sample_combinations, test_data[-1]['round'])
             exclusion_rate = 1 - (len(filtered) / len(sample_combinations))
-        except:
+        except Exception as e:
+            logging.error(f"시스템 실행 실패: {e}")
             exclusion_rate = 0.0
         
         return {

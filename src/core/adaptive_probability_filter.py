@@ -7,6 +7,8 @@ import logging
 from typing import Dict, List, Any, Tuple
 from dataclasses import dataclass
 import numpy as np
+import threading
+from src.core.threshold_manager import get_threshold_manager
 
 @dataclass
 class FilterThreshold:
@@ -18,30 +20,106 @@ class FilterThreshold:
 
 class AdaptiveProbabilityFilter:
     """
-    통합 확률 기반 필터링 시스템
-    
+    통합 확률 기반 필터링 시스템 - 싱글톤 패턴으로 구현
+
     핵심 아이디어:
     - 모든 필터가 하나의 확률 임계값 사용
     - 설정 파일에서 한 값만 변경하면 전체 적용
     - 실제 출현율 기반 동적 조정
     """
-    
+    # 클래스 변수 - 싱글톤 패턴 구현
+    _instance = None
+    _lock = threading.Lock()  # 스레드 안전성을 위한 락
+    _initialized = False
+
+    def __new__(cls, db_manager=None, probability_threshold=1.0, **kwargs):
+        """싱글톤 패턴: 인스턴스 생성 제어"""
+        if cls._instance is None:
+            with cls._lock:
+                # double-checked locking pattern
+                if cls._instance is None:
+                    cls._instance = super(AdaptiveProbabilityFilter, cls).__new__(cls)
+                    logging.debug("[AdaptiveProbabilityFilter] 새 인스턴스 생성")
+        return cls._instance
+
     def __init__(self, db_manager, probability_threshold: float = 1.0, **kwargs):
         """
         Args:
             db_manager: 데이터베이스 매니저
             probability_threshold: 제외할 최대 확률 (%) - 기본값 1%
         """
-        self.db_manager = db_manager
-        self.probability_threshold = probability_threshold
-        self.filter_thresholds = {}
-        self.pattern_statistics = {}
-        
-        logging.info(f"[적응형 필터] 통합 확률 임계값: {probability_threshold}% 이하 제외")
-        
-        # FilterManager와 호환성을 위한 속성
-        self.filters = {}  # 빈 필터 딕셔너리 (FilterValidator 호환성)
-        
+        # 중복 초기화 방지
+        if AdaptiveProbabilityFilter._initialized:
+            logging.debug("[적응형 필터] 이미 초기화됨 - 중복 초기화 방지")
+            return
+
+        with AdaptiveProbabilityFilter._lock:
+            # double-checked locking으로 중복 초기화 재검증
+            if AdaptiveProbabilityFilter._initialized:
+                logging.debug("[적응형 필터] 이미 초기화됨 (락 내부) - 중복 초기화 방지")
+                return
+
+            logging.info("[적응형 필터] 초기화 시작")
+            self.db_manager = db_manager
+
+            # ThresholdManager 연동 (Single Source of Truth)
+            self.threshold_manager = get_threshold_manager()
+
+            # Observer 패턴으로 자동 동기화 등록 (threshold 읽기 전에 등록 - race condition 방지)
+            self.threshold_manager.register_observer(self._on_threshold_change)
+
+            # Observer 등록 후 threshold 읽기 (동기화 보장)
+            self.probability_threshold = self.threshold_manager.get_threshold()
+
+            self.filter_thresholds = {}
+            self.pattern_statistics = {}
+            self.patterns = {}  # 패턴 저장용 딕셔너리 추가
+
+            logging.debug(f"[적응형 필터] 통합 확률 임계값: {self.probability_threshold}% 이하 제외 (ThresholdManager 연동)")
+
+            # FilterManager와 호환성을 위한 속성
+            self.filters = {}  # 빈 필터 딕셔너리 (FilterValidator 호환성)
+
+            # 초기화 완료 플래그 설정
+            AdaptiveProbabilityFilter._initialized = True
+            logging.info("[적응형 필터] 초기화 완료")
+
+    @classmethod
+    def reset_instance(cls):
+        """싱글톤 인스턴스 초기화 (테스트용)"""
+        with cls._lock:
+            cls._instance = None
+            cls._initialized = False
+            logging.info("[AdaptiveProbabilityFilter] 싱글톤 인스턴스 초기화 완료")
+
+    @classmethod
+    def is_initialized(cls):
+        """초기화 상태 확인"""
+        return cls._initialized
+
+    def _on_threshold_change(self, param: str, old_value: Any, new_value: Any):
+        """
+        ThresholdManager에서 임계값 변경 시 자동 호출되는 Observer 콜백
+
+        Args:
+            param: 변경된 파라미터 이름
+            old_value: 이전 값
+            new_value: 새 값
+        """
+        if param == "threshold" or param == "global_probability_threshold":
+            self.probability_threshold = float(new_value)
+            logging.info(f"[적응형 필터] 임계값 자동 동기화: {float(old_value):.2f}% → {float(new_value):.2f}%")
+
+    def _reload_patterns(self):
+        """
+        임계값 변경 시 패턴 재로드 (Optuna 최적화용)
+
+        ⚠️ DEPRECATED: 패턴 재분석은 불필요 (임계값만 변경하면 됨)
+        패턴 자체는 변하지 않으며, 임계값만 변경되면 필터링 기준이 달라짐
+        """
+        logging.warning("[패턴 재로드] DEPRECATED - 패턴 재분석 불필요 (임계값만 변경됨)")
+        # 패턴 재분석하지 않음 - 기존 패턴 유지
+
     def analyze_patterns(self, winning_numbers: List[str]) -> Dict[str, Dict]:
         """
         과거 당첨번호에서 각 패턴의 실제 출현율 분석
@@ -65,19 +143,93 @@ class AdaptiveProbabilityFilter:
             'arithmetic_sequence': self._analyze_arithmetic_sequence(winning_numbers),
             'geometric_sequence': self._analyze_geometric_sequence(winning_numbers),
             'digit_sum': self._analyze_digit_sum(winning_numbers),
-            'dispersion': self._analyze_dispersion(winning_numbers)
+            'dispersion': self._analyze_dispersion(winning_numbers),
+            'outlier_detection': self._analyze_outlier_detection(winning_numbers),
+            'balanced_quadrant': self._analyze_balanced_quadrant(winning_numbers)
         }
-        
+
         self.pattern_statistics = stats
+        self.patterns = stats  # patterns 속성도 업데이트
         return stats
-    
+
+    def _identify_low_probability_patterns(self) -> Dict[str, List]:
+        """임계값 이하의 낮은 확률 패턴들을 식별"""
+        low_prob_patterns = {}
+
+        if not self.pattern_statistics:
+            return low_prob_patterns
+
+        # 홀짝 패턴
+        low_prob_patterns['odd_even'] = []
+        if 'odd_even' in self.pattern_statistics:
+            for count, rate in self.pattern_statistics['odd_even'].get('odd_distribution', {}).items():
+                if rate < self.probability_threshold:
+                    low_prob_patterns['odd_even'].append(count)
+            for count, rate in self.pattern_statistics['odd_even'].get('even_distribution', {}).items():
+                if rate < self.probability_threshold and count not in low_prob_patterns['odd_even']:
+                    low_prob_patterns['odd_even'].append(count)
+
+        # 합계 패턴 - 범위로 저장
+        low_prob_patterns['sum_range'] = []
+        if 'sum_range' in self.pattern_statistics:
+            for sum_val, rate in self.pattern_statistics['sum_range'].items():
+                if rate < self.probability_threshold:
+                    # 개별 값을 범위로 변환 (±5 범위)
+                    low_prob_patterns['sum_range'].append((sum_val - 5, sum_val + 5))
+
+        # 연속번호 패턴
+        low_prob_patterns['consecutive'] = []
+        if 'consecutive' in self.pattern_statistics:
+            for length, rate in self.pattern_statistics['consecutive'].items():
+                if rate < self.probability_threshold and length >= 4:
+                    low_prob_patterns['consecutive'].append(length)
+
+        # 이상치 탐지 패턴 (OutlierDetection)
+        low_prob_patterns['outlier_detection'] = []
+        if 'outlier_detection' in self.pattern_statistics:
+            for outlier_count, rate in self.pattern_statistics['outlier_detection'].items():
+                if rate < self.probability_threshold:
+                    low_prob_patterns['outlier_detection'].append(outlier_count)
+
+        # 사분면 균형 패턴 (BalancedQuadrant)
+        low_prob_patterns['balanced_quadrant'] = []
+        if 'balanced_quadrant' in self.pattern_statistics:
+            for quadrant_count, rate in self.pattern_statistics['balanced_quadrant'].items():
+                if rate < self.probability_threshold and quadrant_count >= 4:  # 4개 이상 몰림만 제외
+                    low_prob_patterns['balanced_quadrant'].append(quadrant_count)
+
+        return low_prob_patterns
+
     def generate_dynamic_criteria(self) -> Dict[str, Any]:
         """
         확률 임계값 기반으로 각 필터의 동적 기준 생성
 
+        ✅ FIX: YAML의 dynamic_criteria를 우선 로드하고, 없으면 재계산
+
         Returns:
             필터별 동적 기준값
         """
+        # ✅ FIX: YAML 파일에서 저장된 dynamic_criteria 로드
+        try:
+            import yaml
+            config_path = 'configs/adaptive_filter_config.yaml'
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+
+            saved_criteria = config.get('dynamic_criteria', {})
+
+            if saved_criteria:
+                logging.info(f"[적응형 필터] YAML에서 저장된 dynamic_criteria 로드 완료 ({len(saved_criteria)}개 필터)")
+                logging.debug(f"[적응형 필터] 로드된 criteria: {list(saved_criteria.keys())}")
+
+                # ✅ FIX: 저장된 criteria를 그대로 반환 (FilterAutoAdjuster가 저장한 값 사용)
+                return saved_criteria
+
+        except Exception as e:
+            logging.warning(f"[적응형 필터] YAML dynamic_criteria 로드 실패: {e}, 재계산 진행")
+
+        # ✅ YAML에 저장된 값이 없으면 재계산 (첫 실행 시)
+        logging.info("[적응형 필터] YAML에 저장된 criteria 없음 → 재계산 시작")
         criteria = {}
         
         # 1. 홀짝 필터 - 1% 이하만 제외
@@ -184,19 +336,19 @@ class AdaptiveProbabilityFilter:
         # 7. match 필터 - 확률 기반 제외
         match_dist = self.pattern_statistics.get('match', {})
         max_match = 6  # 기본값
-        
-        # threshold 이하인 패턴 모두 찾기 (모든 낮은 확률 패턴 제외)
+
+        # threshold 이하인 패턴 모두 찾기 (원래 로직 복구)
         excluded_matches = []
-        for match_count in [3, 4, 5, 6]:  # 낮은 것부터 검사
+        for match_count in [3, 4, 5, 6]:
             if match_count in match_dist and match_dist[match_count] <= self.probability_threshold:
                 excluded_matches.append(match_count)
                 logging.info(f"[Match 필터] {match_count}개 일치 패턴이 {match_dist[match_count]:.2f}% (임계값 {self.probability_threshold}% 이하)이므로 제외 대상")
-        
+
         # 제외할 패턴 중 가장 작은 값으로 max_match 설정
         if excluded_matches:
             max_match = min(excluded_matches)
             logging.info(f"[Match 필터] 최종 max_match = {max_match} (>={max_match}개 일치 제외)")
-        
+
         criteria['match'] = {
             'max_match': max_match,
             'distribution': match_dist,
@@ -380,12 +532,49 @@ class AdaptiveProbabilityFilter:
         criteria['dispersion'] = {
             'min_variance': min_variance,
             'max_variance': max_variance,
-            'min_std_dev': min_variance ** 0.5 * 10 - 250,
-            'max_std_dev': max_variance ** 0.5 * 10 + 50,
+            'min_std_dev': min_variance ** 0.5,  # ✓ 수정: 순수 sqrt 변환
+            'max_std_dev': max_variance ** 0.5,  # ✓ 수정: 순수 sqrt 변환
             'distribution': dispersion_dist,
             'reason': f"상하위 각 {self.probability_threshold/2}% 제외"
         }
-        
+
+        # 16. 이상치 탐지 필터 (OutlierDetection) - 1% 이하 패턴 제외
+        outlier_dist = self.pattern_statistics.get('outlier_detection', {})
+        max_outliers = 6  # 기본값 (모든 이상치 허용)
+
+        # threshold 이하인 패턴 찾기 (높은 이상치 개수부터 검사)
+        for outlier_count in [6, 5, 4, 3, 2, 1]:
+            if outlier_count in outlier_dist and outlier_dist[outlier_count] <= self.probability_threshold:
+                # 이 개수 이상 이상치는 제외
+                max_outliers = outlier_count - 1
+                logging.info(f"[이상치 필터] {outlier_count}개 이상치 패턴이 {outlier_dist[outlier_count]:.2f}% (임계값 {self.probability_threshold}% 이하)이므로 제외")
+                break
+
+        criteria['outlier_detection'] = {
+            'max_outliers': max_outliers,
+            'iqr_multiplier': 1.0,  # 고정값
+            'distribution': outlier_dist,
+            'reason': f"{self.probability_threshold}% 이하 이상치 패턴 제외"
+        }
+
+        # 17. 사분면 균형 필터 (BalancedQuadrant) - 1% 이하 패턴 제외
+        quadrant_dist = self.pattern_statistics.get('balanced_quadrant', {})
+        max_per_quadrant = 6  # 기본값 (모든 분포 허용)
+
+        # threshold 이하인 패턴 찾기 (높은 몰림부터 검사)
+        for quadrant_count in [6, 5, 4, 3, 2]:
+            if quadrant_count in quadrant_dist and quadrant_dist[quadrant_count] <= self.probability_threshold:
+                # 이 개수 이상 몰림은 제외
+                max_per_quadrant = quadrant_count - 1
+                logging.info(f"[사분면 필터] 한 사분면 {quadrant_count}개 몰림 패턴이 {quadrant_dist[quadrant_count]:.2f}% (임계값 {self.probability_threshold}% 이하)이므로 제외")
+                break
+
+        criteria['balanced_quadrant'] = {
+            'max_per_quadrant': max_per_quadrant,
+            'distribution': quadrant_dist,
+            'reason': f"{self.probability_threshold}% 이하 사분면 몰림 패턴 제외"
+        }
+
         return criteria
     
     def _analyze_odd_even(self, winning_numbers: List[str]) -> Dict:
@@ -819,7 +1008,8 @@ class AdaptiveProbabilityFilter:
             # 최신 회차 가져오기
             try:
                 latest_round = self.db_manager.get_latest_round()
-            except:
+            except Exception as e:
+                logging.error(f"필터 적용 실패: {e}")
                 latest_round = 0
             
             # 저장
@@ -932,8 +1122,8 @@ class AdaptiveProbabilityFilter:
                     actual_count = self.db_manager.combinations_db.get_filtered_count(latest_round)
                     if actual_count > 0:
                         return actual_count
-                except:
-                    pass
+                except (AttributeError, sqlite3.Error) as e:
+                    logging.debug(f"필터 카운트 조회 실패 (무시): {e}")
             
             logging.info(f"[적응형 필터] 예상 필터링 결과: {total_combinations:,}개 → {estimated_count:,}개 (임계값 {self.probability_threshold}%)")
             return estimated_count
@@ -963,5 +1153,55 @@ class AdaptiveProbabilityFilter:
                 summary += f"  제외: 합계 {filter_criteria['min_sum']} 미만, {filter_criteria['max_sum']} 초과\n"
             
             summary += "\n"
-        
+
         return summary
+
+    def _analyze_outlier_detection(self, winning_numbers: List[str]) -> Dict:
+        """조합 내부 IQR 기반 이상치 패턴 분석"""
+        outlier_dist = {i: 0 for i in range(7)}  # 0~6개 이상치
+        total = len(winning_numbers)
+
+        iqr_multiplier = 1.0  # 기본 승수
+
+        for numbers_str in winning_numbers:
+            numbers = list(map(int, numbers_str.split(',')))
+
+            # 조합 내부 IQR 계산
+            q1 = np.percentile(numbers, 25)
+            q3 = np.percentile(numbers, 75)
+            iqr = q3 - q1
+
+            # 이상치 범위
+            lower_bound = q1 - iqr_multiplier * iqr
+            upper_bound = q3 + iqr_multiplier * iqr
+
+            # 이상치 개수
+            outlier_count = sum(
+                1 for num in numbers
+                if num < lower_bound or num > upper_bound
+            )
+
+            outlier_dist[outlier_count] += 1
+
+        return {k: (v/total)*100 for k, v in outlier_dist.items()}
+
+    def _analyze_balanced_quadrant(self, winning_numbers: List[str]) -> Dict:
+        """4분면 균형 패턴 분석"""
+        quadrant_dist = {i: 0 for i in range(7)}  # 0~6개 (한 사분면 최대값)
+        total = len(winning_numbers)
+
+        for numbers_str in winning_numbers:
+            numbers = list(map(int, numbers_str.split(',')))
+
+            # 4분면 분할 (1-11, 12-22, 23-33, 34-45)
+            quadrants = [
+                sum(1 for n in numbers if 1 <= n <= 11),
+                sum(1 for n in numbers if 12 <= n <= 22),
+                sum(1 for n in numbers if 23 <= n <= 33),
+                sum(1 for n in numbers if 34 <= n <= 45),
+            ]
+
+            max_in_quadrant = max(quadrants)
+            quadrant_dist[max_in_quadrant] += 1
+
+        return {k: (v/total)*100 for k, v in quadrant_dist.items()}

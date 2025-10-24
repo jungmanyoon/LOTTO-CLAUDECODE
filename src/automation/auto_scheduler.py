@@ -121,8 +121,9 @@ class AutoScheduler:
             
             if latest_web_round and self.db_manager:
                 current_db_round = self.db_manager.get_last_round()
-                
-                if latest_web_round > current_db_round:
+
+                # None 체크 추가하여 NoneType 비교 오류 방지
+                if current_db_round is not None and latest_web_round > current_db_round:
                     logging.warning(f"[AutoScheduler] 🆕 새 회차 발견! {current_db_round} → {latest_web_round}")
                     
                     # 새 회차 데이터 수집
@@ -161,7 +162,8 @@ class AutoScheduler:
             if latest_web_round and self.db_manager:
                 current_db_round = self.db_manager.get_last_round()
 
-                if latest_web_round > current_db_round:
+                # None 체크 추가하여 NoneType 비교 오류 방지
+                if current_db_round is not None and latest_web_round > current_db_round:
                     logging.warning(f"[AutoScheduler] 🎉 새 당첨번호 발표! {current_db_round} → {latest_web_round}")
 
                     # 새 회차 데이터 수집
@@ -171,6 +173,10 @@ class AutoScheduler:
                         # 콜백 트리거 - 새 회차 감지
                         if self.callbacks['new_round_detected']:
                             self.callbacks['new_round_detected'](latest_web_round)
+
+                        # 자동 업데이트 콜백 체인 실행
+                        logging.info("[AutoScheduler] 🔄 자동 업데이트 체인 시작...")
+                        self._trigger_update_chain(latest_web_round)
 
                         # 자동 재필터링 실행
                         logging.info("[AutoScheduler] 🔄 자동 재필터링 시작...")
@@ -260,7 +266,8 @@ class AutoScheduler:
                         data = response.json()
                         if data.get('returnValue') == 'success':
                             return round_num
-                except:
+                except (requests.RequestException, ValueError, KeyError) as e:
+                    logging.debug(f"회차 {round_num} 조회 실패: {e}")
                     continue
             
             return None
@@ -417,7 +424,8 @@ class AutoScheduler:
             count = cursor.fetchone()[0]
             conn.close()
             return count > 0
-        except:
+        except sqlite3.Error as e:
+            logging.warning(f"DB 가용성 확인 실패: {e}")
             return False
     
     def _check_disk_space(self) -> bool:
@@ -427,7 +435,8 @@ class AutoScheduler:
             total, used, free = shutil.disk_usage("/")
             free_percent = (free / total) * 100
             return free_percent > 10  # 10% 이상 여유 공간
-        except:
+        except (ImportError, OSError) as e:
+            logging.debug(f"디스크 공간 확인 실패: {e}. 기본값 True 반환")
             return True
     
     def _check_memory_usage(self) -> bool:
@@ -436,7 +445,8 @@ class AutoScheduler:
             import psutil
             memory = psutil.virtual_memory()
             return memory.percent < 90  # 90% 미만 사용
-        except:
+        except (ImportError, AttributeError) as e:
+            logging.debug(f"메모리 사용량 확인 실패: {e}. 기본값 True 반환")
             return True
     
     def _check_process_status(self) -> bool:
@@ -495,6 +505,125 @@ class AutoScheduler:
         logging.critical(f"[AutoScheduler] 🚨 {message}")
         # 관리자 알림
     
+    def _trigger_update_chain(self, round_num: int):
+        """
+        새 회차 추가 시 자동 업데이트 콜백 체인 실행
+
+        Args:
+            round_num: 새로 추가된 회차 번호
+        """
+        try:
+            logging.info(f"[AutoScheduler] 자동 업데이트 체인 시작: {round_num}회차")
+
+            # 1. 패턴 재분석
+            self._trigger_pattern_reanalysis(round_num)
+
+            # 2. 필터 업데이트
+            self._trigger_filter_update(round_num)
+
+            # 3. ML 캐시 무효화
+            self._invalidate_ml_cache()
+
+            # 4. 시스템 상태 업데이트
+            self._update_system_state(round_num)
+
+            logging.info(f"[AutoScheduler] ✅ 자동 업데이트 체인 완료: {round_num}회차")
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 자동 업데이트 체인 실패: {e}")
+
+    def _trigger_pattern_reanalysis(self, round_num: int):
+        """패턴 재분석 트리거"""
+        try:
+            logging.info("[AutoScheduler] 1/4: 패턴 재분석 시작...")
+
+            # PatternManager를 사용한 패턴 분석
+            from src.core.pattern_manager import PatternManager
+            pattern_mgr = PatternManager(self.db_manager)
+
+            # 최근 200개 당첨번호로 패턴 분석
+            winning_numbers = self.db_manager.get_all_winning_numbers()[:200]
+            patterns = pattern_mgr.analyze_all_patterns(winning_numbers)
+
+            # 결과 저장
+            self.db_manager.save_pattern_analysis(round_num, patterns)
+
+            logging.info(f"[AutoScheduler] ✅ 패턴 재분석 완료: {len(patterns)}개 패턴")
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 패턴 재분석 실패: {e}")
+
+    def _trigger_filter_update(self, round_num: int):
+        """필터 업데이트 트리거"""
+        try:
+            logging.info("[AutoScheduler] 2/4: 필터 업데이트 시작...")
+
+            # IntegratedFilterManager를 통한 필터 업데이트
+            from src.core.integrated_filter_manager import IntegratedFilterManager
+
+            # 설정에서 임계값 로드
+            import yaml
+            config_path = 'configs/adaptive_filter_config.yaml'
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            threshold = config.get('global_probability_threshold', 2.0)
+
+            filter_mgr = IntegratedFilterManager(self.db_manager, threshold)
+            update_result = filter_mgr.update_filters_weekly(round_num)
+
+            logging.info(f"[AutoScheduler] ✅ 필터 업데이트 완료: {update_result.get('updated_filters', [])}개 필터")
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 필터 업데이트 실패: {e}")
+
+    def _invalidate_ml_cache(self):
+        """ML 캐시 무효화"""
+        try:
+            logging.info("[AutoScheduler] 3/4: ML 캐시 무효화 시작...")
+
+            # 캐시 디렉토리 경로
+            cache_dir = 'cache/models'
+
+            if os.path.exists(cache_dir):
+                import shutil
+                # 기존 캐시 삭제
+                shutil.rmtree(cache_dir)
+                # 디렉토리 재생성
+                os.makedirs(cache_dir)
+                logging.info("[AutoScheduler] ✅ ML 캐시 무효화 완료 (다음 실행 시 재학습)")
+            else:
+                logging.info("[AutoScheduler] ML 캐시가 없음 (스킵)")
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] ML 캐시 무효화 실패: {e}")
+
+    def _update_system_state(self, round_num: int):
+        """시스템 상태 업데이트"""
+        try:
+            logging.info("[AutoScheduler] 4/4: 시스템 상태 업데이트 시작...")
+
+            from src.core.system_state_manager import SystemStateManager
+
+            state_mgr = SystemStateManager()
+            state_mgr.update_state(round_num, components=['all', 'pattern', 'filter', 'ml'])
+
+            logging.info(f"[AutoScheduler] ✅ 시스템 상태 업데이트 완료: {round_num}회차")
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 시스템 상태 업데이트 실패: {e}")
+
+    def setup_db_callbacks(self):
+        """DatabaseManager 콜백 등록"""
+        if self.db_manager:
+            # 새 회차 추가 시 자동 업데이트
+            self.db_manager.register_callback('new_round_added', self._on_new_round_added)
+            logging.info("[AutoScheduler] DatabaseManager 콜백 등록 완료")
+
+    def _on_new_round_added(self, round_num: int):
+        """새 회차 추가 시 콜백 핸들러"""
+        logging.info(f"[AutoScheduler] 🆕 새 회차 감지: {round_num}회차")
+        self._trigger_update_chain(round_num)
+
     def get_status(self) -> Dict[str, Any]:
         """스케줄러 상태 반환"""
         return {

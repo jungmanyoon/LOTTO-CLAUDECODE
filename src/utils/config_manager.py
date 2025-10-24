@@ -64,8 +64,10 @@ class ConfigManager:
             if not adaptive_config:
                 logging.warning("적응형 필터 설정 파일이 비어 있습니다.")
                 return {}
-                
-            logging.info(f"적응형 필터 설정 로드 완료 - 전역 확률 임계값: {adaptive_config.get('global_probability_threshold', 1.0)}%")
+
+            threshold_value = adaptive_config.get('global_probability_threshold', 1.0)
+            # FIX: Proper formatting to show actual value (e.g., 1.4% not 1.0%)
+            logging.info(f"적응형 필터 설정 로드 완료 - YAML 저장값: {threshold_value:.2f}% (Optuna 최적화 값, ThresholdManager가 관리)")
             return adaptive_config
             
         except Exception as e:
@@ -202,7 +204,8 @@ class ConfigManager:
                 'last_digit': dynamic_criteria.get('last_digit'),
                 'average': dynamic_criteria.get('average'),
                 'arithmetic_sequence': dynamic_criteria.get('arithmetic'),
-                'geometric_sequence': dynamic_criteria.get('geometric')
+                'geometric_sequence': dynamic_criteria.get('geometric'),
+                'match': dynamic_criteria.get('match')  # ✅ CRITICAL FIX: match 필터 매핑 추가!
             }
             
             adaptive_criteria = filter_mapping.get(filter_name)

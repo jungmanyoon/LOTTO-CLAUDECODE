@@ -101,20 +101,35 @@ class EnsemblePredictor:
             # 학습
             model.fit(X_train, y_train)
             
-            # 교차 검증 수행 (과적합 체크)
+            # 교차 검증 수행 (과적합 체크, 클래스 불균형 처리 개선)
             if len(X_train) >= 50:
                 cv_scores = []
                 for i in range(45):  # 각 번호별로
                     try:
-                        scores = cross_val_score(
-                            model.estimators_[i], 
-                            X_train, 
-                            y_train[:, i],
-                            cv=3,  # 3-fold
-                            scoring='accuracy'
-                        )
-                        cv_scores.append(scores.mean())
-                    except:
+                        # 클래스 분포 확인
+                        y_binary = y_train[:, i]
+                        positive_samples = y_binary.sum()
+                        negative_samples = len(y_binary) - positive_samples
+
+                        if positive_samples > 0 and negative_samples > 0:
+                            # 안전한 fold 수 계산
+                            min_class_size = min(positive_samples, negative_samples)
+                            cv_folds = min(3, max(2, min_class_size))
+
+                            scores = cross_val_score(
+                                model.estimators_[i],
+                                X_train,
+                                y_binary,
+                                cv=cv_folds,  # 동적 fold 수
+                                scoring='accuracy',
+                                error_score=0.5  # 에러 시 기본 점수
+                            )
+                            cv_scores.append(scores.mean())
+                        else:
+                            # 한 클래스만 존재하는 경우
+                            cv_scores.append(0.5)
+                    except Exception as e:
+                        logging.debug(f"번호 {i+1} CV 실패: {e}")
                         cv_scores.append(0.5)  # 실패 시 기본값
                 
                 avg_cv_score = np.mean(cv_scores)
@@ -202,7 +217,8 @@ class EnsemblePredictor:
                     else:
                         model_proba[i] = 0.5  # 기본값
                 all_probabilities.append(model_proba)
-            except:
+            except (ImportError, OSError) as e:
+                logging.debug(f"모델 삭제 실패 (무시): {e}")
                 # 예측 실패 시 균등 분포
                 all_probabilities.append(np.ones(45) / 45)
         

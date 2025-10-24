@@ -166,14 +166,14 @@ class IntelligentWorkflow:
             self.logger.error("필터링 실패")
             return []
         
-        # 3. 결과 가져오기
-        filtered = self.db_manager.combinations_db.get_filtered_combinations()
+        # 3. 결과 개수 확인 (메모리 효율적)
+        filtered_count = self.db_manager.combinations_db.get_filtered_combinations_count(latest_round)
         elapsed = time.time() - start_time
-        
-        self.logger.info(f"필터링 완료: {len(filtered):,}개 ({elapsed:.1f}초)")
-        
-        # 4. 캐시 저장
-        self.cache_manager.save_filtered_results(filtered, latest_round)
+
+        self.logger.info(f"필터링 완료: {filtered_count:,}개 ({elapsed:.1f}초)")
+
+        # 4. 캐시 저장 (스트림 방식)
+        self.cache_manager.save_filtered_results_stream(latest_round, filtered_count)
         
         return filtered
     

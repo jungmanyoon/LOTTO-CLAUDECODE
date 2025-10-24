@@ -23,10 +23,10 @@ class GeometricSequenceFilter(BaseFilter):
         """필터링 기준값 유효성 검사"""
         if 'min_sequence' not in self.criteria:
             raise ValueError("'min_sequence' 값이 필요합니다.")
-            
-        if 'excluded_lengths' not in self.criteria:
-            raise ValueError("'excluded_lengths' 값이 필요합니다.")
-            
+
+        if 'exclude_lengths' not in self.criteria:
+            raise ValueError("'exclude_lengths' 값이 필요합니다.")
+
         min_sequence = self.criteria['min_sequence']
         if not isinstance(min_sequence, int) or min_sequence < 3:
             raise ValueError("'min_sequence'는 3 이상의 정수여야 합니다.")
@@ -38,7 +38,7 @@ class GeometricSequenceFilter(BaseFilter):
                 combinations=combinations,
                 desc=f"geometric_sequence 필터 진행률",
                 min_sequence=self.criteria['min_sequence'],
-                exclude_patterns=self.criteria['exclude_lengths']
+                exclude_lengths=self.criteria['exclude_lengths']
             )
         except Exception as e:
             logging.error(f"등비수열 필터링 중 오류 발생: {str(e)}")

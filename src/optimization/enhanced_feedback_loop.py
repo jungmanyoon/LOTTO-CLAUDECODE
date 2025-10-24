@@ -81,14 +81,11 @@ class EnhancedFeedbackLoop:
         """
         logging.info("\n" + "="*60)
         logging.info("🚀 향상된 자동 개선 사이클 시작")
-        logging.info(f"📊 현재까지 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info(f"📊 [시작 시점] 현재까지 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
         logging.info("="*60)
-        
-        # 현재 상태 출력 (로깅으로 변경하여 인코딩 문제 방지)
-        try:
-            logging.info(self.improvement_manager.get_status_report())
-        except Exception as e:
-            logging.debug(f"상태 보고서 출력 중 오류 (무시됨): {e}")
+
+        # 시작 시점에서는 상태 보고서를 출력하지 않음 (혼란 방지)
+        # 백테스팅이 실제로 실행된 후에만 의미있는 횟수가 표시됨
         
         if max_iterations is None:
             max_iterations = self.improvement_manager.config['max_iterations_per_session']
@@ -157,11 +154,19 @@ class EnhancedFeedbackLoop:
         cycle_results['end_time'] = datetime.now().isoformat()
         cycle_results['final_performance'] = self.improvement_manager.state['current_performance']
         
-        # 최종 보고서 출력 - 중복 제거를 위해 간단한 완료 메시지만
+        # 최종 보고서 출력
         logging.info("\n" + "="*60)
         logging.info("🏁 개선 사이클 완료!")
+        logging.info(f"📊 [완료 시점] 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info(f"📈 이번 사이클에서 실행된 반복 횟수: {iteration}회")
+        logging.info(f"✅ 총 누적 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
         logging.info("="*60)
-        # 상태 보고서는 main.py에서만 출력하도록 중복 제거
+
+        # 완료 후 전체 상태 보고서 출력
+        try:
+            logging.info(self.improvement_manager.get_status_report())
+        except Exception as e:
+            logging.debug(f"상태 보고서 출력 중 오류 (무시됨): {e}")
         
         return cycle_results
     

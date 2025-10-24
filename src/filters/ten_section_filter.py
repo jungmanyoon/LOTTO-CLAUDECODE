@@ -66,10 +66,12 @@ class TenSectionFilter(BaseFilter):
             # 각 구간별 제한 조건 검사
             valid_mask = np.ones(len(combinations_chunk), dtype=bool)
             for section_name, counts in sections.items():
-                limits = section_limits[section_name]
-                # limits의 최대값을 초과하는 경우 제외
-                max_limit = max(limits) if limits else 6
-                section_mask = counts <= max_limit
+                excluded = section_limits[section_name]
+                # ✓ 수정: 특정 값 제외 로직으로 변경
+                if excluded:
+                    section_mask = ~np.isin(counts, excluded)
+                else:
+                    section_mask = np.ones(len(counts), dtype=bool)
                 valid_mask &= section_mask
 
             return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid_mask[i]]

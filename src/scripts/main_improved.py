@@ -317,8 +317,8 @@ def main():
         try:
             import matplotlib.pyplot as plt
             plt.close('all')
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"실행 실패: {e}")
 
 if __name__ == "__main__":
     main()

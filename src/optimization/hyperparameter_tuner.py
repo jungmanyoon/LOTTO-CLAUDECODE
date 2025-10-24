@@ -298,7 +298,8 @@ class HyperparameterTuner:
         try:
             importance = optuna.importance.get_param_importances(study)
             return importance
-        except:
+        except Exception as e:
+            logging.error(f"하이퍼파라미터 튜닝 실패: {e}")
             # 중요도 계산 실패 시 빈 딕셔너리 반환
             return {}
     

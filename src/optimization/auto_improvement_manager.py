@@ -10,6 +10,9 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import numpy as np
 from pathlib import Path
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from src.core.performance_metrics import PerformanceMetrics
 
 class AutoImprovementManager:
     """자동 개선 시스템 통합 관리자"""
@@ -25,9 +28,9 @@ class AutoImprovementManager:
         # 기본 설정값 정의
         default_config = {
             'backtest_window_size': 100,
-            'min_improvement_rate': 0.001,  # 0.1% 이상 개선 시에도 업데이트 (로또는 미세한 개선도 중요)
+            'min_improvement_rate': 0.0,  # 조금이라도 개선되면 즉시 적용 (사용자 요구사항)
             'max_iterations_per_session': 10,
-            'performance_threshold': 1.5,   # 목표 성능
+            'performance_threshold': 999.0,   # 목표 성능 제한 없음 (계속 개선)
             'auto_save_interval': 1,        # 매 반복마다 저장
         }
         
@@ -48,7 +51,8 @@ class AutoImprovementManager:
             try:
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
-                logging.info(f"이전 상태를 불러왔습니다: {self.state_file}")
+                logging.info(f"📂 이전 상태를 불러왔습니다: {self.state_file}")
+                logging.info(f"📊 불러온 백테스팅 횟수: {state.get('total_backtest_count', 0)}회")
                 return state
             except Exception as e:
                 logging.error(f"상태 파일 로드 실패: {e}")
@@ -121,7 +125,8 @@ class AutoImprovementManager:
         # 백테스팅 횟수 증가
         old_count = self.state['total_backtest_count']
         self.state['total_backtest_count'] += 1
-        logging.info(f"백테스팅 횟수 증가: {old_count} → {self.state['total_backtest_count']}")
+        logging.info(f"🔢 백테스팅 횟수 증가: {old_count} → {self.state['total_backtest_count']}")
+        logging.info(f"📋 백테스팅 #({self.state['total_backtest_count']}) 성능 추적 시작")
         
         # 성능 추출
         new_performance = self._extract_performance(backtest_results)
@@ -180,11 +185,13 @@ class AutoImprovementManager:
         # 이력 크기 제한 (최근 100개만 유지)
         if len(self.state['improvement_history']) > 100:
             self.state['improvement_history'] = self.state['improvement_history'][-100:]
-        
-        # 자동 저장
-        if self.state['total_backtest_count'] % self.config['auto_save_interval'] == 0:
-            self.save_state()
-        
+
+        # 항상 자동 저장 (백테스팅 카운트가 증가했으므로)
+        self.save_state()
+        logging.info(f"📁 백테스팅 상태 자동 저장 완료 (총 횟수: {self.state['total_backtest_count']})")
+        logging.info(f"📂 저장 파일: {self.state_file}")
+        logging.info(f"⏰ 저장 시간: {self.state['last_updated']}")
+
         return improvement_info
     
     def update_model_params(self, model_type: str, params: Dict[str, Any]):
@@ -230,75 +237,89 @@ class AutoImprovementManager:
         return self.state['filter_settings'].copy()
     
     def _extract_performance(self, backtest_results: Dict[str, Any]) -> Dict[str, float]:
-        """백테스팅 결과에서 성능 추출"""
+        """
+        백테스팅 결과에서 성능 추출 (통합 메트릭 시스템 사용)
+
+        Returns raw avg_matches (0-6 scale) for all models.
+        Use PerformanceMetrics.normalize_score() for comparisons.
+        """
         performance = {
             'lstm': 0.0,
             'ensemble': 0.0,
             'monte_carlo': 0.0,
             'overall': 0.0
         }
-        
+
         metrics = backtest_results.get('performance_metrics', {})
         model_performance = metrics.get('model_performance', {})
-        
-        # 각 모델 성능 추출
+
+        # 각 모델 성능 추출 (raw avg_matches)
         for model_type in ['lstm', 'ensemble', 'monte_carlo']:
             model_metrics = model_performance.get(model_type, {})
             performance[model_type] = model_metrics.get('avg_matches', 0.0)
-        
-        # 전체 성능 계산 (가중 평균)
-        performance['overall'] = (
-            performance['lstm'] * 0.25 +
-            performance['ensemble'] * 0.5 +
-            performance['monte_carlo'] * 0.25
+
+        # 전체 성능 계산 (가중 평균) - 통합 함수 사용
+        performance['overall'] = PerformanceMetrics.calculate_overall_score(
+            performance['lstm'],
+            performance['ensemble'],
+            performance['monte_carlo']
         )
-        
+
+        logging.debug(
+            f"[Auto Improvement] Extracted performance: "
+            f"LSTM={performance['lstm']:.3f}, "
+            f"Ensemble={performance['ensemble']:.3f}, "
+            f"MonteCarlo={performance['monte_carlo']:.3f}, "
+            f"Overall={performance['overall']:.3f} (raw)"
+        )
+
         return performance
     
     def get_status_report(self) -> str:
         """현재 상태 보고서 생성"""
         report = []
         report.append("\n" + "="*60)
-        report.append("🤖 자동 개선 시스템 상태 보고서")
+        report.append("[AUTO] 자동 개선 시스템 상태 보고서")
         report.append("="*60)
         
         # 기본 정보
-        report.append(f"\n📊 총 백테스팅 횟수: {self.state['total_backtest_count']}회")
-        report.append(f"📅 시스템 생성일: {self.state['created_at']}")
-        report.append(f"🔄 마지막 업데이트: {self.state['last_updated']}")
+        report.append(f"\n[COUNT] 총 백테스팅 횟수: {self.state['total_backtest_count']}회")
+        report.append(f"[CREATED] 시스템 생성일: {self.state['created_at']}")
+        report.append(f"[UPDATED] 마지막 업데이트: {self.state['last_updated']}")
+        report.append(f"[FILE] 상태 파일: {self.state_file}")
         
         # 현재 성능
-        report.append("\n📈 현재 성능:")
+        report.append("\n[CURRENT] 현재 성능:")
         perf = self.state['current_performance']
-        report.append(f"  • LSTM: {perf['lstm']:.3f}")
-        report.append(f"  • Ensemble: {perf['ensemble']:.3f}")
-        report.append(f"  • Monte Carlo: {perf['monte_carlo']:.3f}")
-        report.append(f"  • 전체: {perf['overall']:.3f}")
+        report.append(f"  - LSTM: {perf['lstm']:.3f}")
+        report.append(f"  - Ensemble: {perf['ensemble']:.3f}")
+        report.append(f"  - Monte Carlo: {perf['monte_carlo']:.3f}")
+        report.append(f"  - 전체: {perf['overall']:.3f}")
         
         # 최고 성능
-        report.append("\n🏆 최고 성능:")
+        report.append("\n[BEST] 최고 성능:")
         for model_type, info in self.state['best_models'].items():
-            report.append(f"  • {model_type}: {info['performance']:.3f}")
+            report.append(f"  - {model_type}: {info['performance']:.3f}")
         
         # 최근 개선 이력
         if self.state['improvement_history']:
-            report.append("\n📊 최근 개선 이력:")
+            report.append("\n[HISTORY] 최근 개선 이력:")
             recent = self.state['improvement_history'][-5:]  # 최근 5개
             for hist in recent:
                 report.append(f"\n  [{hist['backtest_number']}회차] {hist['timestamp'][:19]}")
                 if hist['should_update']:
-                    report.append(f"    ✅ 업데이트: {', '.join(hist['update_reasons'])}")
+                    report.append(f"    [UPDATED] 업데이트: {', '.join(hist['update_reasons'])}")
                 else:
-                    report.append("    ❌ 개선 없음")
+                    report.append("    [NO CHANGE] 개선 없음")
                 
                 for model, imp in hist['improvements'].items():
                     if imp['improved']:
-                        report.append(f"    • {model}: +{imp['rate']*100:.1f}% ({imp['absolute']:+.3f})")
+                        report.append(f"    - {model}: +{imp['rate']*100:.1f}% ({imp['absolute']:+.3f})")
         
         # 설정값
-        report.append("\n⚙️ 현재 설정:")
-        report.append(f"  • 최소 개선율: {self.config.get('min_improvement_rate', 0.05)*100:.1f}%")
-        report.append(f"  • 목표 성능: {self.config['performance_threshold']:.2f}")
+        report.append("\n[CONFIG] 현재 설정:")
+        report.append(f"  - 최소 개선율: {self.config.get('min_improvement_rate', 0.05)*100:.1f}%")
+        report.append(f"  - 목표 성능: {self.config['performance_threshold']:.2f}")
         
         report.append("\n" + "="*60)
         
@@ -308,19 +329,23 @@ class AutoImprovementManager:
         """개선을 계속해야 하는지 판단"""
         # 목표 성능 달성 확인
         current_overall = self.state['current_performance']['overall']
-        if current_overall >= self.config['performance_threshold']:
-            logging.info("목표 성능 달성! 개선 프로세스 완료.")
-            return False
-        
-        # 최근 개선 이력 확인 (최근 5회)
-        if len(self.state['improvement_history']) >= 5:
-            recent_improvements = self.state['improvement_history'][-5:]
+        # 목표 성능 달성 체크 제거 - 계속 개선
+        # if current_overall >= self.config['performance_threshold']:
+        #     logging.info("목표 성능 달성! 개선 프로세스 완료.")
+        #     return False
+
+        # 최근 개선 이력 확인 (최근 10회로 확대)
+        # 개선이 없어도 백테스팅은 계속 실행되도록 수정
+        if len(self.state['improvement_history']) >= 10:
+            recent_improvements = self.state['improvement_history'][-10:]
             improved_count = sum(1 for h in recent_improvements if h['should_update'])
-            
+
             if improved_count == 0:
-                logging.info("최근 5회 백테스팅에서 개선 없음. 개선 프로세스 중단.")
-                return False
-        
+                logging.info("최근 10회 백테스팅에서 개선 없음. 하지만 백테스팅은 계속 진행합니다.")
+                # return False를 제거하여 백테스팅이 계속되도록 함
+                # 개선이 없어도 백테스팅 카운터는 계속 증가하게 됨
+
+        # 항상 True를 반환하여 백테스팅이 계속 실행되도록 함
         return True
     
     def reset_session_counter(self):

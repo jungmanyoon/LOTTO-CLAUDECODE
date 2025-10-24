@@ -9,6 +9,9 @@ import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import numpy as np
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from src.core.performance_metrics import PerformanceMetrics
 
 # JSON 직렬화를 위한 커스텀 encoder
 class NumpyJSONEncoder(json.JSONEncoder):
@@ -160,20 +163,23 @@ class PerformanceDashboard(metaclass=SingletonMeta):
         return analysis
     
     def _calculate_performance_score(self, model_metrics: Dict[str, Any]) -> float:
-        """성능 점수 계산 (0-100)"""
-        # 가중치 적용
+        """
+        성능 점수 계산 (0-100 scale) - 통합 메트릭 시스템 사용
+
+        Uses PerformanceMetrics.calculate_composite_score() for consistency.
+        """
         avg_matches = model_metrics.get('avg_matches', 0)
         accuracy_3plus = model_metrics.get('accuracy_3plus', 0)
         best_match = model_metrics.get('best_match', 0)
-        
-        # 정규화 및 가중 평균
-        score = (
-            (avg_matches / 2.0) * 0.5 +      # 평균 일치 (최대 2개 기준)
-            (accuracy_3plus / 10.0) * 0.3 +  # 3개 이상 일치율 (10% 기준)
-            (best_match / 6.0) * 0.2          # 최고 일치 (6개 만점)
-        ) * 100
-        
-        return min(100, max(0, score))
+
+        # 통합 composite score 계산 함수 사용
+        score = PerformanceMetrics.calculate_composite_score(
+            avg_matches=avg_matches,
+            accuracy_3plus=accuracy_3plus,
+            best_match=best_match
+        )
+
+        return score
     
     def _identify_strengths(self, model_metrics: Dict[str, Any]) -> List[str]:
         """모델의 강점 식별"""

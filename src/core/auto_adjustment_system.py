@@ -720,26 +720,35 @@ class AutoAdjustmentSystem:
             }
     
     def _calculate_overall_performance(self, backtest_results: Dict[str, Any]) -> float:
-        """전체 성능 점수 계산"""
+        """
+        전체 성능 점수 계산 (통합 메트릭 시스템 사용)
+
+        Returns normalized score in [0, 1] range for decision-making.
+        """
         try:
+            # Import at runtime to avoid circular dependency
+            from .performance_metrics import PerformanceMetrics
+
             metrics = backtest_results.get('performance_metrics', {})
             model_performance = metrics.get('model_performance', {})
-            
+
             if not model_performance:
                 return 0.0
-            
+
             # 각 모델의 평균 일치 개수 수집
             avg_matches = []
             for model_name, model_metrics in model_performance.items():
                 avg_match = model_metrics.get('avg_matches', 0)
                 avg_matches.append(avg_match)
-            
-            # 전체 평균 계산 (정규화: 0~1 범위)
-            overall_avg = sum(avg_matches) / len(avg_matches) if avg_matches else 0
-            normalized_score = min(1.0, overall_avg / 2.0)  # 2개 일치를 1.0 기준으로 정규화
-            
+
+            # 전체 평균 계산 (raw)
+            overall_avg_raw = sum(avg_matches) / len(avg_matches) if avg_matches else 0
+
+            # 통합 정규화 공식 사용
+            normalized_score = PerformanceMetrics.normalize_score(overall_avg_raw)
+
             return normalized_score
-            
+
         except Exception as e:
             logging.error(f"성능 점수 계산 중 오류: {e}")
             return 0.0
@@ -767,7 +776,7 @@ class AutoAdjustmentSystem:
         
         # 조정 전후 필터링 결과 비교
         before_count = adjustment_results.get('before_filter_count', 0)
-        after_count = len(self.db_manager.combinations_db.get_filtered_combinations())
+        after_count = self.db_manager.combinations_db.get_filtered_combinations_count()
         
         if before_count > 0:
             reduction_rate = (before_count - after_count) / before_count

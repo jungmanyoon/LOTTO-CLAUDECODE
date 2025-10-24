@@ -9,6 +9,8 @@ import os
 from typing import Dict, Any, Optional
 from datetime import datetime
 import json
+from ..backtesting.optimized_backtesting_framework import OptimizedBacktestingFramework
+from .performance_metrics import PerformanceMetrics
 
 class AutoAdjustmentSystemV2:
     """
@@ -17,11 +19,15 @@ class AutoAdjustmentSystemV2:
     - 백테스팅 성능에 따라 자동 조정
     """
     
-    def __init__(self, db_manager):
+    def __init__(self, db_manager, config=None):
         self.db_manager = db_manager
         self.config_path = 'configs/adaptive_filter_config.yaml'
         self.state_file = 'data/auto_adjustment_state_v2.json'
-        
+
+        # ✅ ThresholdManager 통합 (Single Source of Truth)
+        from .threshold_manager import get_threshold_manager
+        self.threshold_manager = get_threshold_manager()
+
         # 조정 전략 설정
         self.adjustment_strategy = {
             'excellent': {'threshold': 0.5, 'min_score': 0.8},   # 매우 좋음: 보수적 유지
@@ -30,15 +36,27 @@ class AutoAdjustmentSystemV2:
             'poor': {'threshold': 1.5, 'min_score': 0.2},       # 나쁨: 공격적
             'very_poor': {'threshold': 2.0, 'min_score': 0.0}   # 매우 나쁨: 매우 공격적
         }
-        
+
         # 상태 추적
         self.state = {
             'current_threshold': self._get_current_threshold(),
             'last_performance_score': 0.0,
             'adjustment_history': [],
-            'backtest_count': 0
+            'backtest_count': 0,
+            'last_backtest_round': None,
+            'performance_history': []
         }
-        
+
+        # ✅ FIX: 백테스팅 설정 로드
+        if config is None:
+            from ..utils.config_manager import ConfigManager
+            config = ConfigManager().config
+        backtesting_config = config.get('backtesting', {})
+        self.backtest_window = backtesting_config.get('validation_window', 300)  # 50 → 300
+        logging.info(f"[자동 조정 V2] 백테스트 윈도우: {self.backtest_window} 회차")
+
+        self.backtesting_framework = OptimizedBacktestingFramework(self.db_manager, config=config)
+
         # 상태 파일 로드 (하지만 yaml 파일의 임계값을 우선 사용)
         self._load_state()
         
@@ -54,34 +72,27 @@ class AutoAdjustmentSystemV2:
         logging.info("  - 단일 파라미터 제어: global_probability_threshold")
     
     def _get_current_threshold(self) -> float:
-        """현재 설정된 임계값 읽기"""
+        """현재 설정된 임계값 읽기 (ThresholdManager 사용)"""
         try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-            return config.get('global_probability_threshold', 1.0)
+            # ✅ ThresholdManager에서 가져오기 (Decimal 정밀도)
+            return float(self.threshold_manager.get_threshold())
         except Exception as e:
             logging.error(f"임계값 읽기 실패: {e}")
             return 1.0
     
     def _set_threshold(self, new_threshold: float) -> bool:
-        """새로운 임계값 설정"""
+        """새로운 임계값 설정 (ThresholdManager 사용)"""
         try:
-            # 현재 설정 읽기
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-            
-            # 백업 생성
-            backup_path = f"configs/adaptive_filter_config_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
-            with open(backup_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, allow_unicode=True)
-            
-            # 임계값 업데이트
-            old_threshold = config.get('global_probability_threshold', 1.0)
-            config['global_probability_threshold'] = new_threshold
-            
-            # 저장
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
+            # ✅ ThresholdManager에 위임 (Decimal 정밀도 + Observer 패턴)
+            old_threshold = self.threshold_manager.get_threshold()
+            self.threshold_manager.set_threshold(new_threshold, source="auto_adjustment_v2")
+
+            # ✅ 설정 파일에 저장 (ThresholdManager가 처리)
+            success = self.threshold_manager.save_to_config()
+
+            if not success:
+                logging.error("임계값 저장 실패")
+                return False
             
             logging.info(f"✅ 임계값 변경: {old_threshold}% → {new_threshold}%")
             
@@ -105,23 +116,31 @@ class AutoAdjustmentSystemV2:
             logging.error(f"임계값 설정 실패: {e}")
             return False
     
-    def analyze_and_adjust(self, performance_score: float) -> Dict[str, Any]:
+    def analyze_and_adjust(
+        self,
+        performance_score: float,
+        skip_backtest: bool = False
+    ) -> Dict[str, Any]:
         """
         백테스팅 성능에 따라 임계값 자동 조정
-        
+
         Args:
             performance_score: 백테스팅 성능 점수 (0.0 ~ 1.0)
-        
+            skip_backtest: True일 경우 백테스팅 생략 (이미 실행된 경우)
+
         Returns:
             조정 결과
         """
         logging.info("\n" + "="*60)
         logging.info("🔄 자동 임계값 조정 분석")
+        if skip_backtest:
+            logging.info("   (기존 백테스팅 결과 재사용)")
         logging.info("="*60)
-        
+
         self.state['last_performance_score'] = performance_score
-        self.state['backtest_count'] += 1
-        
+        if not skip_backtest:
+            self.state['backtest_count'] += 1
+
         # 현재 성능 평가
         logging.info(f"백테스팅 성능: {performance_score:.3f}")
         
@@ -206,6 +225,79 @@ class AutoAdjustmentSystemV2:
         logging.info(f"  - 필터링 후: 약 {remaining:,}개 조합")
         logging.info(f"  - 축소율: {(1 - remaining/total)*100:.1f}%")
     
+    def _run_backtest_performance(self) -> Optional[Dict[str, Any]]:
+        """Run a backtest to evaluate current performance."""
+        try:
+            latest_round = self.db_manager.lotto_db.get_last_round()
+            if latest_round is None:
+                logging.warning("[Auto Adjustment V2] No latest round information available for backtesting.")
+                return None
+
+            start_round = max(1, latest_round - self.backtest_window + 1)
+            logging.info(
+                f"\n[Auto Adjustment V2] Running backtest for rounds {start_round}~{latest_round} (window {self.backtest_window})"
+            )
+
+            results = self.backtesting_framework.run_backtest(
+                start_round=start_round,
+                end_round=latest_round,
+                window_size=self.backtest_window
+            )
+
+            performance_score = self._calculate_overall_performance(results)
+
+            return {
+                'start_round': start_round,
+                'end_round': latest_round,
+                'performance_score': performance_score,
+                'metrics': results.get('performance_metrics', {})
+            }
+        except Exception as e:
+            logging.error(f"[Auto Adjustment V2] Backtest execution failed: {e}")
+            return None
+
+    def _calculate_overall_performance(self, backtest_results: Dict[str, Any]) -> float:
+        """
+        Calculate normalized performance score from backtest results.
+
+        Uses unified PerformanceMetrics system for consistent scoring.
+        Returns normalized score in [0, 1] range.
+        """
+        try:
+            metrics = backtest_results.get('performance_metrics', {}) if backtest_results else {}
+            model_performance = metrics.get('model_performance', {})
+
+            if not isinstance(model_performance, dict) or not model_performance:
+                return 0.0
+
+            avg_matches = []
+            for model_metrics in model_performance.values():
+                if not isinstance(model_metrics, dict):
+                    continue
+                avg_match = model_metrics.get('avg_matches')
+                if avg_match is not None:
+                    avg_matches.append(avg_match)
+
+            if not avg_matches:
+                return 0.0
+
+            # Calculate raw average across all models
+            overall_avg_raw = sum(avg_matches) / len(avg_matches)
+
+            # Use unified normalization formula
+            normalized_score = PerformanceMetrics.normalize_score(overall_avg_raw)
+
+            logging.debug(
+                f"[Auto Adjustment V2] Performance: raw={overall_avg_raw:.3f}, "
+                f"normalized={normalized_score:.3f}"
+            )
+
+            return normalized_score
+        except Exception as e:
+            logging.error(f"[Auto Adjustment V2] Failed to calculate performance: {e}")
+            return 0.0
+
+
     def _load_state(self):
         """저장된 상태 로드"""
         try:
@@ -213,6 +305,9 @@ class AutoAdjustmentSystemV2:
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     saved_state = json.load(f)
                     self.state.update(saved_state)
+                    self.state.setdefault('adjustment_history', [])
+                    self.state.setdefault('performance_history', [])
+                    self.state.setdefault('last_backtest_round', None)
                 logging.debug(f"자동 조정 상태 로드: {self.state['backtest_count']}회 실행")
         except Exception as e:
             logging.error(f"상태 로드 실패: {e}")
@@ -228,48 +323,62 @@ class AutoAdjustmentSystemV2:
     
     def get_status(self) -> Dict[str, Any]:
         """현재 상태 반환"""
+        adjustment_history = self.state['adjustment_history'][-5:] if self.state['adjustment_history'] else []
+        performance_history = self.state['performance_history'][-5:] if self.state['performance_history'] else []
+
         return {
             'current_threshold': self.state['current_threshold'],
             'last_performance': self.state['last_performance_score'],
             'backtest_count': self.state['backtest_count'],
+            'last_backtest_round': self.state.get('last_backtest_round'),
             'mode': self._get_mode_description(self.state['current_threshold']),
-            'history': self.state['adjustment_history'][-5:] if self.state['adjustment_history'] else []
+            'history': adjustment_history,
+            'performance_history': performance_history
         }
     
     def check_and_adjust(self) -> Dict[str, Any]:
         """
-        백테스팅 실행 후 자동 조정 (main.py 호환성)
-        
+        백테스팅 결과 기반으로 임계값을 점검하고 조정
+
         Returns:
-            조정 결과 및 백테스팅 성능
+            Dict[str, Any]: 조정 실행 결과와 백테스트 성능
         """
-        # 간단한 백테스팅 성능 시뮬레이션
-        # 실제 구현에서는 백테스팅을 실행하여 성능을 측정해야 함
-        import random
-        
-        # 임계값에 따른 기본 성능 추정
-        threshold = self.state['current_threshold']
-        if threshold <= 0.5:
-            base_score = 0.7  # 보수적: 높은 안정성
-        elif threshold <= 1.0:
-            base_score = 0.5  # 표준: 균형
+        backtest_result = self._run_backtest_performance()
+        fallback_used = False
+
+        if backtest_result:
+            performance_score = backtest_result['performance_score']
+            self.state['last_backtest_round'] = backtest_result.get('end_round')
+
+            history_entry = {
+                'timestamp': datetime.now().isoformat(),
+                'round': backtest_result.get('end_round'),
+                'performance_score': performance_score
+            }
+            self.state['performance_history'].append(history_entry)
+            if len(self.state['performance_history']) > 20:
+                self.state['performance_history'] = self.state['performance_history'][-20:]
         else:
-            base_score = 0.3  # 공격적: 낮은 안정성
-        
-        # 약간의 랜덤성 추가
-        performance_score = base_score + random.uniform(-0.1, 0.1)
-        performance_score = max(0.0, min(1.0, performance_score))
-        
-        # 조정 분석
+            fallback_used = True
+            logging.warning("[Auto Adjustment V2] Backtest unavailable; using last known performance score.")
+            performance_score = max(0.0, min(1.0, self.state.get('last_performance_score', 0.0)))
+
         adjustment_result = self.analyze_and_adjust(performance_score)
-        
-        # 결과 반환
-        return {
+
+        report = {
             'adjusted': adjustment_result.get('adjusted', False),
             'message': adjustment_result.get('message', ''),
             'backtest_performance': {
                 'backtest_count': self.state['backtest_count'],
                 'performance_score': performance_score,
-                'threshold': self.state['current_threshold']
+                'threshold': self.state['current_threshold'],
+                'fallback_used': fallback_used
             }
         }
+
+        if backtest_result:
+            report['backtest_performance']['start_round'] = backtest_result.get('start_round')
+            report['backtest_performance']['end_round'] = backtest_result.get('end_round')
+            report['backtest_performance']['metrics'] = backtest_result.get('metrics')
+
+        return report

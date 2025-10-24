@@ -407,7 +407,7 @@ class CombinationsDB(BaseDatabase):
                     
                 result = cursor.fetchone()
                 exists = result is not None
-                logging.info(f"[DEBUG] 기본 조합 존재 여부: {exists}")
+                logging.debug(f"기본 조합 존재 여부: {exists}")
                 return exists
         except Exception as e:
             logging.error(f"기본 조합 확인 중 오류 발생: {str(e)}")
@@ -501,6 +501,60 @@ class CombinationsDB(BaseDatabase):
             logging.error(f"필터링된 조합 조회 중 오류: {str(e)}")
             return []
 
+    def get_filtered_combinations_generator(self, batch_size: int = 50000):
+        """필터링된 조합을 제너레이터로 반환 (메모리 효율적)"""
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+
+                # filtered_combinations 테이블 존재 확인
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='filtered_combinations'")
+                if not cursor.fetchone():
+                    logging.warning("filtered_combinations 테이블이 없습니다.")
+                    return
+
+                # 전체 개수 확인
+                cursor.execute("SELECT COUNT(*) FROM filtered_combinations")
+                total_count = cursor.fetchone()[0]
+
+                if total_count == 0:
+                    logging.info("필터링된 조합이 없습니다.")
+                    return
+
+                logging.info(f"스트림 처리 시작: {total_count:,}개 조합, 배치 크기: {batch_size:,}")
+
+                # 배치 단위로 처리
+                offset = 0
+                while offset < total_count:
+                    cursor.execute(
+                        "SELECT combination FROM filtered_combinations LIMIT ? OFFSET ?",
+                        (batch_size, offset)
+                    )
+
+                    batch = cursor.fetchall()
+                    if not batch:
+                        break
+
+                    # 메모리 사용량 체크
+                    import psutil
+                    memory_percent = psutil.virtual_memory().percent
+
+                    if memory_percent > 85:
+                        logging.warning(f"메모리 사용률 높음 ({memory_percent:.1f}%), 배치 크기 축소")
+                        batch_size = max(10000, batch_size // 2)
+
+                    yield [row[0] for row in batch]
+                    offset += len(batch)
+
+                    # 진행률 로깅
+                    progress = (offset / total_count) * 100
+                    if offset % (batch_size * 10) == 0:  # 10배치마다
+                        logging.info(f"스트림 진행률: {progress:.1f}% ({offset:,}/{total_count:,})")
+
+        except Exception as e:
+            logging.error(f"조합 스트림 생성 중 오류: {str(e)}")
+            return
+
     def get_base_combinations(self) -> List[str]:
         """기본 로또 조합 조회"""
         try:
@@ -541,7 +595,7 @@ class CombinationsDB(BaseDatabase):
         try:
             # 대량 데이터로 인한 타임아웃 방지를 위해 캐시된 값 반환
             # 실제로는 8,145,060개가 있음
-            logging.info("[DEBUG] count_all_combinations - 캐시된 값 반환: 8,145,060")
+            logging.debug("count_all_combinations - 캐시된 값 반환: 8,145,060")
             return 8145060
             
             # 아래는 원래 코드 (타임아웃 문제로 임시 비활성화)
@@ -680,6 +734,33 @@ class CombinationsDB(BaseDatabase):
             logging.error(f"유효 조합 삭제 중 오류 발생: {str(e)}")
             return False
 
+    def get_filtered_combinations_count(self, round_num: int = None) -> int:
+        """필터링된 조합 개수만 반환 (메모리 효율적)
+
+        Args:
+            round_num: 회차 번호 (옵션)
+
+        Returns:
+            int: 필터링된 조합 개수
+        """
+        try:
+            with self._create_connection() as connection:
+                cursor = connection.cursor()
+
+                if round_num:
+                    cursor.execute("SELECT COUNT(*) FROM filtered_combinations WHERE round = ?", (round_num,))
+                else:
+                    cursor.execute("SELECT COUNT(*) FROM filtered_combinations")
+
+                result = cursor.fetchone()
+                count = result[0] if result else 0
+                logging.debug(f"[필터 개수] {self.filter_name}, 회차: {round_num}, 개수: {count:,}")
+                return count
+
+        except Exception as e:
+            logging.error(f"조합 개수 조회 오류: {self.filter_name}, {str(e)}")
+            return 0
+
     def get_filtered_combinations(self, round_num: int) -> List[str]:
         """필터링된 조합 조회
         
@@ -701,7 +782,7 @@ class CombinationsDB(BaseDatabase):
                 # 결과 변환
                 combinations = [row[0] for row in result]
                 
-                logging.info(f"[필터 디버그] 필터링된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
+                logging.debug(f"[필터 디버그] 필터링된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
                 return combinations
             
         except Exception as e:
@@ -730,14 +811,30 @@ class CombinationsDB(BaseDatabase):
                 # 결과 변환
                 combinations = [row[0] for row in result]
             
-            logging.info(f"[필터 디버그] 제외된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
+            logging.debug(f"[필터 디버그] 제외된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
             return combinations
             
         except Exception as e:
             logging.error(f"제외된 조합 조회 실패: {self.filter_name}, 회차: {round_num}, 오류: {str(e)}")
             logging.exception(e)
             return []
-            
+
+    def get_latest_filtered_round(self) -> int:
+        """Get the latest round number that has filtered combinations
+
+        Returns:
+            int: Latest round with filtered data, 0 if none
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT MAX(round) FROM filtered_combinations WHERE round IS NOT NULL")
+                result = cursor.fetchone()
+                return result[0] if result and result[0] else 0
+        except Exception as e:
+            logging.error(f"최신 필터링 회차 조회 실패: {e}")
+            return 0
+
     def get_filter_criteria(self, round_num: int) -> Optional[Dict]:
         """필터 기준 조회
         
@@ -758,7 +855,7 @@ class CombinationsDB(BaseDatabase):
                 
                 if result:
                     criteria = json.loads(result[0])
-                    logging.info(f"[필터 디버그] 필터 기준 조회 성공: {self.filter_name}, 회차: {round_num}")
+                    logging.debug(f"[필터 디버그] 필터 기준 조회 성공: {self.filter_name}, 회차: {round_num}")
                     return criteria
                 else:
                     logging.warning(f"[필터 디버그] 필터 기준 조회 결과 없음: {self.filter_name}, 회차: {round_num}")
@@ -769,51 +866,126 @@ class CombinationsDB(BaseDatabase):
             logging.exception(e)
             return None
     
+    def get_filtered_combinations_batch(self, round_num: int, offset: int, limit: int) -> List[str]:
+        """필터링된 조합을 배치로 가져오기
+
+        Args:
+            round_num: 회차 번호
+            offset: 시작 위치
+            limit: 가져올 개수
+
+        Returns:
+            List[str]: 조합 리스트
+        """
+        try:
+            with self._create_connection() as connection:
+                cursor = connection.cursor()
+                cursor.execute("""
+                    SELECT combination
+                    FROM filtered_combinations
+                    WHERE round = ?
+                    ORDER BY combination
+                    LIMIT ? OFFSET ?
+                """, (round_num, limit, offset))
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"배치 조합 조회 실패: {e}")
+            return []
+
+    def remove_combinations(self, round_num: int, combinations: List[str]) -> None:
+        """특정 조합들 제거
+
+        Args:
+            round_num: 회차 번호
+            combinations: 제거할 조합 리스트
+        """
+        if not combinations:
+            return
+
+        try:
+            with self._create_connection() as connection:
+                cursor = connection.cursor()
+                # 배치로 삭제
+                placeholders = ','.join('?' * len(combinations))
+                cursor.execute(f"""
+                    DELETE FROM filtered_combinations
+                    WHERE round = ? AND combination IN ({placeholders})
+                """, [round_num] + combinations)
+                connection.commit()
+                logging.debug(f"{len(combinations)}개 조합 제거 완료")
+        except Exception as e:
+            logging.error(f"조합 제거 실패: {e}")
+
     def save_filtered_combinations(self, round_num: int, combinations: List[str]) -> bool:
-        """필터링된 조합 저장
-        
+        """필터링된 조합 저장 (Enhanced Transaction Handling)
+
         Args:
             round_num: 회차 번호
             combinations: 필터링된 조합 목록
-            
+
         Returns:
             bool: 저장 성공 여부
         """
         if not combinations:
             logging.warning(f"저장할 필터링된 조합이 없습니다: 회차 {round_num}")
             return True
-            
+
         try:
+            # ============================================================
+            # FIX: Enhanced Transaction Handling & Verification
+            # ============================================================
+            logging.debug(f"[CombinationsDB] 저장 시작: 회차 {round_num}, 입력 {len(combinations):,}개")
+
             with self._create_connection() as connection:
                 cursor = connection.cursor()
-                
+
                 # 트랜잭션 시작
                 connection.execute("BEGIN TRANSACTION")
-                
+
                 # 기존 데이터 삭제
                 cursor.execute("DELETE FROM filtered_combinations WHERE round = ?", (round_num,))
-                
+                deleted_count = cursor.rowcount
+                if deleted_count > 0:
+                    logging.debug(f"[CombinationsDB] 기존 데이터 삭제: {deleted_count}개")
+
                 # 배치 크기 설정 (대용량 데이터 처리를 위해)
                 batch_size = 10000
                 total_batches = (len(combinations) + batch_size - 1) // batch_size
-                
+                inserted_count = 0
+
                 # 배치 단위로 저장
-                for i in range(0, len(combinations), batch_size):
-                    batch = combinations[i:i + batch_size]
+                for batch_idx in range(0, len(combinations), batch_size):
+                    batch = combinations[batch_idx:batch_idx + batch_size]
                     batch_data = [(round_num, comb) for comb in batch]
                     cursor.executemany('''
                         INSERT INTO filtered_combinations (round, combination)
                         VALUES (?, ?)
                     ''', batch_data)
-                
+                    inserted_count += len(batch)
+
+                    if batch_idx % (batch_size * 10) == 0:  # 10배치마다 로그
+                        progress = (batch_idx / len(combinations)) * 100
+                        logging.debug(f"[CombinationsDB] 저장 진행: {progress:.1f}% ({inserted_count:,}/{len(combinations):,})")
+
                 # 트랜잭션 커밋
                 connection.commit()
-                
-                logging.info(f"필터링된 조합 저장 완료: 회차 {round_num}, {len(combinations):,}개")
+                logging.debug(f"[CombinationsDB] 트랜잭션 커밋 완료")
+
+                # Verification - Count actual rows
+                cursor.execute("SELECT COUNT(*) FROM filtered_combinations WHERE round = ?", (round_num,))
+                actual_count = cursor.fetchone()[0]
+                logging.info(f"필터링된 조합 저장 완료: 회차 {round_num}, 입력 {len(combinations):,}개 → 저장 {actual_count:,}개")
+
+                if actual_count != len(combinations):
+                    logging.warning(f"[CombinationsDB] 경고: 저장 수 불일치 (입력 {len(combinations):,} ≠ 저장 {actual_count:,})")
+                # ============================================================
+
                 return True
-                
+
         except Exception as e:
             logging.error(f"필터링된 조합 저장 중 오류 발생: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
             return False
 
 class PatternsDB(BaseDatabase):
@@ -941,10 +1113,10 @@ class PatternsDB(BaseDatabase):
                     )
                 '''
                 cursor.execute(sql)
-                logging.info("[DEBUG] 새로운 패턴 분석 테이블 생성 완료")
+                logging.debug("새로운 패턴 분석 테이블 생성 완료")
             
             conn.commit()
-            logging.info("[DEBUG] 패턴 데이터베이스 테이블 생성 완료")
+            logging.debug("패턴 데이터베이스 테이블 생성 완료")
 
     def save_winning_numbers(self, round_num: int, numbers: str, draw_date: str = None) -> bool:
         """당첨 번호 저장
@@ -1372,7 +1544,7 @@ class FilterDB(BaseDatabase):
                 # 트랜잭션 커밋 - with 블록 안에서 실행
                 connection.execute("COMMIT")
             
-            logging.info(f"[필터 디버그] 필터링된 조합 저장 성공: {self.filter_name}, 회차: {round_num}, 총 {len(filtered_combinations):,}개")
+            logging.debug(f"[필터 디버그] 필터링된 조합 저장 성공: {self.filter_name}, 회차: {round_num}, 총 {len(filtered_combinations):,}개")
             return True
             
         except Exception as e:
@@ -1380,8 +1552,8 @@ class FilterDB(BaseDatabase):
             try:
                 if 'connection' in locals() and connection:
                     connection.execute("ROLLBACK")
-            except:
-                pass
+            except sqlite3.Error as rollback_error:
+                logging.debug(f"롤백 실패 (무시): {rollback_error}")
                 
             logging.error(f"필터링된 조합 저장 실패: {self.filter_name}, 회차: {round_num}, 오류: {str(e)}")
             logging.exception(e)
@@ -1432,7 +1604,7 @@ class FilterDB(BaseDatabase):
                 # 트랜잭션 커밋 - with 블록 안에서 실행
                 connection.execute("COMMIT")
             
-            logging.info(f"[필터 디버그] 제외된 조합 저장 성공: {self.filter_name}, 회차: {round_num}, 총 {len(excluded_combinations):,}개")
+            logging.debug(f"[필터 디버그] 제외된 조합 저장 성공: {self.filter_name}, 회차: {round_num}, 총 {len(excluded_combinations):,}개")
             return True
             
         except Exception as e:
@@ -1440,12 +1612,39 @@ class FilterDB(BaseDatabase):
             try:
                 if 'connection' in locals() and connection:
                     connection.execute("ROLLBACK")
-            except:
-                pass
+            except sqlite3.Error as rollback_error:
+                logging.debug(f"롤백 실패 (무시): {rollback_error}")
                 
             logging.error(f"제외된 조합 저장 실패: {self.filter_name}, 회차: {round_num}, 오류: {str(e)}")
             logging.exception(e)
             return False
+
+    def get_filtered_combinations_count(self, round_num: int = None) -> int:
+        """필터링된 조합 개수만 반환 (메모리 효율적)
+
+        Args:
+            round_num: 회차 번호 (옵션)
+
+        Returns:
+            int: 필터링된 조합 개수
+        """
+        try:
+            with self._create_connection() as connection:
+                cursor = connection.cursor()
+
+                if round_num:
+                    cursor.execute("SELECT COUNT(*) FROM filtered_combinations WHERE round = ?", (round_num,))
+                else:
+                    cursor.execute("SELECT COUNT(*) FROM filtered_combinations")
+
+                result = cursor.fetchone()
+                count = result[0] if result else 0
+                logging.debug(f"[필터 개수] {self.filter_name}, 회차: {round_num}, 개수: {count:,}")
+                return count
+
+        except Exception as e:
+            logging.error(f"조합 개수 조회 오류: {self.filter_name}, {str(e)}")
+            return 0
 
     def get_filtered_combinations(self, round_num: int) -> List[str]:
         """필터링된 조합 조회
@@ -1468,7 +1667,7 @@ class FilterDB(BaseDatabase):
                 # 결과 변환
                 combinations = [row[0] for row in result]
                 
-                logging.info(f"[필터 디버그] 필터링된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
+                logging.debug(f"[필터 디버그] 필터링된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
                 return combinations
             
         except Exception as e:
@@ -1497,14 +1696,30 @@ class FilterDB(BaseDatabase):
                 # 결과 변환
                 combinations = [row[0] for row in result]
             
-            logging.info(f"[필터 디버그] 제외된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
+            logging.debug(f"[필터 디버그] 제외된 조합 조회 성공: {self.filter_name}, 회차: {round_num}, 총 {len(combinations):,}개")
             return combinations
             
         except Exception as e:
             logging.error(f"제외된 조합 조회 실패: {self.filter_name}, 회차: {round_num}, 오류: {str(e)}")
             logging.exception(e)
             return []
-            
+
+    def get_latest_filtered_round(self) -> int:
+        """Get the latest round number that has filtered combinations
+
+        Returns:
+            int: Latest round with filtered data, 0 if none
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT MAX(round) FROM filtered_combinations WHERE round IS NOT NULL")
+                result = cursor.fetchone()
+                return result[0] if result and result[0] else 0
+        except Exception as e:
+            logging.error(f"최신 필터링 회차 조회 실패: {e}")
+            return 0
+
     def get_filter_criteria(self, round_num: int) -> Optional[Dict]:
         """필터 기준 조회
         
@@ -1525,7 +1740,7 @@ class FilterDB(BaseDatabase):
                 
                 if result:
                     criteria = json.loads(result[0])
-                    logging.info(f"[필터 디버그] 필터 기준 조회 성공: {self.filter_name}, 회차: {round_num}")
+                    logging.debug(f"[필터 디버그] 필터 기준 조회 성공: {self.filter_name}, 회차: {round_num}")
                     return criteria
                 else:
                     logging.warning(f"[필터 디버그] 필터 기준 조회 결과 없음: {self.filter_name}, 회차: {round_num}")
@@ -1556,7 +1771,7 @@ class FilterDB(BaseDatabase):
                 
                 if result:
                     count = result[0]
-                    logging.info(f"[필터 디버그] 제외된 조합 개수 조회 성공: {self.filter_name}, 회차: {round_num}, 개수: {count:,}개")
+                    logging.debug(f"[필터 디버그] 제외된 조합 개수 조회 성공: {self.filter_name}, 회차: {round_num}, 개수: {count:,}개")
                     return count
                 else:
                     logging.warning(f"[필터 디버그] 제외된 조합 개수 조회 결과 없음: {self.filter_name}, 회차: {round_num}")
@@ -1595,7 +1810,7 @@ class FilterDB(BaseDatabase):
                 
                 connection.commit()
             
-            logging.info(f"[필터 디버그] 필터 상세 정보 저장 성공: {self.filter_name}, 회차: {round_num}")
+            logging.debug(f"[필터 디버그] 필터 상세 정보 저장 성공: {self.filter_name}, 회차: {round_num}")
             return True
             
         except Exception as e:
@@ -1625,10 +1840,11 @@ class FilterDB(BaseDatabase):
                     # JSON 문자열을 딕셔너리로 변환
                     # result는 튜플이므로 인덱스로 접근
                     details = json.loads(result[0])
-                    logging.info(f"[필터 디버그] 필터 상세 정보 조회 성공: {self.filter_name}, 회차: {round_num}")
+                    logging.debug(f"[필터 디버그] 필터 상세 정보 조회 성공: {self.filter_name}, 회차: {round_num}")
                     return details
                 else:
-                    logging.warning(f"[필터 디버그] 필터 상세 정보 조회 결과 없음: {self.filter_name}, 회차: {round_num}")
+                    # Changed from WARNING to DEBUG: No filter details is normal for recent/incomplete rounds
+                    logging.debug(f"[필터 디버그] 필터 상세 정보 조회 결과 없음: {self.filter_name}, 회차: {round_num}")
                     return {}
                 
         except Exception as e:
@@ -1653,7 +1869,7 @@ class FilterDB(BaseDatabase):
                 
                 if result and result[0]:
                     round_num = result[0]
-                    logging.info(f"[필터 디버그] 마지막 필터링 회차 조회 성공: {self.filter_name}, 회차: {round_num}")
+                    logging.debug(f"[필터 디버그] 마지막 필터링 회차 조회 성공: {self.filter_name}, 회차: {round_num}")
                     return round_num
                 else:
                     logging.warning(f"[필터 디버그] 마지막 필터링 회차 조회 결과 없음: {self.filter_name}")
@@ -1691,7 +1907,7 @@ class FilterDB(BaseDatabase):
                     'filter_time': filter_time
                 }
                 
-                logging.info(f"[필터 디버그] 필터링 통계 조회 성공: {self.filter_name}, 회차: {round_num}, 전체: {total_count:,}개, 제외: {excluded_count:,}개 ({exclude_percent:.2f}%)")
+                logging.debug(f"[필터 디버그] 필터링 통계 조회 성공: {self.filter_name}, 회차: {round_num}, 전체: {total_count:,}개, 제외: {excluded_count:,}개 ({exclude_percent:.2f}%)")
                 return statistics
             
             # filter_details가 없으면 기본값 반환
@@ -1741,7 +1957,7 @@ class FilterDB(BaseDatabase):
                 
                 connection.commit()
             
-            logging.info(f"[필터 디버그] 필터 기준 정보 저장 성공: {self.filter_name}, 회차: {round_num}")
+            logging.debug(f"[필터 디버그] 필터 기준 정보 저장 성공: {self.filter_name}, 회차: {round_num}")
             return True
             
         except Exception as e:

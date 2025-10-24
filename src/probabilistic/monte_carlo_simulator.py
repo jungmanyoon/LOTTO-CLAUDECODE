@@ -606,10 +606,14 @@ class MonteCarloSimulator:
         
         # 종합 신뢰도 (더 현실적인 가중치)
         # 점수 50%, 패턴 30%, 기본 20%
-        confidence = 0.5 * score_confidence + 0.3 * pattern_score + 0.2 * 0.5
-        
-        # 0.3 ~ 0.8 범위로 제한 (너무 높거나 낮은 신뢰도 방지)
-        return max(0.3, min(0.8, confidence))
+        base_confidence = 0.5 * score_confidence + 0.3 * pattern_score + 0.2 * 0.5
+
+        # 신뢰도 보정: 상위 예측에 대해 더 높은 신뢰도 부여
+        # 최소 30%, 최대 100% (1.0) 제한
+        enhanced_confidence = base_confidence * 1.15  # 15% 부스트 (더 보수적)
+
+        # 100%를 넘지 않도록 제한
+        return max(0.3, min(1.0, enhanced_confidence))
     
     def _calculate_pattern_score(self, combination: List[int]) -> float:
         """패턴 기반 점수 계산
@@ -789,9 +793,10 @@ class MonteCarloSimulator:
             
             # 최고 조합 캐시
             total_size += sys.getsizeof(self.cache['best_combinations'])
-            
+
             return total_size / 1024 / 1024  # MB 변환
-        except:
+        except Exception as e:
+            logging.error(f"몬테카를로 시뮬레이션 실패: {e}")
             return 0.0
     
     def convergence_test(self, target_combinations: int = 5, 

@@ -230,41 +230,44 @@ class RealtimeLearningSystem:
         if 'lstm' not in self.learning_buffers:
             logging.warning("LSTM 학습 버퍼가 없음")
             return {'updated': False, 'message': 'No learning buffer'}
-        
-        # 최근 데이터로 미니 배치 생성
+
+        # LSTM sequence_length 가져오기
+        sequence_length = lstm_model.sequence_length
+
+        # 최근 데이터로 미니 배치 생성 (sequence_length + 10 버퍼)
         config = self.learning_config.get('lstm', self.default_config)
-        mini_batch_size = max(10, config.get('mini_batch_size', 10))  # 최소 10개 보장
-        recent_data = list(self.learning_buffers['lstm'])[-mini_batch_size:]
-        
+        required_data_size = sequence_length + 10  # 50 + 10 = 60
+        recent_data = list(self.learning_buffers['lstm'])[-required_data_size:]
+
         # 데이터가 부족하면 DB에서 추가로 가져오기
-        if len(recent_data) < 10:
-            logging.info(f"LSTM 업데이트를 위한 데이터 부족 ({len(recent_data)}개), DB에서 추가 로드")
+        if len(recent_data) < sequence_length:
+            logging.info(f"LSTM 업데이트를 위한 데이터 부족 ({len(recent_data)}개), DB에서 추가 로드 (필요: {sequence_length}개)")
             try:
-                # DB에서 최근 50개 데이터 가져오기
+                # DB에서 최근 데이터 가져오기 (sequence_length + 10 버퍼)
                 all_numbers = self.db_manager.get_all_numbers()  # get_all_numbers()는 (round, numbers, date) 튜플 반환
-                if all_numbers and len(all_numbers) >= 10:
-                    # 최근 50개로 제한
-                    recent_db_data = all_numbers[-50:]
+                if all_numbers and len(all_numbers) >= sequence_length:
+                    # 최근 데이터로 제한
+                    recent_db_data = all_numbers[-required_data_size:]
                     # 딕셔너리 형식으로 변환
                     for round_num, numbers_str, draw_date in recent_db_data:  # 3개 값 언팩
                         numbers = list(map(int, numbers_str.split(',')))
                         recent_data.append({'round': round_num, 'numbers': numbers})
-                    # 중복 제거 후 최근 mini_batch_size개 선택
+                    # 중복 제거 후 최근 required_data_size개 선택
                     seen_rounds = set()
                     unique_data = []
                     for item in reversed(recent_data):
                         if item['round'] not in seen_rounds:
                             seen_rounds.add(item['round'])
                             unique_data.append(item)
-                    recent_data = list(reversed(unique_data))[-mini_batch_size:]
+                    recent_data = list(reversed(unique_data))[-required_data_size:]
             except Exception as e:
                 logging.debug(f"DB에서 데이터 로드 실패: {e}")
-        
+
         # 여전히 데이터가 부족하면 업데이트 건너뛰기
-        if len(recent_data) < 10:
-            logging.info(f"LSTM 업데이트 건너뛰기: 데이터 부족 ({len(recent_data)}개, 최소 10개 필요)")
-            return {'updated': False, 'message': f'Insufficient data ({len(recent_data)} < 10)'}
-        
+        if len(recent_data) < sequence_length:
+            logging.warning(f"LSTM 업데이트 건너뛰기: 데이터 부족 ({len(recent_data)}개 < {sequence_length}개)")
+            return {'updated': False, 'message': f'Insufficient data ({len(recent_data)} < {sequence_length})'}
+
         # 데이터 형식 변환
         winning_numbers = [','.join(map(str, d['numbers'])) for d in recent_data]
         
@@ -330,9 +333,12 @@ class RealtimeLearningSystem:
             # 특징 데이터 생성
             features = []
             targets = []
-            
+
             for i in range(len(recent_data) - 1):
-                feature = ensemble_model.extract_features([recent_data[i]['numbers']])
+                # FIX: Convert list/tuple of integers to comma-separated string format
+                # ensemble_model.extract_features expects List[str] where each string is '1,2,3,4,5,6'
+                numbers_str = ','.join(map(str, recent_data[i]['numbers']))
+                feature = ensemble_model.extract_features([numbers_str])
                 target = recent_data[i + 1]['numbers']
                 features.append(feature[0])
                 targets.append(target)
@@ -433,8 +439,15 @@ class RealtimeLearningSystem:
             if hasattr(model, 'predict_next_numbers'):
                 # LSTM 모델
                 winning_numbers = [','.join(map(str, d['numbers'])) for d in test_data]
-                predictions = model.predict_next_numbers(winning_numbers[-min(50, len(winning_numbers)):], 
-                                                        num_predictions=1)
+                # LSTM sequence_length 확인 (기본 50, 최소 10)
+                sequence_length = getattr(model, 'sequence_length', 50)
+                min_length = max(10, sequence_length)  # 최소 10 또는 sequence_length
+                if len(winning_numbers) >= min_length:
+                    predictions = model.predict_next_numbers(winning_numbers[-min(sequence_length, len(winning_numbers)):],
+                                                            num_predictions=1)
+                else:
+                    # 데이터 부족 시 평가 스킵
+                    return 0.05
                 if predictions and len(predictions) > 0:
                     prediction = predictions[0].get('numbers', [])
                     # 간단한 점수: 예측이 유효하면 기본 점수 부여
@@ -469,8 +482,15 @@ class RealtimeLearningSystem:
                 # 이전 데이터로 예측
                 if hasattr(model, 'predict_next_numbers'):
                     winning_numbers = [','.join(map(str, d['numbers'])) for d in prev_data]
-                    predictions = model.predict_next_numbers(winning_numbers[-min(50, len(winning_numbers)):], 
-                                                            num_predictions=1)
+                    # LSTM sequence_length 확인 (기본 50, 최소 10)
+                    sequence_length = getattr(model, 'sequence_length', 50)
+                    min_length = max(10, sequence_length)
+                    if len(winning_numbers) >= min_length:
+                        predictions = model.predict_next_numbers(winning_numbers[-min(sequence_length, len(winning_numbers)):],
+                                                                num_predictions=1)
+                    else:
+                        # 데이터 부족 시 평가 스킵
+                        return 0.05
                     if predictions and len(predictions) > 0:
                         prediction = predictions[0].get('numbers', [])
                         if prediction:

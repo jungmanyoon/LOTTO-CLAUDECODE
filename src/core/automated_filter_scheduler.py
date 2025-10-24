@@ -49,7 +49,8 @@ class AutomatedFilterScheduler:
             try:
                 with open(self.history_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except (ImportError, AttributeError) as e:
+                logging.debug(f"스케줄러 import 실패: {e}")
                 return []
         return []
     

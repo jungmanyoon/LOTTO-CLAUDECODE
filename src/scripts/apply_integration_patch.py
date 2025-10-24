@@ -164,7 +164,8 @@ def patch_adaptive_filter():
             # 최신 회차 가져오기
             try:
                 latest_round = self.db_manager.get_latest_round()
-            except:
+            except Exception as e:
+            logging.error(f"패치 적용 실패: {e}")
                 latest_round = 0
             
             # 저장

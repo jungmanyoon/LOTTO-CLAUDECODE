@@ -210,10 +210,64 @@ class WeightedFilterSystem:
         if hasattr(self.filter_manager, 'update_threshold'):
             self.filter_manager.update_threshold(threshold)
     
-    def get_filtered_combinations(self):
-        """필터링된 조합 가져오기"""
-        if hasattr(self.filter_manager, 'get_filtered_combinations'):
-            return self.filter_manager.get_filtered_combinations()
+    def get_filtered_combinations(self, round_num: int = None):
+        """
+        필터링된 조합 가져오기 (Intelligent Fallback 포함)
+
+        Args:
+            round_num: 특정 회차 조합 가져오기 (None이면 모든 조합)
+
+        Returns:
+            List[str]: 필터링된 조합 리스트
+        """
+        # Use DatabaseManager singleton for canonical filtered pool access
+        if hasattr(self.filter_manager, 'db_manager'):
+            from .specialized_databases import FilterDB
+            db_manager = self.filter_manager.db_manager
+            filter_db = db_manager.combinations_db
+
+            if round_num is not None:
+                # Get combinations for specific round
+                with filter_db._create_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT combination FROM filtered_combinations WHERE round = ?",
+                        (round_num,)
+                    )
+                    results = cursor.fetchall()
+
+                    # ============================================================
+                    # FIX: Intelligent Fallback - Use latest available data
+                    # ============================================================
+                    if not results:
+                        self.logger.warning(f"[폴백] 회차 {round_num}에 필터링된 조합이 없습니다")
+
+                        # Find latest available round
+                        cursor.execute(
+                            "SELECT MAX(round) FROM filtered_combinations WHERE round < ?",
+                            (round_num,)
+                        )
+                        fallback_round = cursor.fetchone()[0]
+
+                        if fallback_round:
+                            self.logger.info(f"  → 회차 {fallback_round} 데이터 사용 (최신 가용 데이터)")
+                            cursor.execute(
+                                "SELECT combination FROM filtered_combinations WHERE round = ?",
+                                (fallback_round,)
+                            )
+                            results = cursor.fetchall()
+                        else:
+                            self.logger.error(f"  → 사용 가능한 필터링 데이터가 전혀 없습니다!")
+                    # ============================================================
+
+                    return [row[0] for row in results]
+            else:
+                # Get all combinations
+                with filter_db._create_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT DISTINCT combination FROM filtered_combinations")
+                    return [row[0] for row in cursor.fetchall()]
+
         return []
     
     def __getattr__(self, name):
