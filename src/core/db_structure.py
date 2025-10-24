@@ -30,9 +30,17 @@ class DatabasePaths:
             'max_gap': os.path.join(self.filters_dir, 'max_gap_filter.db'),
             'section': os.path.join(self.filters_dir, 'section_filter.db'),
             'average': os.path.join(self.filters_dir, 'average_filter.db'),
-            
+
             # 새로운 필터들 추가
-            'multiple': os.path.join(self.filters_dir, 'multiple_filter.db')            
+            'multiple': os.path.join(self.filters_dir, 'multiple_filter.db'),
+            'ten_section': os.path.join(self.filters_dir, 'ten_section_filter.db'),
+            'arithmetic_sequence': os.path.join(self.filters_dir, 'arithmetic_sequence_filter.db'),
+            'geometric_sequence': os.path.join(self.filters_dir, 'geometric_sequence_filter.db'),
+            'prime_composite': os.path.join(self.filters_dir, 'prime_composite_filter.db'),
+            'digit_sum': os.path.join(self.filters_dir, 'digit_sum_filter.db'),
+            'dispersion': os.path.join(self.filters_dir, 'dispersion_filter.db'),
+            'outlier_detection': os.path.join(self.filters_dir, 'outlier_detection_filter.db'),
+            'balanced_quadrant': os.path.join(self.filters_dir, 'balanced_quadrant_filter.db')
         }
                 
         self._ensure_directories()
