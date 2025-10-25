@@ -3,7 +3,7 @@ backtesting:
   min_confidence_level: 0.95
   training_window: 150
   validation_window: 300
-batch_size: 10000
+batch_size: 60000
 database:
   batch_size: 60000
   connection_pool_size: 16
@@ -15,11 +15,11 @@ filter_manager:
   dynamic_workers: true
   max_workers: 12
   memory_per_worker: 250000000
-  parallel_workers: 14
+  parallel_workers: 12
 filtering:
-  batch_size: 10000
+  batch_size: 60000
   chunk_size: 5000
-  max_workers: 14
+  max_workers: 12
   queue_timeout: 30
   use_parallel: true
 filters:
