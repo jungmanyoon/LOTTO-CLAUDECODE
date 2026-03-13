@@ -13,6 +13,12 @@ from ..core.db_manager import DatabaseManager
 from ..core.filter_manager import FilterManager
 from ..utils.config_manager import ConfigManager
 
+# 모듈 레벨 임포트 (패치 가능하도록)
+try:
+    from ..core.continuous_improvement_engine import PerformanceTracker
+except ImportError:
+    PerformanceTracker = None
+
 
 def convert_numpy_types(obj):
     """NumPy 타입을 JSON 직렬화 가능한 Python 기본 타입으로 변환"""
@@ -102,7 +108,7 @@ class FilterValidator:
                         if stats:
                             logging.debug(f"[필터 검증] 필터 DB 확인 완료: {filter_name}")
                             return True
-                    except:
+                    except Exception:  # FIX HIGH: bare except → Exception
                         continue
 
                 logging.debug("[필터 검증] 필터 DB 데이터 없음")
@@ -687,7 +693,8 @@ class FilterValidator:
             results: 검증 결과 딕셔너리 (overall_pass_rate 포함)
         """
         try:
-            from ..core.continuous_improvement_engine import PerformanceTracker, PerformanceMetrics
+            # 모듈 레벨 PerformanceTracker 사용 (패치 가능)
+            from ..core.continuous_improvement_engine import PerformanceMetrics
             from datetime import datetime
 
             tracker = PerformanceTracker()

@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚀 Quick Start (TL;DR)
+```bash
+python main.py              # Run everything (F5) - Dashboard at http://127.0.0.1:5001
+python -m pytest tests/     # Run all tests (70% coverage minimum)
+python src/scripts/clear_model_cache.py  # Fix most cache/model errors
+```
+
+**Key Files**: `config.yaml` (workers/batch), `configs/adaptive_filter_config.yaml` (thresholds)
+**Key APIs**: `db.get_numbers_with_bonus()` (NOT `get_all_rounds()`), `ThresholdManager.get_instance()`
+
+---
+
 ## ⚠️ CRITICAL FILE MANAGEMENT RULES
 
 **NEVER create temporary files in project root!** This is a professional codebase, not a playground.
@@ -17,6 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `README.md` - User documentation
 - `CLAUDE.md` - This file (AI guidance)
 - `AGENTS.md` - Agent configuration
+- `RULES.md` - Language rules (Korean responses)
 - `requirements.txt` - Dependencies
 - `pytest.ini` - Test configuration
 - `.gitignore` - Git configuration
@@ -24,8 +37,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### File Cleanup
 ```bash
-# Clean up temporary files (if you made a mess)
-python cleanup_temp_files.py
+# Clean up temporary files manually (delete any temp files in root)
+del test_*.py check_*.py verify_*.py *_FIX.md *_SUMMARY.md *_REPORT.md
 ```
 
 ### Enforcement
@@ -33,8 +46,169 @@ python cleanup_temp_files.py
 - Any violation of these rules will be called out immediately
 - Professional standards: Keep it clean, keep it organized
 
+---
+
+## ⚠️ CRITICAL DATA INTEGRITY RULES
+
+**NEVER use demo, dummy, fake, or sample data in production code!**
+
+### Data Rules (MANDATORY)
+1. **NO DEMO MODE**: All features must work with real data only
+2. **NO FALLBACK TO FAKE DATA**: If real data is unavailable, show error/warning - NEVER generate fake data
+3. **NO DUMMY PREDICTIONS**: All predictions must be based on actual ML/AI models and real historical data
+4. **FAIL FAST**: If data is missing or corrupted, fail explicitly rather than silently using fake data
+
+### Code Examples (CRITICAL)
+```python
+# ❌ 절대 금지 - NEVER DO THIS:
+price = 50000  # 테스트용 하드코딩
+balance = 1000000  # 임의값
+dummy_data = {"numbers": [1,2,3,4,5,6]}  # 예시 데이터
+sample_predictions = generate_fake_numbers()  # 더미 생성
+
+# ✅ 반드시 이렇게 - ALWAYS DO THIS:
+price = config.get('lottery_price')  # config.yaml에서 로드
+balance = api.get_account_balance()  # 실제 API에서 로드
+data = db.get_numbers_with_bonus()  # 실제 DB에서 로드
+predictions = ml_model.predict(real_data)  # 실제 모델로 예측
+```
+
+### Why This Matters
+- This is a lottery prediction system where accuracy is critical
+- Fake/demo data can lead to false confidence and wrong decisions
+- Users must always know they're seeing real analysis, not fabricated results
+- **더미데이터로 테스트 → 실거래 시 예상치 못한 오류 발생**
+
+### Allowed Exceptions (ONLY)
+- **Unit tests**: Mock data allowed ONLY in `tests/` directory
+- **Development debugging**: Clearly marked and never committed
+- **테스트 시에도 테스트넷의 실제 데이터 사용 권장**
+
+### Violations to Fix
+- `demo_mode` flags in dashboard → Remove, always use real data
+- `_generate_demo_*` functions → Remove or convert to error handlers
+- Fallback fake data generators → Replace with proper error messages
+- Hardcoded values (price, balance, etc.) → Load from config.yaml or API
+
+---
+
+## ⚠️ LANGUAGE RULES (See RULES.md)
+
+**모든 응답은 한국어로!** (All responses must be in Korean)
+
+1. **Language**: Always respond in **Korean (한국어)**
+2. **Code Comments**: 주석도 반드시 **한국어**로 작성할 것
+3. **Technical Terms**: 기술적인 용어는 영어를 병기하되 (ex: 변수(Variable)), 설명은 쉽게 한국어로 풀어서 할 것
+
+---
+
+## 📋 WORK PROGRESS DISPLAY FORMAT (작업 진행 상황 표시)
+
+**매 단계마다 작업 진행 시 서두에 다음 형식으로 표시할 것:**
+
+```
+┌─────────────────────────────────────┐
+│ 📍 단계: [현재/전체]                 │
+│ 🎭 페르소나: [적용 역할]             │
+│ 🛠️ 스킬: [사용 스킬]                │
+│ 🤖 에이전트: [메인/서브]             │
+│ 🔌 MCP: [연동 서버]                 │
+│ 📋 작업: [수행 내용]                │
+└─────────────────────────────────────┘
+```
+
+### Field Descriptions
+| 필드 | 설명 | 예시 |
+|------|------|------|
+| 📍 단계 | 전체 작업 중 현재 위치 | [1/5], [3/7] |
+| 🎭 페르소나 | 활성화된 역할 | Architect, Frontend, Backend, Security, QA |
+| 🛠️ 스킬 | 사용 중인 프로젝트 스킬 | lotto-filter-expert, lotto-ml-trainer |
+| 🤖 에이전트 | 에이전트 유형 | 메인, 서브(탐색), 서브(분석) |
+| 🔌 MCP | 연동된 MCP 서버 | Context7, Sequential, Magic, Playwright |
+| 📋 작업 | 현재 수행 중인 작업 | 필터 최적화 분석, 코드 리뷰 |
+
+### Usage Rules
+1. **복잡한 작업** (3단계 이상)에서는 반드시 표시
+2. **각 단계 시작 시** 서두에 표시
+3. **페르소나/스킬 변경 시** 새로 표시
+4. **없음**으로 표시할 경우: 해당 항목이 적용되지 않을 때
+
+---
+
+## 🛠️ PROJECT-SPECIFIC SKILLS
+
+This project has 5 custom Claude Code skills in `.claude/skills/`:
+
+### Available Skills (Invoke with Skill tool)
+
+| Skill | Purpose | Use When |
+|-------|---------|----------|
+| `lotto-filter-expert` | 16-filter system, adaptive filtering, threshold optimization | Modifying filter system, adjusting thresholds, ML-filter integration |
+| `lotto-ml-trainer` | ML model training, caching, ensemble prediction | Model retraining, cache issues, TensorFlow setup |
+| `lotto-db-manager` | Database operations, schema, indexing, query optimization | DB schema changes, query performance, data integrity |
+| `lotto-backtester` | Backtesting, performance validation, Optuna auto-optimization | Backtesting setup, performance analysis, threshold tuning |
+| `lotto-troubleshooter` | Problem diagnosis, system health, auto-repair, memory management | System errors, performance issues, memory problems |
+
+### Skill Auto-Activation
+Claude Code automatically activates appropriate skills based on context:
+- Filter-related questions → `lotto-filter-expert`
+- ML/model issues → `lotto-ml-trainer`
+- Database problems → `lotto-db-manager`
+- Performance validation → `lotto-backtester`
+- General troubleshooting → `lotto-troubleshooter`
+
+---
+
+## CORE STRATEGY PHILOSOPHY (CRITICAL - READ BEFORE CRITICIZING)
+
+**이 섹션을 먼저 읽지 않으면 이 시스템을 잘못 이해하게 된다.**
+
+### 핵심 전략: "절대/거의 나올 수 없는 조합 제거"
+
+이 시스템은 "다음 당첨번호를 예측"하는 시스템이 **아니다**.
+이 시스템의 핵심은 **"8.14M 조합 중 역사적으로 거의 나올 수 없는 조합을 제거하여, 같은 구매 예산으로 더 그럴듯한 조합만 커버"**하는 전략이다.
+
+### 수학적 근거 (AI가 혼동하지 말 것)
+
+```
+[잘못된 이해] "로또는 독립시행이므로 과거 패턴은 의미 없다 → 시스템 무의미"
+[올바른 이해] "로또는 독립시행이지만, 역사적으로 단 한 번도 안 나온 패턴의
+              조합을 제거하면 같은 예산으로 더 나은 영역을 커버할 수 있다"
+```
+
+**비유:** 어차피 1~10 사이 숫자 2개를 맞춰야 한다. 예산이 부족해 5세트만 구매 가능.
+- 전략 없음: 무작위 5세트 구매
+- 필터 전략: "두 숫자가 모두 같은 경우(중복)"는 규칙상 불가 → 제거 후 5세트 구매
+- 필터 전략 2: "역사적으로 100회 중 한 번도 안 나온 패턴(예: 둘 다 1)" → 제거 후 구매
+- 결과: 같은 5세트이지만 "더 가능성 높은 영역"에 집중
+
+### ML/AI 모델의 올바른 역할
+
+| 역할 구분 | 맞는가 | 설명 |
+|----------|--------|------|
+| "다음 당첨번호를 맞춘다" | X (불가능) | 독립시행으로 예측 불가 |
+| "풀 내 번호 다양성 가중치 조정" | O (타당) | Pool-Diversity 방식 |
+| "통계적으로 극단적인 조합 제거" | O (타당) | 필터 시스템의 핵심 |
+| "1214회 당첨번호 기반 패턴 통계" | O (타당) | 거의 안 나오는 패턴 식별 |
+
+### AI에게 지시 (MANDATORY)
+
+1. **필터 시스템 비판 시**: "로또는 독립시행이므로 의미 없다"는 비판 금지.
+   올바른 비판 기준은 "이 필터가 실제 당첨번호를 제거하는가?" (통과율 95%+ 필수)
+
+2. **ML 모델 비판 시**: "당첨번호 예측" 역할로 평가하지 말 것.
+   올바른 평가 기준은 "풀 내 다양성 가중치로서 작동하는가?"
+
+3. **성능 평가 시**: 무작위 대비 "당첨번호를 포함하는 조합의 선택 비율"이 핵심.
+   avg_matches가 아닌 "실제 당첨번호가 필터 통과하는 비율"이 1차 지표.
+
+4. **개선 제안 시**: 위 핵심 전략에 반하는 제안(예: "ML 제거", "필터 폐기") 금지.
+   개선은 항상 "같은 예산으로 더 좁고 정확한 풀 형성"을 목표로 해야 한다.
+
+---
+
 ## Project Overview
-Korean lottery (로또) prediction system using ML/AI to analyze historical patterns. Applies probability-based filtering to reduce 8.14M combinations to ~300K (with 1.0% threshold), improving odds by 27x through pattern exclusion.
+Korean lottery (로또) prediction system using ML/AI to analyze historical patterns. Applies probability-based filtering to reduce 8.14M combinations to ~300K (with 1.0% threshold), improving coverage efficiency by excluding statistically rare patterns from 1214+ historical draws.
 
 **Repository Path**: `D:\VisualStudio\04.로또_신버전\250727_CLAUDE CODE_R0\`
 
@@ -201,7 +375,7 @@ python src/scripts/analyze_lotto_statistics.py      # Analyze historical pattern
 #### 6. Auto-Learning & Threshold Optimization System
 - **ThresholdOptimizer**: Bayesian optimization using Optuna for finding optimal thresholds
   - **Cumulative Learning**: Study persists across program restarts (25 → 50 → 75 → ... trials)
-  - **Fixed Study Name**: `lotto_threshold_optimization` for continuous learning
+  - **Fixed Study Name**: `lotto_threshold_optimization_cmaes` for continuous learning (CMA-ES sampler)
   - **Resume Capability**: Automatically loads previous trials and continues from where it left off
 - **SmartAutoLearning**: 24-hour cycle automatic optimization with rollback capability
 - **FilterPerformanceTracker**: Real-time filter effectiveness monitoring
@@ -424,18 +598,22 @@ All inherit from `BaseFilter` in `src/filters/base_filter.py`:
   - LSTM: Batch 64, 50 epochs
   - Ensemble: 100 estimators, 4 parallel jobs
 
-## Warning Signs
-- Average matches >3: Data contamination (winning numbers leaked into test)
-- All ML models same prediction: Cache corruption, run clear_model_cache.py
-- Memory >4GB: Reduce batch size in config.yaml (default: 60,000) or run auto_cache_cleaner.py
-- Filter inclusion <10%: Threshold too restrictive, auto-optimizer will adjust
-- Execution time >15 minutes: Check parallelization settings (12 workers default at 75% CPU)
-- No 2nd place winners in backtest: Bonus implementation working correctly
-- Dashboard connection error: Check if Flask server is running on port 5001
-- Auto-optimization rollback frequent: Check validation_rounds setting (default: 50)
-- Optuna trials timeout: Reduce n_trials in optimizer config (default: 30)
-- Memory alerts frequent: Monitor with MemoryMonitor, check cache size (1.7GB+ model cache)
-- Checkpoint corruption: Delete `data/optimization_checkpoint.json` and restart optimization
+## Warning Signs & Quick Fixes
+
+| Symptom | Cause | Quick Fix |
+|---------|-------|-----------|
+| Average matches >3 | Data contamination | Check for winning number leakage in test data |
+| All ML models same prediction | Cache corruption | `python src/scripts/clear_model_cache.py` |
+| Memory >4GB | Large batch/cache | Reduce batch_size in config.yaml or run `auto_cache_cleaner.py` |
+| Filter inclusion <10% | Threshold too strict | Auto-optimizer will adjust, or lower `global_probability_threshold` |
+| Execution >15 min | Parallelization issue | Check max_workers in config.yaml (default: 12) |
+| Dashboard connection error | Flask not running | Restart main.py or run `enhanced_dashboard_v2.py` manually |
+| Frequent rollbacks | Unstable optimization | Increase validation_rounds (default: 50) |
+| Optuna timeout | Too many trials | Reduce n_trials in optimizer config |
+| Memory alerts | Cache bloat | `python src/scripts/auto_cache_cleaner.py --force` |
+| Checkpoint corruption | Interrupted save | Delete `data/optimization_checkpoint.json` |
+| StandardScaler error | Model cache issue | `python src/scripts/clear_model_cache.py` |
+| `get_all_rounds()` error | Wrong API | Use `get_all_winning_numbers()` instead |
 
 ## Environment Setup
 - **Python**: 3.8+ required (tested with 3.11.9)
@@ -474,21 +652,46 @@ with db:
 - ASCII output for Windows compatibility (no emoji in tests)
 - Mock database calls for unit tests
 - Integration tests use test databases
-- **Test Markers**: Use `@pytest.mark.unit` for unit tests, `@pytest.mark.integration` for integration tests
+- **Test Markers**:
+  - `@pytest.mark.unit` - Unit tests
+  - `@pytest.mark.integration` - Integration tests
+  - `@pytest.mark.slow` - Long-running tests (skip with `-m "not slow"`)
+  - `@pytest.mark.critical` - Critical path tests
 - **Test Isolation**: Each test should be independent and not rely on execution order
 - **Fixtures**: Use pytest fixtures in `tests/conftest.py` for shared test resources
-- **Coverage Target**: Aim for >80% code coverage for new features
+- **Coverage**: Minimum 70% enforced by pytest.ini (`--cov-fail-under=70`), aim for >80% for new features
+
+### Code Formatting
+```bash
+black src tests --line-length 120    # Format code
+flake8 src tests --max-line-length=120  # Lint check
+pylint src                           # Static analysis
+```
 
 ## Important Configuration Files
-- **`config.yaml`**: Main system configuration (workers, batch sizes, parallel processing)
+
+### ⚠️ Configuration File Priority (CRITICAL)
+```
+필터 설정 우선순위:
+1. configs/adaptive_filter_config.yaml → 실제 사용됨 (필터 기준값)
+2. config.yaml                         → 시스템 설정만 사용 (필터 설정 무시!)
+
+config.yaml의 filters 섹션은 무시됩니다!
+필터 기준값 변경시 반드시 adaptive_filter_config.yaml 수정
+```
+
+- **`config.yaml`**: 시스템 설정 전용 (필터 기준값 설정 **무시됨**)
   - Controls: FilterManager workers (12), batch sizes (60K), memory allocation (250MB/worker)
   - ML settings: Monte Carlo simulations, backtesting workers, LSTM/ensemble parameters
   - Database: Connection pool size (16), batch memory limits
-- **`configs/adaptive_filter_config.yaml`**: Adaptive filter thresholds and probability settings
-  - Controls: Dynamic filter criteria, probability thresholds, ML integration settings
-  - Key settings: `global_probability_threshold` (2.0), `ml_relaxed_threshold` (0.5)
+  - **NOTE**: `filters.criteria` 섹션은 무시됨! → `adaptive_filter_config.yaml` 사용
+- **`configs/adaptive_filter_config.yaml`**: **필터 설정의 단일 소스 (Single Source of Truth)**
+  - `dynamic_criteria`: 모든 필터 기준값 (sum_range, match, average 등)
+  - `adaptive_options`: `global_probability_threshold`, `ml_relaxed_threshold`
   - Auto-learning: Optimization targets, adjustment intervals, safety mode
   - Backtesting targets: Min/max average matches, target inclusion rate
+  - **이 파일만 수정하면 필터 설정이 적용됩니다**
+- **`configs/backup/`**: 자동 생성된 백업 파일들 (800+ 파일, 삭제 가능)
 - **`requirements.txt`**: Python dependencies (use exact versions for stability)
 - **`logs/lotto_app.log`**: Main application log file (auto-rotates at 10MB)
 - **`data/system_state.json`**: System state tracking (auto-generated)
@@ -499,7 +702,7 @@ with db:
 ### When Modifying Filters
 1. **Always test with backtesting**: Use `OptimizedBacktestingFramework` to validate changes
 2. **Check ML integration**: Ensure relaxable filters include new filter types in `main.py:generate_final_predictions_enhanced()`
-3. **Update config files**: Both `config.yaml` and `configs/adaptive_filter_config.yaml`
+3. **Update config file**: `configs/adaptive_filter_config.yaml`만 수정 (config.yaml 필터 설정은 무시됨!)
 4. **Monitor performance**: Watch for average matches >3 (data contamination)
 5. **Use ThresholdManager**: Access thresholds via singleton instance, never hardcode values
 6. **Observer Pattern**: Register components that need threshold updates as observers
@@ -556,6 +759,22 @@ with db:
 - All database access should use context managers (`with db:`)
 - Specialized databases in `src/core/specialized_databases.py`: PatternsDB, FilterDB, PerformanceDB
 - Database schema migrations via `src/utils/db_migrator.py`
+
+### Singleton Patterns (Critical)
+The codebase uses singletons for shared state. Always use `get_instance()`:
+```python
+# CORRECT - Use singleton instance
+from src.core.threshold_manager import ThresholdManager
+threshold_mgr = ThresholdManager.get_instance()
+
+# CORRECT - DatabaseManager singleton
+from src.core.db_manager import DatabaseManager
+db = DatabaseManager()  # Returns singleton
+
+# WRONG - Never create new instances
+threshold_mgr = ThresholdManager()  # Creates duplicate state!
+```
+**Singletons**: ThresholdManager, DatabaseManager, PerformanceStatsManager, ImprovedAutoImprovementManager
 
 ### CI/CD Pipeline
 - **GitHub Actions**: Automated testing on push/PR (`.github/workflows/tests.yml`)

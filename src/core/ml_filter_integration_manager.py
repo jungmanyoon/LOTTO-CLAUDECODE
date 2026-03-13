@@ -12,6 +12,7 @@ from datetime import datetime
 import pickle
 from concurrent.futures import ThreadPoolExecutor
 import time
+import threading
 
 from .db_manager import DatabaseManager
 from .filter_manager import FilterManager
@@ -36,15 +37,17 @@ class MLFilterIntegrationManager:
         self.filtered_lstm = FilteredPoolLSTMPredictor()
         self.filtered_ensemble = FilteredPoolEnsemblePredictor()
 
-        # 캐시 시스템
+        # 캐시 시스템 (Thread-Safe)
         self.filtered_pool_cache = {}
         self.model_cache = {}
+        self._cache_lock = threading.RLock()  # Thread-Safety를 위한 락
 
         # 설정
         self.config = {
             'cache_ttl': 3600,  # 1시간
             'max_pool_size': 500000,  # 최대 풀 크기
             'min_pool_size': 10000,   # 최소 풀 크기
+            'max_cache_entries': 10,  # 최대 캐시 항목 수 (eviction 정책)
             'parallel_training': True,
             'model_weights': {
                 'filtered_lstm': 0.4,
@@ -140,15 +143,16 @@ class MLFilterIntegrationManager:
             return []
 
     def _get_current_filtered_pool(self) -> List[List[int]]:
-        """현재 필터링된 풀 가져오기"""
+        """현재 필터링된 풀 가져오기 (Thread-Safe)"""
         cache_key = "current_filtered_pool"
 
-        # 캐시 확인
-        if cache_key in self.filtered_pool_cache:
-            cache_data = self.filtered_pool_cache[cache_key]
-            if time.time() - cache_data['timestamp'] < self.config['cache_ttl']:
-                logging.debug("캐시된 필터링된 풀 사용")
-                return cache_data['pool']
+        # Thread-Safe 캐시 확인
+        with self._cache_lock:
+            if cache_key in self.filtered_pool_cache:
+                cache_data = self.filtered_pool_cache[cache_key]
+                if time.time() - cache_data['timestamp'] < self.config['cache_ttl']:
+                    logging.debug("캐시된 필터링된 풀 사용")
+                    return cache_data['pool']
 
         try:
             logging.info("필터링된 풀 생성 중...")
@@ -180,11 +184,14 @@ class MLFilterIntegrationManager:
                     logging.info(f"최대 풀 크기 도달: {len(filtered_pool):,}개")
                     break
 
-            # 캐시에 저장
-            self.filtered_pool_cache[cache_key] = {
-                'pool': filtered_pool,
-                'timestamp': time.time()
-            }
+            # Thread-Safe 캐시에 저장 (with eviction)
+            with self._cache_lock:
+                self._evict_expired_cache()  # TTL 기반 만료 항목 제거
+                self._evict_lru_if_needed(self.filtered_pool_cache)  # LRU eviction
+                self.filtered_pool_cache[cache_key] = {
+                    'pool': filtered_pool,
+                    'timestamp': time.time()
+                }
 
             logging.info(f"필터링된 풀 생성 완료: {len(filtered_pool):,}개")
             return filtered_pool
@@ -528,19 +535,66 @@ class MLFilterIntegrationManager:
 
     def get_performance_summary(self) -> Dict[str, Any]:
         """성능 요약 반환"""
-        return {
-            'performance_stats': self.performance_stats.copy(),
-            'cache_status': {
+        # Thread-Safe 캐시 상태 조회
+        with self._cache_lock:
+            cache_status = {
                 'filtered_pool_cached': len(self.filtered_pool_cache) > 0,
                 'model_cache_size': len(self.model_cache)
-            },
+            }
+
+        return {
+            'performance_stats': self.performance_stats.copy(),
+            'cache_status': cache_status,
             'configuration': self.config.copy()
         }
 
+    def _evict_expired_cache(self):
+        """TTL 기반 만료 캐시 항목 제거 (락 내부에서 호출)"""
+        current_time = time.time()
+        ttl = self.config['cache_ttl']
+
+        # filtered_pool_cache 만료 항목 제거
+        expired_keys = [
+            key for key, data in self.filtered_pool_cache.items()
+            if current_time - data.get('timestamp', 0) > ttl
+        ]
+        for key in expired_keys:
+            del self.filtered_pool_cache[key]
+            logging.debug(f"캐시 만료 제거: {key}")
+
+        # model_cache 만료 항목 제거
+        expired_model_keys = [
+            key for key, data in self.model_cache.items()
+            if isinstance(data, dict) and current_time - data.get('timestamp', 0) > ttl
+        ]
+        for key in expired_model_keys:
+            del self.model_cache[key]
+            logging.debug(f"모델 캐시 만료 제거: {key}")
+
+    def _evict_lru_if_needed(self, cache: dict):
+        """LRU 기반 캐시 eviction (최대 항목 수 초과 시) (락 내부에서 호출)"""
+        max_entries = self.config.get('max_cache_entries', 10)
+
+        if len(cache) >= max_entries:
+            # timestamp 기준으로 가장 오래된 항목 찾기
+            oldest_key = None
+            oldest_time = float('inf')
+
+            for key, data in cache.items():
+                entry_time = data.get('timestamp', 0) if isinstance(data, dict) else 0
+                if entry_time < oldest_time:
+                    oldest_time = entry_time
+                    oldest_key = key
+
+            if oldest_key:
+                del cache[oldest_key]
+                logging.debug(f"LRU 캐시 제거: {oldest_key}")
+
     def clear_cache(self):
-        """캐시 정리"""
-        self.filtered_pool_cache.clear()
-        self.model_cache.clear()
+        """캐시 정리 (Thread-Safe)"""
+        with self._cache_lock:
+            self.filtered_pool_cache.clear()
+            self.model_cache.clear()
         logging.info("캐시 정리 완료")
 
 

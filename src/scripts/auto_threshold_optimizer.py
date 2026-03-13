@@ -68,6 +68,9 @@ class AutoThresholdOptimizer:
         # Task 7: ml_inclusion_rate 추적 (최근 10 trials)
         self.recent_inclusion_rates = []
 
+        # 외부 종료 플래그 (백그라운드 스레드 종료 감지용)
+        self._shutdown_flag = None
+
         # 현재 설정 로드
         self.current_config = self._load_current_config()
 
@@ -75,10 +78,19 @@ class AutoThresholdOptimizer:
         """현재 설정 파일 로드"""
         try:
             with open("configs/adaptive_filter_config.yaml", 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f)
+                # yaml.safe_load는 빈 파일에서 None 반환 가능
+                return config if config is not None else {}
         except Exception as e:
             self.logger.error(f"설정 파일 로드 실패: {e}")
             return {}
+
+    def set_shutdown_flag(self, flag: dict):
+        """외부 종료 플래그 설정 (프레임워크 + 옵티마이저에 전파)"""
+        self._shutdown_flag = flag
+        # ThresholdOptimizer에도 전파
+        if hasattr(self, 'optimizer') and self.optimizer:
+            self.optimizer.set_shutdown_flag(flag)
 
     def run_backtesting_with_config(self, config: Dict, start_round: int = None, end_round: int = None) -> Dict[str, Any]:
         """특정 설정으로 백테스팅 실행 (최적화됨 - 싱글톤 재사용)
@@ -88,6 +100,13 @@ class AutoThresholdOptimizer:
             start_round: 시작 회차 (None이면 기본값 사용 - 최근 50회차)
             end_round: 종료 회차 (None이면 기본값 사용 - 최근 50회차)
         """
+        # Windows 백그라운드 스레드 tqdm 호환성: 매 호출 시 sys.stderr 안전화
+        import sys
+        try:
+            sys.stderr.write('')
+            sys.stderr.flush()
+        except (OSError, ValueError, AttributeError):
+            sys.stderr = sys.stdout
         try:
             # ============================================================
             # ThresholdManager를 통한 중앙 파라미터 설정 (Single Source of Truth)
@@ -145,9 +164,34 @@ class AutoThresholdOptimizer:
                 backtest_range = (start_round, end_round)
                 self.logger.info(f"[고정 검증] {backtest_range[0]}~{backtest_range[1]} 회차 사용")
             else:
-                # 기존 슬라이딩 윈도우 방식 (하위 호환성)
-                backtest_range = (1137, 1186)  # 최근 50회차
-                self.logger.info(f"[슬라이딩 윈도우] {backtest_range[0]}~{backtest_range[1]} 회차 사용")
+                # 동적 검증 범위 계산 (hold-out 테스트셋 오염 방지)
+                # ThresholdOptimizer._update_validation_range()와 동일한 로직:
+                #   훈련  -> 1 ~ (latest - 2*window - 1)
+                #   검증  -> (latest - 2*window) ~ (latest - window - 1)  <- 이 범위 사용
+                #   테스트 -> (latest - window) ~ (latest - 1)            <- hold-out (미사용)
+                try:
+                    all_numbers = self.db_manager.get_all_winning_numbers()
+                    if all_numbers:
+                        latest = max(r for r, _ in all_numbers)
+                    else:
+                        latest = 1186  # DB 조회 실패 시 보수적 폴백
+                except Exception:
+                    latest = 1186
+                window = 100
+                test_set_start = max(1, latest - window)
+                validation_end = max(1, test_set_start - 1)
+                validation_start = max(1, validation_end - window + 1)
+                backtest_range = (validation_start, validation_end)
+                self.logger.info(f"[검증 범위] {backtest_range[0]}~{backtest_range[1]} 회차 (hold-out {test_set_start}~{latest-1} 제외)")
+
+            # 종료 플래그 전파: 백테스팅 프레임워크에도 전달
+            if self._shutdown_flag:
+                framework.set_shutdown_flag(self._shutdown_flag)
+
+            # FIX-01: 백테스트 실행 전 이전 상태 강제 초기화
+            # 이유: Optuna Trial마다 독립적인 백테스트 수행이 필요
+            framework.clear_state()
+            framework.processed_rounds.clear()
 
             self.logger.info(f"[TRACE] run_backtest() 호출 중... (rounds {backtest_range[0]}-{backtest_range[1]})")
             results = framework.run_backtest(
@@ -184,37 +228,46 @@ class AutoThresholdOptimizer:
             performance_metrics = backtest_results.get('performance_metrics', {})
             model_performances = performance_metrics.get('model_performance', {})
 
+            # ✅ DEBUG: 실제 백테스팅 결과 구조 로깅
+            self.logger.info(f"[METRICS DEBUG] 모델 수: {len(model_performances)}")
+
             # 전체 평균 매칭 계산
             total_matches = 0
             total_predictions = 0
             ml_included_count = 0
             ml_total_count = 0
 
-            # Task 7: 최근 trial들의 평균 inclusion rate 추적
-            recent_inclusion_rates = []
-
             for model_name, model_metrics in model_performances.items():
                 avg_matches = model_metrics.get('avg_matches', 0)
                 predictions = model_metrics.get('total_predictions', 0)
+                filter_passed = model_metrics.get('filter_passed_count', 0)
 
                 total_matches += avg_matches * predictions
                 total_predictions += predictions
 
-                # ML 모델 포함률 계산
-                if 'ml' in model_name.lower() or 'lstm' in model_name.lower() or 'ensemble' in model_name.lower():
-                    ml_total_count += predictions
+                # ✅ DEBUG: 각 모델별 상세 로깅
+                self.logger.debug(f"[MODEL] {model_name}: avg={avg_matches:.3f}, pred={predictions}, filter_passed={filter_passed}")
 
-                    # Task 7 개선: filter_passed_count가 있으면 사용, 없으면 동적 추정
-                    if 'filter_passed_count' in model_metrics:
-                        ml_included_count += model_metrics['filter_passed_count']
-                    else:
-                        # 동적 추정: 최근 trial 평균 사용 (8.5% 고정 대신)
+                # ML 모델 포함률 계산 (모든 모델 포함)
+                # ✅ FIX: 모든 모델의 filter_passed_count 사용 (ML 모델만 아님)
+                if 'filter_passed_count' in model_metrics:
+                    ml_total_count += predictions
+                    ml_included_count += filter_passed
+                    pass_rate = (filter_passed / predictions * 100) if predictions > 0 else 0
+                    self.logger.debug(f"[FILTER_PASSED] {model_name}: {filter_passed}/{predictions} = {pass_rate:.1f}%")
+                else:
+                    # filter_passed_count가 없는 경우에만 fallback
+                    if 'ml' in model_name.lower() or 'lstm' in model_name.lower() or 'ensemble' in model_name.lower():
+                        ml_total_count += predictions
                         estimated_rate = self._get_recent_avg_inclusion_rate()
                         ml_included_count += predictions * estimated_rate
-                        self.logger.debug(f"[ml_inclusion_rate fallback] {model_name}: {predictions} * {estimated_rate:.3f} = {predictions * estimated_rate:.1f}")
+                        self.logger.debug(f"[FALLBACK] {model_name}: {predictions} * {estimated_rate:.3f}")
 
             avg_matches = total_matches / total_predictions if total_predictions > 0 else 0
             ml_inclusion_rate = ml_included_count / ml_total_count if ml_total_count > 0 else 0
+
+            # ✅ DEBUG: 최종 계산 결과 로깅
+            self.logger.info(f"[METRICS RESULT] avg_matches={avg_matches:.4f}, ml_inclusion={ml_inclusion_rate:.4f} ({ml_inclusion_rate*100:.1f}%)")
 
             # 필터링된 조합 수 추출
             filter_stats = backtest_results.get('filter_statistics', {})
@@ -249,15 +302,21 @@ class AutoThresholdOptimizer:
         Task 7: 최근 trial들의 평균 ml_inclusion_rate 반환
 
         Returns:
-            float: 최근 평균 (없으면 0.93 - 실제 측정값 기반)
+            float: 최근 평균 (없으면 0.085 - 실제 ML 포함률 기반)
+
+        Note:
+            - ML 예측이 필터를 통과하는 비율은 약 8.5% (0.085)
+            - 93%는 잘못된 값이었음 (점수 왜곡 원인)
+            - 목표: 15% (0.15) 달성
         """
         if self.recent_inclusion_rates:
             avg = sum(self.recent_inclusion_rates) / len(self.recent_inclusion_rates)
             self.logger.debug(f"[Recent avg inclusion] {len(self.recent_inclusion_rates)} trials: {avg:.3f}")
             return avg
         else:
-            # 초기값: 실제 측정 평균 93% 사용 (8.5% 대신)
-            default_rate = 0.93
+            # ✅ FIX: 실제 ML 포함률 8.5% 사용 (기존 93%는 잘못된 값)
+            # 이 값은 ML 예측이 필터를 통과하는 실제 비율
+            default_rate = 0.085
             self.logger.debug(f"[Default inclusion] Using default: {default_rate:.3f}")
             return default_rate
 
@@ -294,11 +353,12 @@ class AutoThresholdOptimizer:
                 return self.run_backtesting_with_config(config, start_round, end_round)
 
             # Optuna 최적화 실행 (CMA-ES sampler 사용)
+            # study_name 미지정 → ThresholdOptimizer 기본값 "lotto_threshold_v4" 사용
+            # (v4 목적함수: ml_inclusion 제거, pool_penalty=0.05, INCLUSION_THRESHOLD=0.99)
             result = self.optimizer.optimize(
                 backtesting_func=backtesting_func,
                 n_trials=n_trials,
                 n_jobs=1,
-                study_name="lotto_threshold_optimization_cmaes"  # CMA-ES 전용 study
             )
 
             # 수렴 감지: result에 converged 플래그 확인
@@ -490,6 +550,16 @@ class AutoThresholdOptimizer:
         """최적 파라미터 적용"""
         try:
             config = self._load_current_config()
+
+            # config가 비어있으면 에러 처리
+            if not config:
+                self.logger.error("설정 파일이 비어있거나 로드 실패")
+                return
+
+            # 필수 키 확인 및 초기화
+            if 'ml_integration' not in config:
+                config['ml_integration'] = {}
+
             # ✅ PRECISION FIX: round()로 부동소수점 오차 제거
             config['global_probability_threshold'] = round(params['threshold'], 2)
             config['ml_integration']['ml_bypass_filters'] = params['ml_bypass']
@@ -505,10 +575,46 @@ class AutoThresholdOptimizer:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, allow_unicode=True)
 
-            self.logger.info(f"✅ 최적 파라미터 적용: {params}")
+            # 로그 출력 시 부동소수점 정리
+            formatted_params = {k: round(v, 2) if isinstance(v, float) else v for k, v in params.items()}
+            self.logger.info(f"✅ 최적 파라미터 적용: {formatted_params}")
 
         except Exception as e:
             self.logger.error(f"파라미터 적용 실패: {e}")
+
+    def reset_study(self, study_name: str = None):
+        """
+        Optuna study 초기화 (새 회차 데이터 감지 시 호출)
+
+        새 로또 번호가 발표되면 기존 학습 데이터가 더 이상 유효하지 않을 수 있으므로
+        study를 초기화하고 처음부터 최적화를 시작합니다.
+
+        Args:
+            study_name: 초기화할 스터디 이름 (None이면 기본값 사용)
+        """
+        try:
+            if study_name is None:
+                study_name = "lotto_threshold_v4"
+
+            # ThresholdOptimizer의 reset_study 호출
+            result = self.optimizer.reset_study(study_name=study_name)
+
+            if result:
+                self.logger.info(f"🔄 [AutoThresholdOptimizer] Study '{study_name}' 초기화 완료")
+                self.logger.info("   → 새 회차 데이터로 처음부터 최적화 시작")
+
+                # 내부 상태도 초기화
+                self.best_score_history = []
+                self.recent_inclusion_rates = []
+                self.optimization_count = 0
+            else:
+                self.logger.warning(f"[AutoThresholdOptimizer] Study 초기화 실패 (이미 없을 수 있음)")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"[AutoThresholdOptimizer] Study 초기화 중 오류: {e}")
+            return False
 
     def optimize_threshold(self):
         """임계값 최적화 실행 (기존 방식 유지)"""
@@ -528,7 +634,7 @@ class AutoThresholdOptimizer:
                 backtesting_func=self.run_backtesting_with_config,
                 n_trials=self.optimization_config['n_trials'],
                 n_jobs=1,  # 단일 프로세스로 실행 (안정성)
-                study_name=None  # None이면 기본값 "lotto_threshold_optimization" 사용 (누적 학습)
+                study_name=None  # None이면 기본값 "lotto_threshold_v4" 사용 (누적 학습)
             )
 
             # 결과 분석

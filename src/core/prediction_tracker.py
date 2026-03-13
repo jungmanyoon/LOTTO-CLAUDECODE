@@ -226,10 +226,21 @@ class PredictionTracker:
                 }
                 existing_count = 0
             else:
-                # 기존 파일에 누적
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    json_data = json.load(f)
-                existing_count = len(json_data.get("predictions", []))
+                # 기존 파일에 누적 (손상된 파일 처리)
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        json_data = json.load(f)
+                    existing_count = len(json_data.get("predictions", []))
+                except (json.JSONDecodeError, ValueError) as json_err:
+                    # 손상된 JSON 파일 - 새로 생성
+                    self.logger.warning(f"손상된 JSON 파일 감지, 새로 생성: {json_path} ({json_err})")
+                    json_data = {
+                        "round": round_num,
+                        "prediction_date": datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),
+                        "model_version": "2.0",
+                        "predictions": []
+                    }
+                    existing_count = 0
             
             # 예측 추가
             for i, pred in enumerate(predictions, existing_count + 1 if not replace else 1):

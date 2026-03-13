@@ -11,6 +11,12 @@ import json
 import os
 from .lstm_predictor import LSTMPredictor
 
+# TENSORFLOW_AVAILABLE을 모듈 레벨에서 가져옴 (패치 가능하도록)
+try:
+    from .lstm_predictor import TENSORFLOW_AVAILABLE
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
+
 class FilteredPoolLSTMPredictor(LSTMPredictor):
     """필터링된 풀 기반 LSTM 예측기"""
 
@@ -37,6 +43,65 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
         """필터 관리자 설정"""
         self.filter_manager = filter_manager
         logging.info("필터 관리자 설정 완료")
+
+    def set_filtered_pool(self, filtered_combinations: List[List[int]]):
+        """필터링된 풀 설정 (FilteredPoolEnsemblePredictor 호환 인터페이스)"""
+        self.filtered_pool = [tuple(sorted(combo)) for combo in filtered_combinations]
+        self.pool_size = len(self.filtered_pool)
+
+        # combination_to_idx, idx_to_combination 딕셔너리 생성
+        unique_combos = list(dict.fromkeys(self.filtered_pool))  # 순서 유지 중복 제거
+        self.combination_to_idx = {combo: idx for idx, combo in enumerate(unique_combos)}
+        self.idx_to_combination = {idx: combo for idx, combo in enumerate(unique_combos)}
+
+        logging.info(f"FilteredPoolLSTMPredictor 풀 설정: {self.pool_size}개 조합")
+
+    def prepare_training_data(self, historical_combinations: List[List[int]]) -> Tuple[np.ndarray, np.ndarray]:
+        """학습 데이터 준비 (시퀀스 기반)"""
+        if self.pool_size == 0:
+            raise ValueError("필터링된 풀이 설정되지 않았습니다.")
+
+        X_list = []
+        y_list = []
+
+        for i in range(self.sequence_length, len(historical_combinations)):
+            # 시퀀스 구성: 이전 sequence_length 개 조합의 번호를 평탄화하여 특징으로 사용
+            seq = historical_combinations[i - self.sequence_length:i]
+            # 각 조합을 45차원 이진 벡터로 변환
+            seq_features = []
+            for combo in seq:
+                vec = np.zeros(45)
+                for num in combo:
+                    if 1 <= num <= 45:
+                        vec[num - 1] = 1.0
+                seq_features.append(vec)
+            X_list.append(seq_features)
+
+            # 다음 조합의 풀 인덱스를 레이블로
+            next_combo = tuple(sorted(historical_combinations[i]))
+            if next_combo in self.combination_to_idx:
+                y_list.append(self.combination_to_idx[next_combo])
+            else:
+                y_list.append(self._find_similar_combination(list(next_combo)))
+
+        if not X_list:
+            return np.array([]), np.array([])
+
+        return np.array(X_list), np.array(y_list)
+
+    def _find_similar_combination(self, combo: List[int]) -> int:
+        """풀에서 가장 유사한 조합의 인덱스 반환"""
+        combo_set = set(combo)
+        best_idx = 0
+        best_score = -1
+
+        for idx, combination in self.idx_to_combination.items():
+            intersection = len(combo_set & set(combination))
+            if intersection > best_score:
+                best_score = intersection
+                best_idx = idx
+
+        return best_idx
 
     def update_filtered_pool(self, filtered_combinations: List[Tuple[int, ...]] = None):
         """필터링된 풀을 업데이트"""
@@ -71,40 +136,71 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
             self.pool_size = 0
             return False
 
-    def predict_from_filtered_pool(self, historical_data: List[List[int]], num_predictions: int = 5) -> List[List[int]]:
-        """필터링된 풀에서 LSTM 기반 예측 수행"""
-        try:
-            if self.pool_size == 0:
-                logging.warning("필터링된 풀이 비어있어서 기본 LSTM 예측을 사용")
-                return self.predict(historical_data, num_predictions)
+    def predict_from_filtered_pool(self, historical_data: List[List[int]],
+                                  filtered_combinations: Optional[List[List[int]]] = None,
+                                  num_predictions: int = 5) -> List[Dict[str, Any]]:
+        """필터링된 풀에서 LSTM 기반 예측 수행 (dict 반환)"""
+        # filtered_combinations가 제공되면 풀 업데이트
+        if filtered_combinations is not None:
+            self.set_filtered_pool(filtered_combinations)
 
+        # TensorFlow 미사용 또는 풀 비어있을 때 폴백
+        if not TENSORFLOW_AVAILABLE or self.pool_size == 0:
+            return self._random_predictions_from_pool(
+                filtered_combinations or list(self.filtered_pool),
+                num_predictions
+            )
+
+        try:
             # 기본 LSTM 예측 수행
             base_predictions = self.predict(historical_data, num_predictions)
 
             if not base_predictions:
-                logging.warning("기본 LSTM 예측 실패")
-                return []
+                logging.warning("기본 LSTM 예측 실패 - 랜덤 폴백")
+                return self._random_predictions_from_pool(
+                    filtered_combinations or list(self.filtered_pool),
+                    num_predictions
+                )
 
             # 필터링된 풀에서 가장 유사한 조합 찾기
-            filtered_predictions = []
-
+            result = []
             for prediction in base_predictions:
-                # 예측값과 필터링된 풀의 조합 중에서 가장 유사한 것 찾기
                 best_match = self._find_best_match_in_pool(prediction)
+                numbers = list(best_match) if best_match else list(prediction)
+                result.append({
+                    'numbers': sorted(numbers),
+                    'confidence': 0.5,
+                    'source': 'filtered_pool_lstm'
+                })
 
-                if best_match:
-                    filtered_predictions.append(list(best_match))
-                else:
-                    # 매칭되는 것이 없으면 원래 예측 사용
-                    filtered_predictions.append(prediction)
-
-            logging.info(f"필터링된 풀 기반 예측 완료: {len(filtered_predictions)}")
-            return filtered_predictions
+            logging.info(f"필터링된 풀 기반 예측 완료: {len(result)}")
+            return result
 
         except Exception as e:
             logging.error(f"필터링된 풀 예측 오류: {e}")
-            # 오류 시 기본 LSTM 예측을 사용
-            return self.predict(historical_data, num_predictions)
+            return self._random_predictions_from_pool(
+                filtered_combinations or list(self.filtered_pool),
+                num_predictions
+            )
+
+    def _random_predictions_from_pool(self, filtered_combinations: List[List[int]],
+                                      num_predictions: int) -> List[Dict[str, Any]]:
+        """풀에서 랜덤 예측 (폴백)"""
+        if not filtered_combinations:
+            import random
+            return [{'numbers': sorted(random.sample(range(1, 46), 6)),
+                     'confidence': 0.1, 'source': 'random_fallback'}
+                    for _ in range(num_predictions)]
+
+        indices = np.random.choice(
+            len(filtered_combinations),
+            min(num_predictions, len(filtered_combinations)),
+            replace=False
+        )
+        return [{'numbers': list(filtered_combinations[i]),
+                 'confidence': 1.0 / len(filtered_combinations),
+                 'source': 'random_from_pool'}
+                for i in indices]
 
     def _find_best_match_in_pool(self, target_numbers: List[int]) -> Optional[Tuple[int, ...]]:
         """필터링된 풀에서 가장 유사한 조합 찾기"""

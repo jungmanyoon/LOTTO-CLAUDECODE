@@ -18,6 +18,7 @@ from typing import List, Dict, Any
 import logging
 import numpy as np
 from .base_filter import BaseFilter
+from ..filter_optimizer import FilterOptimizer
 
 
 class OutlierDetectionFilter(BaseFilter):
@@ -36,7 +37,8 @@ class OutlierDetectionFilter(BaseFilter):
                 - iqr_multiplier: IQR 승수 (기본값: 1.0, balanced)
         """
         super().__init__(db_manager, criteria)
-        self.computation_cost = 1.5  # 통계 계산으로 인한 중간 비용
+        self.computation_cost = 1.5
+        self.optimizer = FilterOptimizer(self._process_chunk_wrapper)
 
         # 과거 당첨번호 통계 분석 (참고용)
         self._analyze_historical_outliers()
@@ -125,7 +127,7 @@ class OutlierDetectionFilter(BaseFilter):
             self.max_outliers_historical = 2
 
     def apply(self, combinations: List[str], round_num: int) -> List[str]:
-        """필터 적용 - 각 조합 내부의 IQR 기반 이상치 탐지
+        """필터 적용 - numpy 벡터화된 IQR 기반 이상치 탐지
 
         Args:
             combinations: 필터링할 조합 목록
@@ -137,71 +139,55 @@ class OutlierDetectionFilter(BaseFilter):
         if not combinations:
             return []
 
-        max_outliers = self.criteria['max_outliers']
-        multiplier = self.criteria['iqr_multiplier']
-        filtered = []
-        excluded_count = 0
+        return self.optimizer.optimize_filter(
+            combinations=combinations,
+            desc="outlier_detection 필터 진행률",
+            max_outliers=self.criteria['max_outliers'],
+            iqr_multiplier=self.criteria['iqr_multiplier']
+        )
 
-        total = len(combinations)
-        log_interval = max(1, total // 10)  # 10% 단위 로깅
+    @staticmethod
+    def _process_chunk_wrapper(combinations_chunk: List[str], **kwargs) -> List[str]:
+        """FilterOptimizer용 래퍼 함수"""
+        return OutlierDetectionFilter._process_chunk(
+            combinations_chunk,
+            kwargs.get('max_outliers', 1),
+            kwargs.get('iqr_multiplier', 1.0)
+        )
 
-        for idx, combo_str in enumerate(combinations):
-            # 진행률 로깅 (10% 단위)
-            if idx > 0 and idx % log_interval == 0:
-                progress = (idx / total) * 100
-                exclusion_rate = (excluded_count / idx) * 100
-                logging.debug(
-                    f"[OutlierDetectionFilter] 진행률: {progress:.0f}% | "
-                    f"제외율: {exclusion_rate:.1f}%"
-                )
+    @staticmethod
+    def _process_chunk(combinations_chunk: List[str],
+                      max_outliers: int,
+                      iqr_multiplier: float) -> List[str]:
+        """청크 단위 벡터화 필터링
 
-            # 조합을 숫자 리스트로 변환
-            numbers = list(map(int, combo_str.split(',')))
+        n=6 고정이므로 Q1/Q3를 정렬 인덱스에서 직접 계산 (np.percentile 호출 제거)
+        """
+        try:
+            chunk_arrays = np.array(
+                [list(map(int, c.split(','))) for c in combinations_chunk],
+                dtype=np.float32
+            )
 
-            # 조합 내부 IQR 계산
-            q1 = np.percentile(numbers, 25)
-            q3 = np.percentile(numbers, 75)
+            # n=6 정렬 후 Q1/Q3 직접 계산 (percentile(25)=sorted[1]+0.25*(sorted[2]-sorted[1]))
+            sorted_arr = np.sort(chunk_arrays, axis=1)
+            q1 = sorted_arr[:, 1] + 0.25 * (sorted_arr[:, 2] - sorted_arr[:, 1])
+            q3 = sorted_arr[:, 3] + 0.75 * (sorted_arr[:, 4] - sorted_arr[:, 3])
             iqr = q3 - q1
 
-            # 이상치 범위 계산
-            lower_bound = q1 - multiplier * iqr
-            upper_bound = q3 + multiplier * iqr
+            lower = q1 - iqr_multiplier * iqr
+            upper = q3 + iqr_multiplier * iqr
 
-            # 이상치 개수 계산
-            outlier_count = sum(
-                1 for num in numbers
-                if num < lower_bound or num > upper_bound
-            )
+            # 이상치 개수 계산 (벡터화)
+            outlier_mask = (chunk_arrays < lower[:, np.newaxis]) | (chunk_arrays > upper[:, np.newaxis])
+            outlier_counts = np.sum(outlier_mask, axis=1)
+            valid = outlier_counts <= max_outliers
 
-            # 이상치가 허용 범위 내면 통과
-            if outlier_count <= max_outliers:
-                filtered.append(combo_str)
-            else:
-                excluded_count += 1
-                logging.debug(
-                    f"[OutlierDetectionFilter] 제외: {combo_str} - "
-                    f"이상치 {outlier_count}개 (> {max_outliers}), "
-                    f"Q1={q1:.1f}, Q3={q3:.1f}, IQR={iqr:.1f}"
-                )
+            return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid[i]]
 
-        # 최종 결과 로깅 (조건부)
-        remaining = len(filtered)
-        excluded = total - remaining
-        exclusion_rate = (excluded / total * 100) if total > 0 else 0
-
-        # 실제로 제외된 조합이 있을 때만 INFO 레벨로 로깅
-        if excluded > 0:
-            logging.info(
-                f"[OutlierDetectionFilter] 완료 - "
-                f"{remaining:,}/{total:,}개 남음 ({excluded:,}개 제외, {exclusion_rate:.2f}%)"
-            )
-        else:
-            logging.debug(
-                f"[OutlierDetectionFilter] 완료 - "
-                f"{remaining:,}/{total:,}개 남음 (제외 없음)"
-            )
-
-        return filtered
+        except Exception as e:
+            logging.error(f"[OutlierDetectionFilter] 청크 처리 오류: {e}")
+            return combinations_chunk
 
     def check_combination(self, combination: str, round_num: int) -> bool:
         """단일 조합이 필터 조건을 만족하는지 확인

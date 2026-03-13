@@ -1,18 +1,31 @@
 import os
 import yaml
 import logging
+import threading
 from typing import Dict, Any, Optional
 
 class ConfigManager:
-    """설정 파일 관리 클래스"""
-    
+    """설정 파일 관리 클래스 (싱글톤 패턴)"""
+
+    _instance = None
+    _lock = threading.Lock()
+    _initialized = False
+
+    def __new__(cls, config_path: str = "config.yaml", adaptive_config_path: str = "configs/adaptive_filter_config.yaml"):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
+
     def __init__(self, config_path: str = "config.yaml", adaptive_config_path: str = "configs/adaptive_filter_config.yaml"):
-        """ConfigManager 초기화
-        
+        """ConfigManager 초기화 (싱글톤 - 최초 1회만 YAML 로드)
+
         Args:
             config_path: 설정 파일 경로
             adaptive_config_path: 적응형 필터 설정 파일 경로
         """
+        if hasattr(self, 'config'):
+            return
         self.config_path = config_path
         self.adaptive_config_path = adaptive_config_path
         self.config = self._load_config()
@@ -74,9 +87,22 @@ class ConfigManager:
             logging.error(f"적응형 필터 설정 파일 로드 중 오류 발생: {str(e)}")
             return {}
     
+    def reload(self):
+        """설정 파일 강제 재로드 (설정 변경 후 호출)"""
+        self.config = self._load_config()
+        self.adaptive_config = self._load_adaptive_config()
+        logging.debug("ConfigManager: 설정 파일 재로드 완료")
+
+    @classmethod
+    def reset_instance(cls):
+        """싱글톤 인스턴스 초기화 (테스트용)"""
+        with cls._lock:
+            cls._instance = None
+            cls._initialized = False
+
     def save_config(self) -> bool:
         """현재 설정을 파일에 저장
-        
+
         Returns:
             bool: 저장 성공 여부
         """
@@ -193,19 +219,28 @@ class ConfigManager:
             # 동적 기준값 가져오기
             dynamic_criteria = self.adaptive_config.get('dynamic_criteria', {})
             
-            # 필터별 매핑
+            # 필터별 매핑 (모든 19개 필터 포함)
             filter_mapping = {
                 'odd_even': dynamic_criteria.get('odd_even'),
                 'consecutive': dynamic_criteria.get('consecutive'),
                 'sum_range': dynamic_criteria.get('sum_range'),
                 'multiple': dynamic_criteria.get('multiple'),
                 'ten_section': dynamic_criteria.get('ten_section'),
+                'section': dynamic_criteria.get('section'),
                 'max_gap': dynamic_criteria.get('max_gap'),
                 'last_digit': dynamic_criteria.get('last_digit'),
                 'average': dynamic_criteria.get('average'),
                 'arithmetic_sequence': dynamic_criteria.get('arithmetic'),
                 'geometric_sequence': dynamic_criteria.get('geometric'),
-                'match': dynamic_criteria.get('match')  # ✅ CRITICAL FIX: match 필터 매핑 추가!
+                'match': dynamic_criteria.get('match'),
+                # 누락되었던 필터들 추가
+                'digit_sum': dynamic_criteria.get('digit_sum'),
+                'dispersion': dynamic_criteria.get('dispersion'),
+                'prime_composite': dynamic_criteria.get('prime_composite'),
+                'outlier_detection': dynamic_criteria.get('outlier_detection'),
+                'balanced_quadrant': dynamic_criteria.get('balanced_quadrant'),
+                'ac_value': dynamic_criteria.get('ac_value'),
+                'fixed_step': dynamic_criteria.get('fixed_step'),
             }
             
             adaptive_criteria = filter_mapping.get(filter_name)
@@ -216,6 +251,13 @@ class ConfigManager:
                 
                 # multiple 필터의 경우 특별 처리
                 if filter_name == "multiple" and isinstance(adaptive_criteria, dict):
+                    # 이미 multiples 키가 있으면 그대로 사용
+                    if 'multiples' in adaptive_criteria:
+                        return {
+                            'multiples': adaptive_criteria['multiples'],
+                            'global_threshold': global_threshold
+                        }
+                    # multiples 키가 없으면 변환
                     converted_criteria = {
                         'multiples': {},  # multiples 키 추가
                         'global_threshold': global_threshold
@@ -230,6 +272,13 @@ class ConfigManager:
                 
                 # ten_section 필터의 경우 특별 처리
                 if filter_name == "ten_section" and isinstance(adaptive_criteria, dict):
+                    # 이미 section_limits 키가 있으면 그대로 사용
+                    if 'section_limits' in adaptive_criteria:
+                        return {
+                            'section_limits': adaptive_criteria['section_limits'],
+                            'global_threshold': global_threshold
+                        }
+                    # section_limits 키가 없으면 변환
                     section_limits = {}
                     for key, value in adaptive_criteria.items():
                         if key.startswith('section'):

@@ -174,8 +174,9 @@ class IntelligentWorkflow:
 
         # 4. 캐시 저장 (스트림 방식)
         self.cache_manager.save_filtered_results_stream(latest_round, filtered_count)
-        
-        return filtered
+
+        # 필터링 결과는 DB에 저장됨. 빈 리스트 반환 (메모리 절약)
+        return []
     
     def _get_total_combinations_count(self) -> int:
         """전체 조합 수 확인"""

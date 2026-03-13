@@ -67,7 +67,7 @@ class EnsemblePredictor:
         # 최소 학습 데이터 요구사항 완화
         self.min_train_samples = 80  # ✅ FIX: 30 → 80 (모델 안정성 향상)
         self.min_sequence_length = 10  # 최소 시퀀스 길이
-        
+
         # 모델 초기화 및 캐시된 모델 로드
         if SKLEARN_AVAILABLE:
             # 저장된 설정이 있으면 먼저 로드
@@ -76,6 +76,33 @@ class EnsemblePredictor:
                 self.load_models()  # 캐시된 모델 로드
             else:
                 self._initialize_models()  # 새로운 모델 초기화
+
+    def _parse_numbers(self, item) -> List[int]:
+        """다양한 형식의 당첨번호 데이터를 파싱하여 숫자 리스트로 변환
+
+        Args:
+            item: 당첨번호 데이터 (다양한 형식 지원)
+                - 문자열: "1,2,3,4,5,6"
+                - 튜플/리스트: (1,2,3,4,5,6) 또는 [1,2,3,4,5,6]
+                - DB 형식: (round_num, (n1,n2,n3,n4,n5,n6,bonus))
+
+        Returns:
+            List[int]: 정렬된 6개 번호 리스트
+        """
+        if isinstance(item, str):
+            # 문자열 형식: "1,2,3,4,5,6"
+            return sorted([int(n) for n in item.split(',')])
+        elif isinstance(item, (tuple, list)):
+            if len(item) == 2 and isinstance(item[1], (tuple, list)):
+                # DB 형식: (round_num, (n1,n2,n3,n4,n5,n6,bonus))
+                nums = item[1]
+                return sorted([int(n) for n in nums[:6]])  # 보너스 제외
+            else:
+                # 직접 튜플/리스트: (1,2,3,4,5,6) 또는 [1,2,3,4,5,6]
+                return sorted([int(n) for n in item[:6]])
+        else:
+            logging.warning(f"알 수 없는 데이터 형식: {type(item)}")
+            return []
     
     def _initialize_models(self):
         """모델 초기화 또는 로드"""
@@ -214,33 +241,35 @@ class EnsemblePredictor:
             logging.debug(f"모델 학습 필요. 로드된 모델: {models_loaded}, 요구 모델: {required_models}")
     
     def _build_random_forest(self):
-        """Random Forest 모델 구축 - MultiOutput으로 감싸서 반환"""
+        """Random Forest 모델 구축 - MultiOutput으로 감싸서 반환 (ML-001 개선)"""
         base_rf = RandomForestClassifier(
-            n_estimators=50,  # 100 -> 50 (더 감소, 강력한 과적합 방지)
-            max_depth=3,  # 5 -> 3 (더 감소, 매우 얕은 트리)
-            min_samples_split=30,  # 20 -> 30 (더 증가)
-            min_samples_leaf=15,  # 10 -> 15 (더 증가)
+            n_estimators=100,         # 50 → 100 (충분한 앙상블)
+            max_depth=6,              # 3 → 6 (적절한 깊이로 패턴 학습)
+            min_samples_split=10,     # 30 → 10 (더 세밀한 분할 허용)
+            min_samples_leaf=4,       # 15 → 4 (리프 노드 조건 완화)
             max_features='sqrt',
+            class_weight='balanced',  # 불균형 데이터 처리
             random_state=42,
             n_jobs=1  # MultiOutputClassifier가 병렬 처리를 하므로 1로 설정
         )
-        return MultiOutputClassifier(base_rf, n_jobs=4)  # CPU 사용률과 성능의 균형
+        return MultiOutputClassifier(base_rf, n_jobs=-1)  # 모든 코어 활용
     
     def _build_xgboost(self):
-        """XGBoost 모델 구축 - MultiOutput으로 감싸서 반환"""
+        """XGBoost 모델 구축 - MultiOutput으로 감싸서 반환 (ML-002 개선)"""
         base_xgb = xgb.XGBClassifier(
-            n_estimators=50,  # 100 -> 50 (더 감소)
-            max_depth=2,  # 3 -> 2 (최소 깊이)
-            learning_rate=0.01,  # 0.05 -> 0.01 (더 감소)
-            subsample=0.5,  # 0.6 -> 0.5 (더 감소)
-            colsample_bytree=0.5,  # 0.6 -> 0.5 (더 감소)
-            reg_alpha=2.0,  # 1.0 -> 2.0 (L1 정규화 강화)
-            reg_lambda=3.0,  # 2.0 -> 3.0 (L2 정규화 강화)
+            n_estimators=100,         # 50 → 100 (충분한 부스팅 라운드)
+            max_depth=4,              # 2 → 4 (적절한 트리 깊이)
+            learning_rate=0.05,       # 0.01 → 0.05 (적절한 학습률)
+            subsample=0.8,            # 0.5 → 0.8 (더 많은 데이터 사용)
+            colsample_bytree=0.8,     # 0.5 → 0.8 (더 많은 특성 사용)
+            reg_alpha=0.5,            # 2.0 → 0.5 (L1 정규화 완화)
+            reg_lambda=0.5,           # 3.0 → 0.5 (L2 정규화 완화)
             objective='binary:logistic',
+            tree_method='hist',       # 빠른 히스토그램 기반 분할
             random_state=42,
             n_jobs=1  # MultiOutputClassifier가 병렬 처리를 하므로 1로 설정
         )
-        return MultiOutputClassifier(base_xgb, n_jobs=4)  # CPU 사용률과 성능의 균형
+        return MultiOutputClassifier(base_xgb, n_jobs=-1)  # 모든 코어 활용
     
     def _build_neural_network(self):
         """Neural Network 모델 구축 - 클래스 불균형을 고려한 설정"""
@@ -421,11 +450,13 @@ class EnsemblePredictor:
                 break
                 
             features = {}
-            
+
             # 기본 통계 특징
             if self.feature_config['use_statistics']:
-                numbers = [int(n) for n in winning_numbers[i].split(',')]
-                
+                numbers = self._parse_numbers(winning_numbers[i])
+                if not numbers:
+                    continue
+
                 features['mean'] = np.mean(numbers)
                 features['std'] = np.std(numbers)
                 features['min'] = min(numbers)
@@ -445,8 +476,10 @@ class EnsemblePredictor:
             
             # 패턴 특징
             if self.feature_config['use_patterns']:
-                numbers = [int(n) for n in winning_numbers[i].split(',')]
-                
+                numbers = self._parse_numbers(winning_numbers[i])
+                if not numbers:
+                    continue
+
                 # 연속 번호
                 consecutive_count = sum(1 for j in range(len(numbers)-1) 
                                       if numbers[j+1] - numbers[j] == 1)
@@ -469,8 +502,7 @@ class EnsemblePredictor:
                         # 최근 window 회차의 통계
                         recent_numbers = []
                         for j in range(i-window, i):
-                            recent_numbers.extend([int(n) for n in 
-                                                 winning_numbers[j].split(',')])
+                            recent_numbers.extend(self._parse_numbers(winning_numbers[j]))
                         
                         # 번호별 출현 빈도
                         for num in range(1, 46):
@@ -495,18 +527,21 @@ class EnsemblePredictor:
             np.ndarray: 타겟 배열 (45개 번호의 출현 여부)
         """
         targets = []
-        
+
         for i in range(len(winning_numbers) - 1):
             # 다음 회차 번호
-            next_numbers = [int(n) for n in winning_numbers[i + 1].split(',')]
-            
+            next_numbers = self._parse_numbers(winning_numbers[i + 1])
+            if not next_numbers:
+                continue
+
             # 45차원 이진 벡터
             target = np.zeros(45)
             for num in next_numbers:
-                target[num - 1] = 1
-            
+                if 1 <= num <= 45:
+                    target[num - 1] = 1
+
             targets.append(target)
-        
+
         return np.array(targets)
     
     def train(self, winning_numbers: List[str], test_size: float = 0.2):
@@ -554,19 +589,20 @@ class EnsemblePredictor:
         # NaN 값을 0으로 채우기 (또는 평균값으로 채우기)
         features = features.fillna(0)
         
-        # 스케일링 - scaler 상태 확인 및 안전한 처리
-        # StandardScaler 항상 새로 생성하여 오류 방지
-        self.scalers['features'] = StandardScaler()
-        features_scaled = self.scalers['features'].fit_transform(features)
+        # 시간 기반 분할 먼저 수행 (데이터 누수 방지)
+        # StandardScaler의 fit_transform을 전체 데이터에 적용하면
+        # 테스트 데이터의 통계 정보가 학습에 누수됨
+        split_idx = int(len(features) * (1 - test_size))
 
-        # 학습/테스트 분할 - Time-series preserving split
-        # CRITICAL: 시계열 데이터이므로 chronological order 유지 필요
-        # train_test_split은 랜덤하게 섞어서 미래 데이터가 훈련에 포함되는 data leakage 발생
-        split_idx = int(len(features_scaled) * (1 - test_size))
-        X_train = features_scaled[:split_idx]
-        X_test = features_scaled[split_idx:]
+        train_features = features.values[:split_idx]
+        test_features = features.values[split_idx:]
         y_train = targets[:split_idx]
         y_test = targets[split_idx:]
+
+        # 스케일링 - 학습 데이터에서만 fit, 테스트 데이터에는 transform만
+        self.scalers['features'] = StandardScaler()
+        X_train = self.scalers['features'].fit_transform(train_features)
+        X_test = self.scalers['features'].transform(test_features)
         
         # 각 모델 학습
         results = {}

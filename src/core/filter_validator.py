@@ -378,6 +378,8 @@ class FilterValidator:
                 check_same_thread=False,  # Allow multi-threading access
                 timeout=30.0
             )
+            # WAL 모드로 동시 접근 성능 향상
+            conn.execute("PRAGMA journal_mode=WAL")
             cursor = conn.cursor()
 
             # 테이블 생성 (없으면)

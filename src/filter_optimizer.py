@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Callable, TypeVar, Generic, Optional
 import numpy as np
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import islice
 from functools import partial, wraps
 # Progress bar imports - using wrapper for better control
@@ -15,26 +15,9 @@ except ImportError:
         SIMPLE_MODE = False
 import logging
 import psutil
-from multiprocessing import Manager, Value, Lock
-import ctypes
 import time
 
 T = TypeVar('T')
-
-class SharedCounter:
-    """멀티프로세스 간 공유 카운터"""
-    def __init__(self, initial_value=0):
-        self.val = Value(ctypes.c_longlong, initial_value)
-        self.lock = Lock()
-
-    def increment(self, amount=1):
-        with self.lock:
-            self.val.value += amount
-            return self.val.value
-
-    def value(self):
-        with self.lock:
-            return self.val.value
 
 class FilterOptimizer(Generic[T]):
     def __init__(self, process_func: Callable[[List[str]], List[str]],
@@ -50,8 +33,8 @@ class FilterOptimizer(Generic[T]):
             use_parallel: 병렬 처리 사용 여부 (기본값: True)
         """
         self.process_func = process_func
-        self.chunk_size = chunk_size or 100000
-        self.max_workers = max_workers or max(1, min(os.cpu_count() or 4, 8))  # 최대 8개 프로세스로 제한
+        self.chunk_size = chunk_size or 150000  # 150K로 증가 (31GB RAM 최적화)
+        self.max_workers = max_workers or max(1, min(os.cpu_count() or 4, 10))  # 최대 10개 프로세스로 제한 (CPU 75%)
         self.use_parallel = use_parallel
         
     def optimize_filter(self, combinations: List[str], desc: str, **kwargs) -> List[str]:
@@ -168,84 +151,80 @@ class FilterOptimizer(Generic[T]):
             return filtered_combs
             
     def _apply_parallel(self, combinations: List[str], desc: str, **kwargs) -> List[str]:
-        """병렬 처리로 필터 적용
-        
+        """병렬 처리로 필터 적용 (ThreadPoolExecutor - numpy 벡터화와 조합)
+
+        ThreadPoolExecutor는 GIL이 있지만, numpy 벡터화 연산은 GIL을 해제하므로
+        numpy 기반 필터는 실질적 병렬화 효과가 있음.
+        ProcessPoolExecutor는 8백만 조합 복사 시 메모리 폭발 위험이 있어 사용하지 않음.
+
         Args:
             combinations: 필터링할 조합 목록
             desc: 진행 상황 설명 문자열
             **kwargs: 필터링 함수에 전달할 추가 매개변수
-            
+
         Returns:
             List[str]: 필터링된 조합 목록
         """
         total_items = len(combinations)
-        # 빈 리스트는 그대로 반환
         if total_items == 0:
-            logging.debug("빈 조합 리스트이므로 필터링 스킵")
             return combinations
-        
+
         filtered_combs = []
-        
+
         # 청크 분할
         chunks = []
         for i in range(0, total_items, self.chunk_size):
             chunks.append(combinations[i:i + self.chunk_size])
-        
+
         # 작업 함수 정의
         wrapped_func = partial(self._process_chunk_wrapper, base_func=self.process_func, **kwargs)
-        
+
         try:
             # 진행률 표시바 설정
-            with tqdm(total=total_items, 
+            show_progress = hasattr(ProgressConfig, 'SIMPLE_MODE') and not ProgressConfig.SIMPLE_MODE
+
+            with tqdm(total=total_items,
                     desc=f"- {desc}",
                     unit='조합',
                     position=0,
-                    leave=True,
+                    leave=False,
                     dynamic_ncols=True,
+                    bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]',
+                    disable=not show_progress,
                     file=sys.stdout) as pbar:
-                
-                # 병렬 실행
-                with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                    # 모든 청크에 대해 처리 작업 제출
-                    future_to_chunk_size = {
-                        executor.submit(wrapped_func, chunk): len(chunk) 
-                        for chunk in chunks
-                    }
-                    
-                    # 완료된 작업 결과 수집
-                    for future in as_completed(future_to_chunk_size):
-                        chunk_size = future_to_chunk_size[future]
+
+                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                    future_to_idx = {}
+                    for idx, chunk in enumerate(chunks):
+                        future = executor.submit(wrapped_func, chunk)
+                        future_to_idx[future] = idx
+
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        chunk_size = len(chunks[idx])
                         try:
                             result = future.result()
                             filtered_combs.extend(result)
-                            pbar.update(chunk_size)
                         except Exception as exc:
-                            logging.error(f"작업 처리 중 오류 발생: {str(exc)}")
-            
+                            logging.warning(f"청크 병렬 처리 실패({type(exc).__name__}), 직렬 재시도")
+                            try:
+                                result = self.process_func(chunks[idx], **kwargs)
+                                filtered_combs.extend(result)
+                            except Exception as retry_exc:
+                                logging.error(f"청크 직렬 재시도도 실패: {retry_exc}")
+                        pbar.update(chunk_size)
+
             return filtered_combs
-            
+
         except (OSError, IOError) as e:
-            # tqdm 실패 시 진행률 표시 없이 병렬 처리
+            # tqdm 실패 시 직렬 처리
             logging.debug(f"진행률 표시 비활성화 (tqdm 오류): {e}")
-            
-            # 병렬 실행 (진행률 표시 없음)
-            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                # 모든 청크에 대해 처리 작업 제출
-                futures = [executor.submit(wrapped_func, chunk) for chunk in chunks]
-                
-                # 완료된 작업 결과 수집
-                for i, future in enumerate(as_completed(futures)):
-                    try:
-                        result = future.result()
-                        filtered_combs.extend(result)
-                        
-                        # 매 10번째 완료마다 로그 출력
-                        if i % 10 == 0:
-                            progress = ((i + 1) / len(chunks)) * 100
-                            logging.debug(f"{desc}: {progress:.1f}% 완료")
-                    except Exception as exc:
-                        logging.error(f"작업 처리 중 오류 발생: {str(exc)}")
-            
+
+            filtered_combs = []
+            for chunk in chunks:
+                result = self.process_func(chunk, **kwargs)
+                filtered_combs.extend(result)
+
             return filtered_combs
 
     @staticmethod

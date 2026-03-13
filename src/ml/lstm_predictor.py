@@ -21,11 +21,13 @@ try:
     import tensorflow as tf
     # TensorFlow 로깅 레벨 설정
     tf.get_logger().setLevel('ERROR')
-    
-    from tensorflow.keras.models import Sequential, load_model
-    from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization
-    from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-    from tensorflow.keras.optimizers import Adam
+
+    # TensorFlow 2.x 권장 import 방식
+    from tensorflow import keras
+    from keras.models import Sequential, load_model
+    from keras.layers import LSTM, Dense, Dropout, BatchNormalization
+    from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+    from keras.optimizers import Adam
     TENSORFLOW_AVAILABLE = True
 except ImportError:
     TENSORFLOW_AVAILABLE = False
@@ -34,10 +36,11 @@ except ImportError:
 class LSTMPredictor:
     """LSTM 기반 로또 번호 예측기"""
     
-    def __init__(self, sequence_length: int = 50, model_path: str = None):
+    def __init__(self, sequence_length: int = 15, model_path: str = None):
         """
         Args:
             sequence_length: 입력 시퀀스 길이 (과거 몇 회차를 볼 것인가)
+                            ML-003 개선: 50 → 15 (과적합 방지 및 메모리 70% 절감)
             model_path: 저장된 모델 경로 (None이면 새로 생성)
         """
         self.sequence_length = sequence_length
@@ -45,9 +48,9 @@ class LSTMPredictor:
         self.model = None
         self.is_trained = False
         self.scaler_params = {}
-        
-        # 모델 아키텍처 파라미터
-        self.lstm_units = [128, 64, 32]
+
+        # 모델 아키텍처 파라미터 (ML-003 개선: 경량화)
+        self.lstm_units = [64, 32, 16]    # [128, 64, 32] → [64, 32, 16]
         self.dropout_rate = 0.35  # ✅ FIX: 0.2 → 0.35 (과적합 방지)
         self.learning_rate = 0.001
         
@@ -184,26 +187,41 @@ class LSTMPredictor:
     
     def retrain(self, winning_numbers: Optional[List[str]] = None):
         """모델 재학습
-        
+
         Args:
             winning_numbers: 당첨번호 리스트 (None이면 기존 데이터 사용)
         """
         if winning_numbers is None:
             logging.warning("재학습할 데이터가 제공되지 않았습니다.")
             return
-        
+
         # 데이터 준비
         X_train, y_train = self.prepare_training_data(winning_numbers)
-        
+
+        # 시계열 기반 분할 (데이터 누수 방지)
+        val_size = max(1, int(len(X_train) * 0.2))
+        gap = self.sequence_length  # 시퀀스 길이만큼 갭 확보
+        split_idx = len(X_train) - val_size - gap
+
+        if split_idx < 5:
+            # 데이터가 부족한 경우 갭 없이 분할
+            gap = 0
+            split_idx = len(X_train) - val_size
+
+        X_val = X_train[split_idx + gap:]
+        y_val = y_train[split_idx + gap:]
+        X_train_split = X_train[:split_idx]
+        y_train_split = y_train[:split_idx]
+
         # 간단한 학습 (빠른 재학습을 위해 epoch 줄임)
         history = self.model.fit(
-            X_train, y_train,
+            X_train_split, y_train_split,
             epochs=30,
             batch_size=32,
-            validation_split=0.2,
+            validation_data=(X_val, y_val),
             verbose=0
         )
-        
+
         self.is_trained = True
         logging.info("LSTM 모델 재학습 완료")
         return history
@@ -256,22 +274,41 @@ class LSTMPredictor:
     
     def prepare_training_data(self, winning_numbers: List[str]) -> Tuple[np.ndarray, np.ndarray]:
         """학습 데이터 준비
-        
+
         Args:
-            winning_numbers: 과거 당첨번호 리스트 (문자열 형태)
-            
+            winning_numbers: 과거 당첨번호 리스트 (다양한 형식 지원)
+                - 문자열: "1,2,3,4,5,6"
+                - 튜플/리스트: (1,2,3,4,5,6) 또는 [1,2,3,4,5,6]
+                - DB 형식: (round_num, (n1,n2,n3,n4,n5,n6,bonus))
+
         Returns:
             Tuple[np.ndarray, np.ndarray]: (X_train, y_train)
         """
         # 번호를 원-핫 인코딩으로 변환
         encoded_sequences = []
-        
-        for nums_str in winning_numbers:
-            numbers = [int(n) for n in nums_str.split(',')]
+
+        for item in winning_numbers:
+            # 다양한 입력 형식 처리
+            if isinstance(item, str):
+                # 문자열 형식: "1,2,3,4,5,6"
+                numbers = [int(n) for n in item.split(',')]
+            elif isinstance(item, (tuple, list)):
+                if len(item) == 2 and isinstance(item[1], (tuple, list)):
+                    # DB 형식: (round_num, (n1,n2,n3,n4,n5,n6,bonus))
+                    nums = item[1]
+                    numbers = [int(n) for n in nums[:6]]  # 보너스 제외
+                else:
+                    # 직접 튜플/리스트: (1,2,3,4,5,6) 또는 [1,2,3,4,5,6]
+                    numbers = [int(n) for n in item[:6]]
+            else:
+                logging.warning(f"알 수 없는 데이터 형식: {type(item)}")
+                continue
+
             # 45차원 벡터로 인코딩 (각 번호의 출현 여부)
             encoded = np.zeros(self.feature_dims)
             for num in numbers:
-                encoded[num - 1] = 1
+                if 1 <= num <= 45:  # 유효한 번호만 처리
+                    encoded[num - 1] = 1
             encoded_sequences.append(encoded)
         
         encoded_sequences = np.array(encoded_sequences)
@@ -284,32 +321,52 @@ class LSTMPredictor:
         
         return np.array(X), np.array(y)
     
-    def train(self, winning_numbers: List[str], epochs: int = 100, 
+    def train(self, winning_numbers: List[str], epochs: int = 100,
               batch_size: int = 32, validation_split: float = 0.2):
         """모델 학습
-        
+
         Args:
             winning_numbers: 과거 당첨번호 리스트
             epochs: 학습 에폭 수
             batch_size: 배치 크기
-            validation_split: 검증 데이터 비율
+            validation_split: 검증 데이터 비율 (시간 기반 분할에 사용)
         """
         if not TENSORFLOW_AVAILABLE:
             logging.error("TensorFlow가 설치되지 않아 학습할 수 없습니다.")
             return
-        
+
         logging.info("LSTM 모델 학습 시작...")
-        
+
         # 데이터 준비
         X_train, y_train = self.prepare_training_data(winning_numbers)
-        
+
         if len(X_train) < 10:
             logging.error(f"학습 데이터가 부족합니다: {len(X_train)}개")
             return
-        
+
+        # 시계열 기반 분할 (데이터 누수 방지)
+        # Keras의 validation_split은 데이터를 랜덤하게 셔플하므로
+        # 미래 데이터가 학습에 포함되는 누수 발생 가능
+        val_size = max(1, int(len(X_train) * validation_split))
+        gap = self.sequence_length  # 시퀀스 길이만큼 갭 확보 (학습/검증 데이터 간 정보 누수 방지)
+        split_idx = len(X_train) - val_size - gap
+
+        if split_idx < 10:
+            # 데이터가 부족한 경우 갭을 줄여서라도 분할
+            gap = max(0, len(X_train) - val_size - 10)
+            split_idx = len(X_train) - val_size - gap
+            logging.warning(f"데이터 부족으로 갭을 {gap}으로 축소")
+
+        X_val = X_train[split_idx + gap:]
+        y_val = y_train[split_idx + gap:]
+        X_train_split = X_train[:split_idx]
+        y_train_split = y_train[:split_idx]
+
+        logging.info(f"시간 기반 분할: 학습 {len(X_train_split)}개, 갭 {gap}개, 검증 {len(X_val)}개")
+
         # 모델 저장 디렉토리 생성
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        
+
         # 콜백 설정
         callbacks = [
             EarlyStopping(
@@ -329,13 +386,13 @@ class LSTMPredictor:
                 min_lr=0.00001
             )
         ]
-        
-        # 모델 학습
+
+        # 모델 학습 (시간 기반 분할된 검증 데이터 사용)
         history = self.model.fit(
-            X_train, y_train,
+            X_train_split, y_train_split,
             epochs=epochs,
             batch_size=batch_size,
-            validation_split=validation_split,
+            validation_data=(X_val, y_val),
             callbacks=callbacks,
             verbose=1
         )
@@ -412,15 +469,17 @@ class LSTMPredictor:
         predictions = []
         
         for _ in range(num_predictions):
-            # 확률 기반 샘플링 + 노이즈
-            noisy_probs = probabilities + np.random.normal(0, 0.1, size=self.feature_dims)
-            noisy_probs = np.clip(noisy_probs, 0, 1)
-            
-            # 상위 확률 번호 선택
-            top_indices = np.argsort(noisy_probs)[-15:]  # 상위 15개
-            
-            # 이 중에서 6개 랜덤 선택
-            selected_indices = np.random.choice(top_indices, 6, replace=False)
+            # 확률 기반 가중 샘플링 (노이즈 최소화)
+            # 확률 제곱으로 상위 번호 강조 + 미세 노이즈
+            enhanced_probs = probabilities ** 2
+            noise = np.random.normal(0, 0.02, size=self.feature_dims)
+            enhanced_probs = np.clip(enhanced_probs + noise, 1e-10, None)
+            weights = enhanced_probs / enhanced_probs.sum()
+
+            # 가중 확률 기반 6개 선택 (랜덤이 아닌 확률 비례)
+            selected_indices = np.random.choice(
+                self.feature_dims, 6, replace=False, p=weights
+            )
             selected_numbers = sorted([i + 1 for i in selected_indices])
             
             # 예측 신뢰도 계산
@@ -629,8 +688,8 @@ def main():
         print(f"데이터 부족: {len(winning_numbers)}개 (최소 100개 필요)")
         return
     
-    # LSTM 예측기 생성
-    predictor = LSTMPredictor(sequence_length=50)
+    # LSTM 예측기 생성 (ML-003: 기본값 15로 변경됨)
+    predictor = LSTMPredictor(sequence_length=15)
     
     # 데이터 분할
     train_size = int(len(winning_numbers) * 0.8)

@@ -1,5 +1,60 @@
 from typing import Dict, Final, List, Tuple
 
+# =============================================================================
+# Phase 2.10: 시스템 상수 정의 (하드코딩 값 중앙화)
+# =============================================================================
+
+class SystemConstants:
+    """시스템 레벨 상수 정의 - 하드코딩된 매직 넘버 대체"""
+
+    # 배치 처리 관련
+    LARGE_BATCH_SIZE: Final[int] = 50000      # 대용량 조합 처리용
+    DEFAULT_BATCH_SIZE: Final[int] = 10000    # 기본 배치 크기
+    SMALL_BATCH_SIZE: Final[int] = 1000       # 소규모 배치 크기
+
+    # 메모리 관리
+    MEMORY_LIMIT_MB: Final[int] = 1536        # 배치 메모리 제한
+    MAX_BATCH_MEMORY_MB: Final[int] = 2048    # 최대 배치 메모리
+    MEMORY_WARNING_THRESHOLD: Final[float] = 0.8  # 80% 메모리 경고
+    MEMORY_CRITICAL_THRESHOLD: Final[float] = 0.9  # 90% 메모리 위험
+
+    # 워커/병렬 처리
+    DEFAULT_WORKERS: Final[int] = 12          # 기본 워커 수
+    MIN_WORKERS: Final[int] = 4               # 최소 워커 수
+    MAX_WORKERS: Final[int] = 16              # 최대 워커 수
+
+    # ML 예측 관련 (config.yaml과 동기화)
+    MAX_ML_PREDICTIONS: Final[int] = 20       # 최대 ML 예측 수
+    PREDICTIONS_PER_MODEL: Final[int] = 5     # 모델별 예측 수
+    CONFIDENCE_THRESHOLD: Final[float] = 0.6  # 신뢰도 임계값
+    TARGET_INCLUSION_RATE: Final[float] = 0.15  # 목표 포함률
+    DEFAULT_PREDICTION_SETS: Final[int] = 5   # 기본 예측 세트 수
+    MAX_COMBINATIONS: Final[int] = 20         # 최대 조합 수
+
+    # 백테스팅 관련
+    VALIDATION_RANGE_START: Final[int] = 1050  # 검증 시작 회차
+    VALIDATION_RANGE_END: Final[int] = 1150    # 검증 종료 회차
+    DEFAULT_VALIDATION_ROUNDS: Final[int] = 50  # 기본 검증 라운드 수
+
+    # 최적화 관련
+    OPTUNA_DEFAULT_TRIALS: Final[int] = 25    # Optuna 기본 시도 횟수
+    OPTUNA_TIMEOUT_SECONDS: Final[int] = 3600  # Optuna 타임아웃 (1시간)
+
+    # 데이터베이스 관련
+    DB_POOL_SIZE: Final[int] = 16             # DB 연결 풀 크기
+    DB_TIMEOUT_SECONDS: Final[int] = 120      # DB 타임아웃
+    DB_CACHE_SIZE_MB: Final[int] = 64         # DB 캐시 크기
+
+    # 캐시 관련
+    CACHE_TTL_DAYS: Final[int] = 7            # 캐시 TTL (일)
+    CACHE_MAX_SIZE_MB: Final[int] = 1700      # 캐시 최대 크기
+
+    # Monte Carlo 관련
+    MONTE_CARLO_SIMULATIONS: Final[int] = 6000  # 시뮬레이션 횟수
+    MONTE_CARLO_WORKERS: Final[int] = 8         # Monte Carlo 워커 수
+    MONTE_CARLO_BATCH: Final[int] = 750         # Monte Carlo 배치 크기
+
+
 class LottoConstants:
     """로또 관련 상수 정의"""
     

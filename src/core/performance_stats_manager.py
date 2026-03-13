@@ -277,18 +277,12 @@ class PerformanceStatsManager:
                 
                 session_id = cursor.lastrowid
                 
-                # 모델별 성능 지표 저장
+                # 모델별 성능 지표 일괄 저장 (executemany)
                 model_performances = performance_metrics.get('model_performance', {})
+                model_perf_rows = []
                 for model_name, model_metrics in model_performances.items():
                     match_counts = model_metrics.get('match_counts', {})
-                    
-                    cursor.execute("""
-                        INSERT INTO model_performance 
-                        (session_id, model_name, total_predictions, avg_matches, best_match, 
-                         accuracy_3plus, contaminated_count, match_0, match_1, match_2, 
-                         match_3, match_4, match_5, match_6)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
+                    model_perf_rows.append((
                         session_id, model_name,
                         model_metrics.get('total_predictions', 0),
                         round(model_metrics.get('avg_matches', 0), 3),
@@ -299,20 +293,24 @@ class PerformanceStatsManager:
                         match_counts.get(3, 0), match_counts.get(4, 0), match_counts.get(5, 0),
                         match_counts.get(6, 0)
                     ))
-                
-                # 상세 예측 결과 저장 (선택적으로 최근 결과만)
+                if model_perf_rows:
+                    cursor.executemany("""
+                        INSERT INTO model_performance
+                        (session_id, model_name, total_predictions, avg_matches, best_match,
+                         accuracy_3plus, contaminated_count, match_0, match_1, match_2,
+                         match_3, match_4, match_5, match_6)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, model_perf_rows)
+
+                # 상세 예측 결과 일괄 저장 (executemany)
+                pred_detail_rows = []
                 for pred_result in predictions[-50:]:  # 최근 50개만 저장
                     round_num = pred_result.get('round', 0)
                     actual_numbers = pred_result.get('winning_numbers', [])
-                    
+
                     for model_name, matches_info in pred_result.get('matches', {}).items():
                         for match_info in matches_info[:5]:  # 모델당 최대 5개만 저장
-                            cursor.execute("""
-                                INSERT INTO prediction_details 
-                                (session_id, round_num, model_name, predicted_numbers, 
-                                 actual_numbers, match_count, is_contaminated, filter_passed)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (
+                            pred_detail_rows.append((
                                 session_id, round_num, model_name,
                                 json.dumps(match_info.get('predicted_numbers', [])),
                                 json.dumps(actual_numbers),
@@ -320,6 +318,13 @@ class PerformanceStatsManager:
                                 match_info.get('contaminated', False),
                                 match_info.get('filter_passed', True)
                             ))
+                if pred_detail_rows:
+                    cursor.executemany("""
+                        INSERT INTO prediction_details
+                        (session_id, round_num, model_name, predicted_numbers,
+                         actual_numbers, match_count, is_contaminated, filter_passed)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, pred_detail_rows)
                 
                 conn.commit()
                 

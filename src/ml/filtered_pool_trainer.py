@@ -75,8 +75,13 @@ class FilteredPoolTrainer:
         features_list = []
 
         for combo in combinations:
-            # 튜플이나 리스트를 정렬된 리스트로 변환
-            numbers = sorted(list(combo))
+            # 튜플, 리스트, 또는 문자열을 정렬된 숫자 리스트로 변환
+            if isinstance(combo, str):
+                # 문자열 형식: "1,2,3,4,5,6" -> [1, 2, 3, 4, 5, 6]
+                numbers = sorted([int(n) for n in combo.split(',')])
+            else:
+                # 튜플/리스트 형식: (1,2,3,4,5,6) -> [1, 2, 3, 4, 5, 6]
+                numbers = sorted([int(n) for n in combo])
             features = {}
 
             # === 기본 통계 특징 ===
@@ -155,11 +160,40 @@ class FilteredPoolTrainer:
             logging.warning("조합 또는 당첨번호가 비어있습니다")
             return np.array([])
 
+        # 디버그: 입력 데이터 형식 확인
+        logging.debug(f"[generate_labels] 조합 수: {len(combinations)}, 당첨번호 수: {len(winning_numbers)}")
+        if winning_numbers:
+            logging.debug(f"[generate_labels] 첫 번째 당첨번호 타입: {type(winning_numbers[0])}, 값: {winning_numbers[0]}")
+        if combinations:
+            logging.debug(f"[generate_labels] 첫 번째 조합 타입: {type(combinations[0])}, 값: {combinations[0]}")
+
         # 당첨번호를 집합으로 변환
         winning_sets = []
+        parse_errors = 0
         for wn in winning_numbers:
-            numbers = [int(n) for n in wn.split(',')]
-            winning_sets.append(set(numbers))
+            # 문자열, 튜플, 리스트 모두 지원
+            if isinstance(wn, str):
+                try:
+                    numbers = [int(n.strip()) for n in wn.split(',')]
+                except (ValueError, AttributeError) as e:
+                    parse_errors += 1
+                    if parse_errors <= 3:
+                        logging.warning(f"당첨번호 파싱 오류: '{wn}' - {e}")
+                    continue
+            elif isinstance(wn, (list, tuple)):
+                numbers = [int(n) for n in wn]
+            else:
+                logging.warning(f"지원하지 않는 당첨번호 형식: {type(wn)}")
+                continue
+            winning_sets.append(set(numbers[:6]))  # 보너스 번호 제외
+
+        if parse_errors > 3:
+            logging.warning(f"당첨번호 파싱 오류 총 {parse_errors}건")
+
+        # winning_sets 검증
+        if not winning_sets:
+            logging.error(f"[generate_labels] winning_sets가 비어있습니다! 당첨번호 형식을 확인하세요.")
+            return np.zeros(len(combinations))
 
         labels = []
 
@@ -261,12 +295,13 @@ class FilteredPoolTrainer:
             # 모델 타입에 따라 미세조정 수행
             model_type = type(model).__name__
 
-            if model_type == 'EnsemblePredictor':
+            if model_type in ('EnsemblePredictor', 'FilteredPoolEnsemblePredictor'):
+                # EnsemblePredictor 또는 FilteredPoolEnsemblePredictor 모두 지원
                 model = self._fine_tune_ensemble(model, pool_features_scaled, pool_labels)
             elif model_type == 'LSTMPredictor':
                 model = self._fine_tune_lstm(model, filtered_combinations, winning_numbers)
             else:
-                logging.warning(f"지원하지 않는 모델 타입: {model_type}")
+                logging.warning(f"지원하지 않는 모델 타입: {model_type} (지원: EnsemblePredictor, FilteredPoolEnsemblePredictor, LSTMPredictor)")
 
             logging.info("[Fine-tuning] 미세조정 완료")
             return model
@@ -276,38 +311,47 @@ class FilteredPoolTrainer:
             return model
 
     def _fine_tune_ensemble(self, ensemble_model, features_scaled, labels) -> Any:
-        """앙상블 모델 미세조정"""
+        """앙상블 모델 미세조정
+
+        Note: 기존 모델이 분류기(Classifier)이므로 연속형 유사도 점수를
+        이진 레이블로 변환하여 학습합니다.
+        - 중앙값 이상: 1 (좋은 조합)
+        - 중앙값 미만: 0 (나쁜 조합)
+        """
         try:
-            # 회귀 문제로 변환 (유사도 점수 예측)
-            # 각 번호의 출현 확률 대신 전체 조합의 품질 점수 학습
+            # 연속형 유사도 점수를 이진 레이블로 변환 (분류기 호환)
+            # 중앙값 기준으로 좋은 조합(1)과 나쁜 조합(0)으로 분류
+            median_similarity = np.median(labels) if len(labels) > 0 else 0.1
 
-            # 45차원 레이블 생성 (각 번호의 기대 출현 확률)
-            # 유사도가 높은 조합의 번호들에 높은 가중치 부여
-            y_train = np.zeros((len(labels), 45))
+            # 유사도가 0인 경우 (이전 버그로 인한 케이스) 미세조정 스킵
+            if median_similarity == 0 or np.all(labels == 0):
+                logging.warning("    - 유사도가 모두 0입니다. 미세조정을 건너뜁니다.")
+                logging.warning("    - 힌트: 조합 형식이 올바른지 확인하세요 (문자열 vs 튜플)")
+                return ensemble_model
 
-            for i, (label, features) in enumerate(zip(labels, features_scaled)):
-                # 유사도 점수를 전체 번호에 분산
-                # 높은 유사도 → 해당 조합의 번호들이 더 중요
-                y_train[i, :] = label / 45  # 균등 분배
+            # 이진 레이블 생성: 중앙값 이상이면 1, 미만이면 0
+            binary_labels = (labels >= median_similarity).astype(int)
+
+            logging.info(f"    - 유사도 통계: 중앙값={median_similarity:.4f}, "
+                        f"좋은조합={np.sum(binary_labels)}개, 나쁜조합={len(binary_labels)-np.sum(binary_labels)}개")
+
+            # 45차원 이진 레이블 생성 (각 번호에 대해 동일한 이진 값)
+            y_train = np.zeros((len(labels), 45), dtype=int)
+            for i, label in enumerate(binary_labels):
+                y_train[i, :] = label  # 모든 번호에 동일한 이진 레이블
 
             # Random Forest 미세조정
             if 'rf' in ensemble_model.models and ensemble_model.models['rf'] is not None:
                 try:
                     logging.info("    - Random Forest 미세조정 중...")
-                    # 부분 학습 (partial_fit은 RF에서 지원 안 함, 재학습)
                     ensemble_model.models['rf'].fit(features_scaled, y_train)
                     logging.info("    - RF 미세조정 완료")
                 except Exception as e:
                     logging.warning(f"    - RF 미세조정 실패: {e}")
 
-            # XGBoost 미세조정
-            if 'xgb' in ensemble_model.models and ensemble_model.models['xgb'] is not None:
-                try:
-                    logging.info("    - XGBoost 미세조정 중...")
-                    ensemble_model.models['xgb'].fit(features_scaled, y_train)
-                    logging.info("    - XGBoost 미세조정 완료")
-                except Exception as e:
-                    logging.warning(f"    - XGBoost 미세조정 실패: {e}")
+            # XGBoost 미세조정 - 다중 클래스(45개) 분류기와 이진 레이블 불일치로 스킵
+            # 원래 모델이 multi:softprob (45 클래스)로 학습되어 이진 레이블로 미세조정 불가
+            logging.info("    - XGBoost 미세조정은 클래스 불일치 방지를 위해 스킵")
 
             # Neural Network는 과적합 위험이 높아 스킵
             logging.info("    - NN 미세조정은 과적합 방지를 위해 스킵")
@@ -379,13 +423,13 @@ class FilteredPoolTrainer:
             logging.info("  [Stage 1] 당첨번호 패턴 학습 중...")
             model_type = type(model).__name__
 
-            if model_type == 'EnsemblePredictor':
-                # 앙상블 모델 학습
+            if model_type in ('EnsemblePredictor', 'FilteredPoolEnsemblePredictor'):
+                # 앙상블 모델 학습 (EnsemblePredictor, FilteredPoolEnsemblePredictor 모두 지원)
                 if not model.is_trained:
-                    logging.info("    - 앙상블 모델 초기 학습...")
+                    logging.info(f"    - {model_type} 모델 초기 학습...")
                     model.train(winning_numbers, test_size=0.2)
                 else:
-                    logging.info("    - 앙상블 모델 이미 학습됨 (Stage 1 스킵)")
+                    logging.info(f"    - {model_type} 모델 이미 학습됨 (Stage 1 스킵)")
 
             elif model_type == 'LSTMPredictor':
                 # LSTM 모델 학습
@@ -395,7 +439,7 @@ class FilteredPoolTrainer:
                 else:
                     logging.info("    - LSTM 모델 이미 학습됨 (Stage 1 스킵)")
             else:
-                logging.warning(f"지원하지 않는 모델 타입: {model_type}")
+                logging.warning(f"지원하지 않는 모델 타입: {model_type} (지원: EnsemblePredictor, FilteredPoolEnsemblePredictor, LSTMPredictor)")
                 return model
 
             # === Stage 2: 필터 제약사항 학습 (30%) ===
@@ -441,12 +485,35 @@ class FilteredPoolTrainer:
                 logging.warning("필터링된 조합이 없습니다")
                 return []
 
+            # 문자열 조합을 튜플로 변환 (DB에서 문자열로 저장되어 있음)
+            converted_combos = []
+            for combo in filtered_combos:
+                if isinstance(combo, str):
+                    # "1,2,3,4,5,6" 형식 → (1, 2, 3, 4, 5, 6) 튜플로 변환
+                    try:
+                        numbers = tuple(int(n.strip()) for n in combo.split(','))
+                        converted_combos.append(numbers)
+                    except (ValueError, AttributeError) as e:
+                        logging.warning(f"조합 변환 오류: '{combo}' - {e}")
+                        continue
+                elif isinstance(combo, (list, tuple)):
+                    converted_combos.append(tuple(combo))
+                else:
+                    logging.warning(f"지원하지 않는 조합 형식: {type(combo)}")
+                    continue
+
+            if not converted_combos:
+                logging.warning("변환된 조합이 없습니다")
+                return []
+
+            logging.debug(f"[_sample_filtered_pool] 조합 변환 완료: {len(converted_combos):,}개 (원본: {len(filtered_combos):,}개)")
+
             # 샘플링
-            if len(filtered_combos) > sample_size:
-                indices = np.random.choice(len(filtered_combos), sample_size, replace=False)
-                sampled = [filtered_combos[i] for i in indices]
+            if len(converted_combos) > sample_size:
+                indices = np.random.choice(len(converted_combos), sample_size, replace=False)
+                sampled = [converted_combos[i] for i in indices]
             else:
-                sampled = filtered_combos
+                sampled = converted_combos
 
             return sampled
 

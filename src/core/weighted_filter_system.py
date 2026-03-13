@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 import numpy as np
 
 class WeightedFilterSystem:
@@ -38,8 +38,16 @@ class WeightedFilterSystem:
             'digit_sum': 0.6,        # 100% 통과율
             'dispersion': 0.35,      # 78% 통과율 - 문제 필터
             'fixed_step': 0.25,      # 84% 통과율 - 문제 필터 (가장 낮은 가중치)
-            'ml_prediction': 0.8     # ML 예측
+            'ml_prediction': 0.8,    # ML 예측
+            'ac_value': 0.85,        # AC값 (산술 복잡도) - 무작위성 검증에 중요
+            'mean_reversion': 0.7    # Phase 3: Mean Reversion (평균 회귀) 분석
         }
+
+        # Mean Reversion 분석기 (지연 초기화)
+        self._mean_reversion_analyzer = None
+
+        # 점수화 모드 설정
+        self.use_scoring_mode = True  # True: 점수 기반, False: 이진 필터링
         
         # 통과 임계값 (100점 만점 기준)
         # 1% 임계값 = 99% 통과율을 위해 매우 낮은 점수 설정
@@ -52,50 +60,64 @@ class WeightedFilterSystem:
     def evaluate_combination(self, combination, round_num=None):
         """
         가중치 기반으로 조합 평가
-        
+
+        점수화 모드(use_scoring_mode=True)에서는 각 필터의 score_combination()을
+        사용하여 0-100 범위의 세분화된 점수를 산출합니다.
+        이진 모드(use_scoring_mode=False)에서는 기존 apply() 기반 0/100 점수를 사용합니다.
+
         Args:
             combination: 평가할 번호 조합 (List[int] 또는 "1,2,3,4,5,6" 형식)
             round_num: 회차 번호 (선택적)
-            
+
         Returns:
-            Dict: {'passed': bool, 'total_score': float, 'filter_results': dict}
+            Dict: {
+                'passed': bool,
+                'total_score': float (0-100),
+                'quality_tier': str ('excellent'/'good'/'acceptable'/'poor'),
+                'filter_results': dict
+            }
         """
-        # 문자열이면 리스트로 변환
+        # 문자열이면 리스트로 변환, 리스트면 문자열로도 준비
         if isinstance(combination, str):
-            combination = [int(n) for n in combination.split(',')]
-        
+            combination_list = [int(n) for n in combination.split(',')]
+            combination_str = combination
+        else:
+            combination_list = list(combination)
+            combination_str = ','.join(map(str, combination))
+
         total_score = 0.0
         max_possible_score = 0.0
         filter_results = {}
-        
+
         for filter_name, filter_obj in self.filter_manager.filters.items():
             if filter_name not in self.filter_weights:
                 continue
-                
+
             weight = self.filter_weights[filter_name]
             max_possible_score += weight * 100
-            
+
             try:
-                # 필터 통과 여부 확인
-                # 조합을 문자열로 변환하여 필터에 전달
-                combination_str = ','.join(map(str, combination))
-                
-                # 필터 적용 (apply 메서드 사용)
-                result = filter_obj.apply([combination_str], round_num)
-                passed = len(result) > 0  # 결과가 있으면 통과
-                score = 100 if passed else 0
-                
+                if self.use_scoring_mode and hasattr(filter_obj, 'score_combination'):
+                    # 점수화 모드: score_combination() 사용 (0-100 연속 점수)
+                    score = filter_obj.score_combination(combination_str, round_num)
+                    passed = score >= 50.0  # 50점 이상이면 통과로 간주
+                else:
+                    # 이진 모드: apply() 사용 (0 또는 100)
+                    result = filter_obj.apply([combination_str], round_num)
+                    passed = len(result) > 0
+                    score = 100.0 if passed else 0.0
+
                 # 가중치 적용
                 weighted_score = score * weight
                 total_score += weighted_score
-                
+
                 filter_results[filter_name] = {
                     'passed': passed,
                     'score': score,
                     'weight': weight,
                     'weighted_score': weighted_score
                 }
-                
+
             except Exception as e:
                 self.logger.warning(f"{filter_name} 필터 평가 실패: {e}")
                 # 실패한 필터는 중립 점수 (50점) 부여
@@ -108,18 +130,117 @@ class WeightedFilterSystem:
                     'weighted_score': weighted_score,
                     'error': str(e)
                 }
-        
+
+        # Phase 3: Mean Reversion 점수 추가
+        try:
+            mr_weight = self.filter_weights.get('mean_reversion', 0.7)
+            max_possible_score += mr_weight * 100
+
+            if self._mean_reversion_analyzer is None:
+                from src.analysis.mean_reversion_analyzer import MeanReversionAnalyzer
+                self._mean_reversion_analyzer = MeanReversionAnalyzer(
+                    self.filter_manager.db_manager
+                )
+                self._mean_reversion_analyzer.update_statistics()
+
+            mr_result = self._mean_reversion_analyzer.calculate_combination_score(combination_list)
+            mr_score = mr_result.get('score', 50.0)
+            mr_weighted = mr_score * mr_weight
+            total_score += mr_weighted
+
+            filter_results['mean_reversion'] = {
+                'passed': mr_score >= 50,
+                'score': mr_score,
+                'weight': mr_weight,
+                'weighted_score': mr_weighted,
+                'details': {
+                    'hot_count': mr_result.get('hot_count', 0),
+                    'cold_count': mr_result.get('cold_count', 0),
+                    'avg_reversion_strength': mr_result.get('avg_reversion_strength', 0)
+                }
+            }
+        except Exception as e:
+            self.logger.debug(f"Mean Reversion 분석 스킵: {e}")
+
         # 정규화된 점수 계산 (0-100 범위)
         normalized_score = (total_score / max_possible_score) * 100 if max_possible_score > 0 else 0
-        
+
+        # 품질 등급 결정
+        if normalized_score >= 85:
+            quality_tier = 'excellent'
+        elif normalized_score >= 70:
+            quality_tier = 'good'
+        elif normalized_score >= self.pass_threshold:
+            quality_tier = 'acceptable'
+        else:
+            quality_tier = 'poor'
+
         # 통과 여부 결정
         passed = normalized_score >= self.pass_threshold
-        
+
         return {
             'passed': passed,
             'total_score': normalized_score,
+            'quality_tier': quality_tier,
             'filter_results': filter_results
         }
+
+    def rank_combinations(self, combinations: List[str], round_num: int = None,
+                          top_n: int = None) -> List[Tuple[str, float, str]]:
+        """
+        조합들을 점수 기반으로 랭킹
+
+        Args:
+            combinations: 랭킹할 조합 리스트
+            round_num: 회차 번호
+            top_n: 상위 N개만 반환 (None이면 전체)
+
+        Returns:
+            List of (combination, score, quality_tier) tuples, 점수 내림차순
+        """
+        scored_combinations = []
+
+        for combo in combinations:
+            try:
+                result = self.evaluate_combination(combo, round_num)
+                scored_combinations.append((
+                    combo,
+                    result['total_score'],
+                    result['quality_tier']
+                ))
+            except Exception as e:
+                self.logger.warning(f"조합 {combo} 평가 실패: {e}")
+                scored_combinations.append((combo, 0.0, 'poor'))
+
+        # 점수 내림차순 정렬
+        scored_combinations.sort(key=lambda x: x[1], reverse=True)
+
+        if top_n is not None:
+            return scored_combinations[:top_n]
+
+        return scored_combinations
+
+    def filter_by_score_threshold(self, combinations: List[str], round_num: int = None,
+                                   min_score: float = None) -> List[str]:
+        """
+        점수 임계값 이상인 조합만 필터링
+
+        이진 필터링 대신 점수 기반 필터링을 수행합니다.
+        위음성(False Negative) 리스크를 줄이기 위해 임계값 미만도
+        완전히 제외하지 않고 낮은 우선순위로 처리할 수 있습니다.
+
+        Args:
+            combinations: 필터링할 조합 리스트
+            round_num: 회차 번호
+            min_score: 최소 점수 (None이면 self.pass_threshold 사용)
+
+        Returns:
+            임계값 이상 점수를 받은 조합 리스트 (점수 내림차순)
+        """
+        threshold = min_score if min_score is not None else self.pass_threshold
+        ranked = self.rank_combinations(combinations, round_num)
+
+        return [combo for combo, score, _ in ranked if score >= threshold]
     
     def auto_adjust_weights(self, validation_results: List[Dict]):
         """

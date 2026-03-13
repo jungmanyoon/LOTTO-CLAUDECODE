@@ -1,5 +1,7 @@
 from typing import List, Set, Dict, Optional, Tuple, Generator
 import logging
+import sys
+import gc  # Phase 2.5: 명시적 가비지 컬렉션
 from itertools import combinations
 from tqdm import tqdm
 from math import comb
@@ -46,7 +48,9 @@ class CombinationManager:
             all_combs = combinations(range(1, LottoConstants.MAX_NUMBER + 1), 
                                 LottoConstants.COMBINATION_SIZE)
             
-            with tqdm(total=total_combinations, desc="조합 생성 진행률", unit="조합") as pbar:
+            import threading as _threading
+            _tqdm_disable = _threading.current_thread() is not _threading.main_thread()
+            with tqdm(total=total_combinations, desc="조합 생성 진행률", unit="조합", file=sys.stdout, disable=_tqdm_disable) as pbar:
                 for comb in all_combs:
                     if self._is_valid_combination(comb):
                         # 정렬된 번호를 문자열로 변환

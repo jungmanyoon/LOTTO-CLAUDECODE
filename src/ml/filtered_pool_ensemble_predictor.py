@@ -281,11 +281,11 @@ class FilteredPoolEnsemblePredictor:
 
         # 동일한 유사도를 가진 후보 중 랜덤 선택 (다양성 보장)
         if candidates:
-            return np.random.choice(candidates)
+            return int(np.random.choice(candidates))
         else:
             # 매칭 실패 시 전체 레이블 중 랜덤 선택
             all_labels = list(self.combination_to_label.values())
-            return np.random.choice(all_labels) if all_labels else 0
+            return int(np.random.choice(all_labels)) if all_labels else 0
 
     def train_with_filtered_pool(self, historical_combinations: List[List[int]],
                                 filtered_combinations: List[List[int]],
@@ -321,54 +321,82 @@ class FilteredPoolEnsemblePredictor:
             logging.error("→ 필터링된 풀이 너무 작거나 모든 조합이 동일한 레이블로 매핑됨")
             return {}
 
+        # 레이블 인코딩 - XGBoost 'Invalid classes' 에러 방지
+        # y가 0부터 시작하는 연속적인 정수가 아닐 수 있으므로 LabelEncoder로 변환
+        self.scalers['label_encoder'] = LabelEncoder()
+        y = self.scalers['label_encoder'].fit_transform(y)
+        logging.debug(f"레이블 인코딩 완료: {len(self.scalers['label_encoder'].classes_)}개 클래스 (0~{max(y)})")
+
         # 스케일링
         X_scaled = self.scalers['features'].fit_transform(X)
 
-        # 학습/테스트 분할 (stratify는 조건부 사용)
-        # 각 클래스가 최소 2개 이상의 샘플을 가져야 stratify 가능
-        try:
-            # 각 클래스의 샘플 수 확인
-            unique, counts = np.unique(y, return_counts=True)
-            min_samples = np.min(counts)
-
-            if min_samples >= 2:
-                # 모든 클래스가 2개 이상 샘플 → stratify 사용 가능
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X_scaled, y, test_size=test_size, random_state=42, stratify=y
-                )
-                logging.debug(f"Stratified split 사용 (최소 클래스 샘플: {min_samples}개)")
-            else:
-                # 일부 클래스가 1개만 → stratify 없이 분할
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X_scaled, y, test_size=test_size, random_state=42
-                )
-                logging.warning(f"Stratify 미사용 (일부 클래스 샘플 1개): 최소 {min_samples}개, 영향받는 클래스 {np.sum(counts == 1)}개")
-        except Exception as e:
-            # stratify 실패 시 일반 분할
-            logging.warning(f"Stratified split 실패, 일반 split 사용: {e}")
-            X_train, X_test, y_train, y_test = train_test_split(
-                X_scaled, y, test_size=test_size, random_state=42
-            )
+        # 학습/테스트 분할 (시계열 순서 유지)
+        # 시계열 데이터이므로 shuffle=False 필수 (미래 데이터 누수 방지)
+        # stratify는 shuffle=False와 호환되지 않으므로 제거
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_scaled, y, test_size=test_size, random_state=42, shuffle=False
+        )
+        logging.debug(f"시계열 순서 유지 분할 (shuffle=False): 학습 {len(X_train)}개, 테스트 {len(X_test)}개")
 
         # 각 모델 학습
         results = {}
 
+        # 테스트 세트에서 학습 세트에 없는 클래스 필터링 (Invalid classes 에러 방지)
+        train_classes = set(y_train)
+        test_mask = np.isin(y_test, list(train_classes))
+        X_test_filtered = X_test[test_mask]
+        y_test_filtered = y_test[test_mask]
+
+        if len(y_test_filtered) == 0:
+            # 모든 테스트 클래스가 학습에 없음 - 전체 데이터로 학습만 진행
+            logging.warning("테스트 세트에 학습 클래스가 없어 평가 건너뜀. 전체 데이터로 학습합니다.")
+            X_train, y_train = X_scaled, y
+            X_test_filtered, y_test_filtered = X_scaled[:10], y[:10]  # 더미 평가용
+        elif len(y_test_filtered) < len(y_test):
+            skipped = len(y_test) - len(y_test_filtered)
+            logging.debug(f"테스트 세트에서 {skipped}개 샘플 제외 (학습에 없는 클래스)")
+
+        # ★ 핵심 수정: XGBoost multi:softprob용 연속적 레이블 재인코딩
+        # train_test_split 후 y_train에 갭이 있을 수 있음 (예: [0,2,5,7])
+        # XGBoost는 연속적인 레이블 [0,1,2,3...]을 요구함
+        train_label_encoder = LabelEncoder()
+        y_train_continuous = train_label_encoder.fit_transform(y_train)
+
+        # y_test_filtered도 같은 인코더로 변환 (학습에 있는 클래스만 포함됨이 보장됨)
+        try:
+            y_test_continuous = train_label_encoder.transform(y_test_filtered)
+        except ValueError as e:
+            # 예외 발생 시 (테스트에 학습에 없는 클래스 있음) - 해당 샘플 제외
+            logging.warning(f"테스트 레이블 변환 실패, 추가 필터링: {e}")
+            valid_mask = np.isin(y_test_filtered, train_label_encoder.classes_)
+            X_test_filtered = X_test_filtered[valid_mask]
+            y_test_filtered = y_test_filtered[valid_mask]
+            if len(y_test_filtered) == 0:
+                logging.warning("필터링 후 테스트 데이터 없음 - 더미 데이터 사용")
+                X_test_filtered = X_train[:10]
+                y_test_continuous = y_train_continuous[:10]
+            else:
+                y_test_continuous = train_label_encoder.transform(y_test_filtered)
+
+        num_classes = len(train_label_encoder.classes_)
+        logging.debug(f"연속 레이블 재인코딩 완료: {num_classes}개 클래스 (0~{num_classes-1})")
+
         # Random Forest
         logging.info("Random Forest 학습 중...")
-        self.models['rf'].fit(X_train, y_train)
-        rf_pred = self.models['rf'].predict(X_test)
+        self.models['rf'].fit(X_train, y_train_continuous)
+        rf_pred = self.models['rf'].predict(X_test_filtered)
         results['rf'] = {
-            'accuracy': accuracy_score(y_test, rf_pred),
+            'accuracy': accuracy_score(y_test_continuous, rf_pred),
             'feature_importance': self.models['rf'].feature_importances_
         }
 
         # XGBoost
         if XGBOOST_AVAILABLE and 'xgb' in self.models:
             logging.info("XGBoost 학습 중...")
-            self.models['xgb'].fit(X_train, y_train)
-            xgb_pred = self.models['xgb'].predict(X_test)
+            self.models['xgb'].fit(X_train, y_train_continuous)
+            xgb_pred = self.models['xgb'].predict(X_test_filtered)
             results['xgb'] = {
-                'accuracy': accuracy_score(y_test, xgb_pred)
+                'accuracy': accuracy_score(y_test_continuous, xgb_pred)
             }
 
         # Neural Network
@@ -379,10 +407,10 @@ class FilteredPoolEnsemblePredictor:
                 logging.warning("NN 모델이 None입니다. RF와 XGBoost만 사용합니다.")
                 results['nn'] = {'accuracy': 0.0}
             else:
-                self.models['nn'].fit(X_train, y_train)
-                nn_pred = self.models['nn'].predict(X_test)
+                self.models['nn'].fit(X_train, y_train_continuous)
+                nn_pred = self.models['nn'].predict(X_test_filtered)
                 results['nn'] = {
-                    'accuracy': accuracy_score(y_test, nn_pred)
+                    'accuracy': accuracy_score(y_test_continuous, nn_pred)
                 }
         except Exception as e:
             logging.warning(f"Neural Network 학습 실패: {e}")
@@ -450,6 +478,9 @@ class FilteredPoolEnsemblePredictor:
         """앙상블 확률 예측"""
         ensemble_proba = np.zeros(len(self.label_to_combination))
 
+        # 레이블 인코더가 있으면 원본 레이블로 역변환 필요
+        label_encoder = self.scalers.get('label_encoder')
+
         total_weight = 0
         for model_name, model in self.models.items():
             try:
@@ -459,9 +490,19 @@ class FilteredPoolEnsemblePredictor:
                 # 모든 클래스에 대한 확률 확보 (일부 모델은 모든 클래스를 보지 못할 수 있음)
                 full_proba = np.zeros(len(self.label_to_combination))
                 classes = model.classes_
-                for i, class_label in enumerate(classes):
-                    if class_label < len(full_proba):
-                        full_proba[class_label] = proba[i]
+
+                for i, encoded_label in enumerate(classes):
+                    # 인코딩된 레이블을 원본 레이블로 역변환
+                    if label_encoder is not None:
+                        try:
+                            original_label = label_encoder.inverse_transform([encoded_label])[0]
+                        except (ValueError, IndexError):
+                            original_label = encoded_label
+                    else:
+                        original_label = encoded_label
+
+                    if original_label < len(full_proba):
+                        full_proba[original_label] = proba[i]
 
                 weight = self.ensemble_weights.get(model_name, 0)
                 ensemble_proba += full_proba * weight

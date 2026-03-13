@@ -61,7 +61,8 @@ class GeometricSequenceFilter(BaseFilter):
                     numbers = sorted(comb)
                 max_sequence = GeometricSequenceFilter._find_geometric_sequence_static(numbers)
                 
-                if max_sequence < min_sequence or max_sequence not in exclude_lengths:
+                # AND 조건: min_sequence 미만이면서 exclude_lengths에도 없어야 통과
+                if max_sequence < min_sequence and max_sequence not in exclude_lengths:
                     filtered_combinations.append(comb)
 
             return filtered_combinations

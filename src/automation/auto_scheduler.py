@@ -246,19 +246,49 @@ class AutoScheduler:
             logging.error(f"[AutoScheduler] 예측 생성 오류: {e}")
 
     def _fetch_latest_round_from_web(self) -> Optional[int]:
-        """웹에서 최신 회차 번호 가져오기"""
+        """새 API를 통해 최신 회차 번호 가져오기"""
         try:
-            # 동행복권 API 또는 크롤링
-            # 예시 URL (실제 API로 교체 필요)
-            url = "https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo="
-            
+            # 2025년 개편된 새 API 사용
+            api_url = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.dhlottery.co.kr/lt645/result'
+            }
+
+            response = requests.get(
+                f'{api_url}?srchLtEpsd=all',
+                headers=headers,
+                timeout=15
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                lst = data.get('data', {}).get('list', [])
+                if lst:
+                    # 리스트에서 최신 회차 찾기
+                    latest = max(item.get('ltEpsd', 0) for item in lst)
+                    logging.info(f"[AutoScheduler] 새 API로 최신 회차 확인: {latest}회")
+                    return latest
+
+            # 폴백: 기존 방식 시도 (레거시)
+            logging.warning("[AutoScheduler] 새 API 실패, 레거시 방식 시도...")
+            return self._fetch_latest_round_legacy()
+
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 웹 데이터 조회 실패: {e}")
+            return self._fetch_latest_round_legacy()
+
+    def _fetch_latest_round_legacy(self) -> Optional[int]:
+        """레거시 방식으로 최신 회차 번호 가져오기 (폴백용)"""
+        try:
             # 최신 회차 추정 (토요일 기준)
             base_date = datetime(2002, 12, 7)  # 1회차 추첨일
             current_date = datetime.now()
             weeks_passed = (current_date - base_date).days // 7
             estimated_round = weeks_passed + 1
-            
-            # API 호출 시도
+
+            # 예전 API 시도 (작동하지 않을 수 있음)
+            url = "https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo="
             for round_num in range(estimated_round, estimated_round - 5, -1):
                 try:
                     response = requests.get(url + str(round_num), timeout=5)
@@ -269,23 +299,26 @@ class AutoScheduler:
                 except (requests.RequestException, ValueError, KeyError) as e:
                     logging.debug(f"회차 {round_num} 조회 실패: {e}")
                     continue
-            
-            return None
-            
+
+            # 최종 폴백: 추정값 반환
+            logging.warning(f"[AutoScheduler] API 모두 실패, 추정 회차 반환: {estimated_round}")
+            return estimated_round
+
         except Exception as e:
-            logging.error(f"[AutoScheduler] 웹 데이터 조회 실패: {e}")
+            logging.error(f"[AutoScheduler] 레거시 웹 데이터 조회 실패: {e}")
             return None
     
     def _fetch_and_save_new_round(self, round_num: int) -> bool:
         """새 회차 데이터 수집 및 저장"""
         try:
             # main.py의 fetch_lotto_data 호출
+            # ✅ FIX: 데이터 수집 타임아웃 60초 → 180초 (3분)
             result = subprocess.run(
                 ['python', 'main.py', '--fetch-only'],
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                timeout=60
+                timeout=180  # 데이터 수집은 1-2분 소요 가능
             )
             
             if result.returncode == 0:
@@ -299,11 +332,35 @@ class AutoScheduler:
             logging.error(f"[AutoScheduler] 데이터 저장 실패: {e}")
             return False
     
+    def _is_main_py_running(self) -> bool:
+        """현재 main.py 프로세스가 이미 실행 중인지 확인"""
+        try:
+            import psutil
+            current_pid = os.getpid()
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    if proc.pid != current_pid and 'python' in proc.name().lower():
+                        cmdline = proc.cmdline()
+                        if any('main.py' in arg for arg in cmdline):
+                            return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            pass
+        return False
+
     def _run_daily_prediction(self):
         """일일 예측 실행"""
         job_name = 'daily_prediction'
+
+        # 이미 main.py가 실행 중이면 중복 실행 방지
+        if self._is_main_py_running():
+            logging.info("[AutoScheduler] 이미 main.py가 실행 중입니다. 일일 예측 subprocess 실행을 건너뜁니다.")
+            self._update_job_status(job_name, True)
+            return
+
         logging.info("[AutoScheduler] 일일 예측 시작...")
-        
+
         try:
             # main.py 전체 실행
             result = subprocess.run(
@@ -313,17 +370,17 @@ class AutoScheduler:
                 encoding='utf-8',
                 timeout=1800  # 30분 타임아웃
             )
-            
+
             if result.returncode == 0:
                 logging.info("[AutoScheduler] 일일 예측 완료")
                 self._update_job_status(job_name, True)
-                
+
                 # 예측 결과 알림 (이메일, 텔레그램 등)
                 self._notify_prediction_complete()
             else:
                 logging.error(f"[AutoScheduler] 예측 실행 실패: {result.stderr}")
                 self._update_job_status(job_name, False)
-                
+
         except Exception as e:
             logging.error(f"[AutoScheduler] 일일 예측 오류: {e}")
             self._update_job_status(job_name, False)
@@ -372,11 +429,13 @@ class AutoScheduler:
             
             if not all_healthy:
                 failed = [k for k, v in checks.items() if not v]
-                logging.warning(f"[AutoScheduler] ⚠️ 상태 체크 실패: {failed}")
-                
-                # 심각한 문제 시 알림
-                if 'database' in failed or 'disk_space' in failed:
+                # 심각한 항목(database, disk_space)은 WARNING, memory만 실패 시 INFO
+                critical_failed = [k for k in failed if k in ('database', 'disk_space')]
+                if critical_failed:
+                    logging.warning(f"[AutoScheduler] 상태 체크 실패: {failed}")
                     self._send_alert(f"시스템 문제 감지: {failed}")
+                else:
+                    logging.info(f"[AutoScheduler] 상태 체크 - 비정상 항목: {failed}")
             
             self._update_job_status(job_name, all_healthy)
             
@@ -418,12 +477,12 @@ class AutoScheduler:
     def _check_database_health(self) -> bool:
         """데이터베이스 상태 확인"""
         try:
-            conn = sqlite3.connect('data/lotto_numbers.db')
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM lotto_numbers")
-            count = cursor.fetchone()[0]
-            conn.close()
-            return count > 0
+            # FIX HIGH: 컨텍스트 매니저 사용으로 연결 누수 방지
+            with sqlite3.connect('data/lotto_numbers.db') as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM lotto_numbers")
+                count = cursor.fetchone()[0]
+                return count > 0
         except sqlite3.Error as e:
             logging.warning(f"DB 가용성 확인 실패: {e}")
             return False
@@ -440,11 +499,11 @@ class AutoScheduler:
             return True
     
     def _check_memory_usage(self) -> bool:
-        """메모리 사용량 확인"""
+        """메모리 사용량 확인 (95% 이상만 실패 - 필터링 중 90%대는 정상)"""
         try:
             import psutil
             memory = psutil.virtual_memory()
-            return memory.percent < 90  # 90% 미만 사용
+            return memory.percent < 95  # 95% 미만 사용
         except (ImportError, AttributeError) as e:
             logging.debug(f"메모리 사용량 확인 실패: {e}. 기본값 True 반환")
             return True
@@ -476,10 +535,10 @@ class AutoScheduler:
         
         for db_path in databases:
             if os.path.exists(db_path):
-                conn = sqlite3.connect(db_path)
-                conn.execute("VACUUM")
-                conn.execute("ANALYZE")
-                conn.close()
+                # FIX HIGH: 컨텍스트 매니저 사용으로 연결 누수 방지
+                with sqlite3.connect(db_path) as conn:
+                    conn.execute("VACUUM")
+                    conn.execute("ANALYZE")
     
     def _update_filter_criteria(self):
         """필터 기준 업데이트"""

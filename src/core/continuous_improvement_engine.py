@@ -52,9 +52,9 @@ class PerformanceMetrics:
     session_id: int = None
 
 class PerformanceTracker:
-    """성능 추적 및 분석 클래스"""
+    """성능 추적 및 분석 클래스 (Phase 2: data/optimization.db로 통합)"""
 
-    def __init__(self, db_path: str = "data/continuous_improvement.db"):
+    def __init__(self, db_path: str = "data/optimization.db"):
         self.db_path = db_path
         self.logger = logging.getLogger(__name__)
         self._init_database()
@@ -230,6 +230,7 @@ class PerformanceTracker:
     def get_best_performance(self, round_number: int = None) -> Optional[PerformanceMetrics]:
         """최고 성능 기록 조회"""
         with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row  # 컬럼 이름으로 접근 (인덱스 순서 의존성 제거)
             cursor = conn.cursor()
 
             query = """
@@ -248,24 +249,26 @@ class PerformanceTracker:
             row = cursor.fetchone()
 
             if row:
+                created_at = row['created_at']
                 return PerformanceMetrics(
-                    avg_matches=row[2],
-                    best_match=row[3],
-                    accuracy_3plus=row[4],
-                    ml_inclusion_rate=row[5],
-                    combination_count=row[6],
-                    threshold=row[7],
-                    ml_bypass_filters=row[8],
-                    ml_weight=row[9],
-                    filter_pass_rate=row[10] if row[10] is not None else 0.0,  # ✅ NEW
-                    timestamp=datetime.fromisoformat(row[16]) if row[16] and isinstance(row[16], str) else datetime.now(),  # ✅ FIXED: handle None
-                    session_id=row[15]  # ✅ FIXED: correct index
+                    avg_matches=row['avg_matches'],
+                    best_match=row['best_match'],
+                    accuracy_3plus=row['accuracy_3plus'],
+                    ml_inclusion_rate=row['ml_inclusion_rate'],
+                    combination_count=row['combination_count'],
+                    threshold=row['threshold'],
+                    ml_bypass_filters=row['ml_bypass_filters'],
+                    ml_weight=row['ml_weight'],
+                    filter_pass_rate=row['filter_pass_rate'] if row['filter_pass_rate'] is not None else 0.0,
+                    timestamp=datetime.fromisoformat(created_at) if created_at and isinstance(created_at, str) else datetime.now(),
+                    session_id=row['session_id']
                 )
         return None
 
     def get_best_pass_rate_performance(self, round_number: int = None) -> Optional[PerformanceMetrics]:
-        """✅ NEW: 최고 필터 통과율 기록 조회"""
+        """최고 필터 통과율 기록 조회"""
         with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row  # 컬럼 이름으로 접근 (인덱스 순서 의존성 제거)
             cursor = conn.cursor()
 
             query = """
@@ -284,18 +287,19 @@ class PerformanceTracker:
             row = cursor.fetchone()
 
             if row:
+                created_at = row['created_at']
                 return PerformanceMetrics(
-                    avg_matches=row[2],
-                    best_match=row[3],
-                    accuracy_3plus=row[4],
-                    ml_inclusion_rate=row[5],
-                    combination_count=row[6],
-                    threshold=row[7],
-                    ml_bypass_filters=row[8],
-                    ml_weight=row[9],
-                    filter_pass_rate=row[10] if row[10] is not None else 0.0,
-                    timestamp=datetime.fromisoformat(row[16]) if row[16] and isinstance(row[16], str) else datetime.now(),  # ✅ FIXED: handle None
-                    session_id=row[15]  # ✅ FIXED: correct index
+                    avg_matches=row['avg_matches'],
+                    best_match=row['best_match'],
+                    accuracy_3plus=row['accuracy_3plus'],
+                    ml_inclusion_rate=row['ml_inclusion_rate'],
+                    combination_count=row['combination_count'],
+                    threshold=row['threshold'],
+                    ml_bypass_filters=row['ml_bypass_filters'],
+                    ml_weight=row['ml_weight'],
+                    filter_pass_rate=row['filter_pass_rate'] if row['filter_pass_rate'] is not None else 0.0,
+                    timestamp=datetime.fromisoformat(created_at) if created_at and isinstance(created_at, str) else datetime.now(),
+                    session_id=row['session_id']
                 )
         return None
 
@@ -377,108 +381,7 @@ class AutoOptimizer:
         self.db_manager = db_manager
         self.config_path = config_path
         self.logger = logging.getLogger(__name__)
-
-        # 최적화 범위 설정
-        self.threshold_candidates = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5]
-        self.ml_bypass_candidates = list(range(5, 16))  # 5~15
-        self.ml_weight_candidates = [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6]
-
-    def grid_search_optimization(self, baseline_metrics: PerformanceMetrics,
-                               max_tests: int = 50) -> Dict[str, Any]:
-        """그리드 서치 최적화"""
-        self.logger.info(f"그리드 서치 최적화 시작 (최대 {max_tests}회 테스트)")
-
-        best_result = {
-            'params': {
-                'threshold': baseline_metrics.threshold,
-                'ml_bypass': baseline_metrics.ml_bypass_filters,
-                'ml_weight': baseline_metrics.ml_weight
-            },
-            'performance': baseline_metrics.avg_matches,
-            'improvement': 0.0
-        }
-
-        test_count = 0
-        results = []
-
-        # 백테스팅 프레임워크 초기화
-        backtesting = OptimizedBacktestingFramework(self.db_manager)
-
-        # 그리드 서치 실행
-        for threshold in self.threshold_candidates:
-            if test_count >= max_tests:
-                break
-
-            for ml_bypass in self.ml_bypass_candidates:
-                if test_count >= max_tests:
-                    break
-
-                for ml_weight in self.ml_weight_candidates:
-                    if test_count >= max_tests:
-                        break
-
-                    # 현재 설정과 동일하면 스킵
-                    if (threshold == baseline_metrics.threshold and
-                        ml_bypass == baseline_metrics.ml_bypass_filters and
-                        ml_weight == baseline_metrics.ml_weight):
-                        continue
-
-                    try:
-                        # 임시 설정 적용
-                        temp_config = self._create_temp_config(threshold, ml_bypass, ml_weight)
-
-                        # 백테스팅 프레임워크에 설정 적용
-                        self._apply_config_to_framework(backtesting, temp_config)
-
-                        # 백테스팅 실행 (최근 30회차)
-                        latest_round = self.db_manager.get_latest_round()
-                        start_round = max(1, latest_round - 29)
-
-                        result = backtesting.run_backtest(
-                            start_round=start_round,
-                            end_round=latest_round
-                        )
-
-                        avg_matches = result.get('performance_metrics', {}).get('overall_avg_matches', 0)
-                        ml_inclusion = result.get('ml_inclusion_rate', 0)
-
-                        test_result = {
-                            'threshold': threshold,
-                            'ml_bypass': ml_bypass,
-                            'ml_weight': ml_weight,
-                            'avg_matches': avg_matches,
-                            'ml_inclusion_rate': ml_inclusion,
-                            'improvement': avg_matches - baseline_metrics.avg_matches
-                        }
-
-                        results.append(test_result)
-                        test_count += 1
-
-                        # 더 좋은 결과인지 확인
-                        if avg_matches > best_result['performance']:
-                            best_result = {
-                                'params': {
-                                    'threshold': threshold,
-                                    'ml_bypass': ml_bypass,
-                                    'ml_weight': ml_weight
-                                },
-                                'performance': avg_matches,
-                                'improvement': avg_matches - baseline_metrics.avg_matches
-                            }
-
-                        self.logger.info(f"테스트 {test_count}/{max_tests}: "
-                                       f"임계값={threshold}, ML바이패스={ml_bypass}, ML가중치={ml_weight} "
-                                       f"→ 평균매치={avg_matches:.3f} (개선: {avg_matches - baseline_metrics.avg_matches:+.3f})")
-
-                    except Exception as e:
-                        self.logger.error(f"그리드 서치 테스트 실패: {e}")
-                        continue
-
-        return {
-            'best_result': best_result,
-            'total_tests': test_count,
-            'all_results': results
-        }
+        # Phase 1 정리: grid_search 관련 후보 리스트 제거 (bayesian_optimization만 사용)
 
     def bayesian_optimization(self, baseline_metrics: PerformanceMetrics,
                             n_trials: int = 30) -> Dict[str, Any]:
@@ -578,7 +481,7 @@ class ContinuousImprovementEngine:
     def __init__(self,
                  db_manager: DatabaseManager,
                  config_path: str = "configs/adaptive_filter_config.yaml",
-                 improvement_db_path: str = "data/continuous_improvement.db"):
+                 improvement_db_path: str = "data/optimization.db"):
 
         self.db_manager = db_manager
         self.config_path = config_path
@@ -782,8 +685,16 @@ class ContinuousImprovementEngine:
                 if performance_ratio < 0.9:
                     self.logger.warning(f"성능 저하 감지: {performance_ratio:.1%} (현재: {current_metrics.avg_matches:.3f}, 최고: {best_performance.avg_matches:.3f})")
 
-                    # 긴급 최적화 트리거
-                    self.trigger_emergency_optimization()
+                    # [FIX] 자동 롤백 먼저 수행 - 성능 하락 시 즉시 이전 최적 설정으로 복원
+                    self.logger.warning("자동 롤백 시작 - 최고 성능 설정으로 복원 시도...")
+                    rollback_success = self.rollback_to_best()
+
+                    if rollback_success:
+                        self.logger.info("✅ 자동 롤백 완료 - 최고 성능 설정 복원됨")
+                    else:
+                        self.logger.warning("⚠️ 자동 롤백 실패 - 긴급 최적화로 전환")
+                        # 롤백 실패 시에만 긴급 최적화 트리거
+                        self.trigger_emergency_optimization()
                 else:
                     self.logger.info(f"베이스라인 점검 완료: 성능 유지 ({performance_ratio:.1%})")
 
@@ -819,36 +730,17 @@ class ContinuousImprovementEngine:
 
                 self.logger.info(f"베이스라인 성능: 평균 매치 {baseline_metrics.avg_matches:.3f}")
 
-                # 그리드 서치 최적화
-                grid_results = self.auto_optimizer.grid_search_optimization(
-                    baseline_metrics, max_tests=25
+                # Phase 1 정리: 그리드 서치 제거 → 베이지안 최적화만 사용 (Optuna TPE 기반)
+                self.logger.info("베이지안 최적화 시작 (Optuna TPE 기반, 25회 시도)")
+                bayesian_results = self.auto_optimizer.bayesian_optimization(
+                    baseline_metrics, n_trials=25
                 )
 
-                # 베이지안 최적화 (그리드 서치에서 개선이 있었을 때만)
-                best_improvement = grid_results['best_result']['improvement']
-
-                if best_improvement > 0.01:  # 1% 이상 개선 시
-                    self.logger.info("그리드 서치에서 개선 발견, 베이지안 최적화 진행")
-                    bayesian_results = self.auto_optimizer.bayesian_optimization(
-                        baseline_metrics, n_trials=15
-                    )
-
-                    # 더 나은 결과 선택
-                    if bayesian_results['improvement'] > best_improvement:
-                        best_params = bayesian_results['best_params']
-                        best_performance = bayesian_results['best_performance']
-                        final_improvement = bayesian_results['improvement']
-                        optimization_method = 'bayesian'
-                    else:
-                        best_params = grid_results['best_result']['params']
-                        best_performance = grid_results['best_result']['performance']
-                        final_improvement = best_improvement
-                        optimization_method = 'grid_search'
-                else:
-                    best_params = grid_results['best_result']['params']
-                    best_performance = grid_results['best_result']['performance']
-                    final_improvement = best_improvement
-                    optimization_method = 'grid_search'
+                best_params = bayesian_results['best_params']
+                best_performance = bayesian_results['best_performance']
+                final_improvement = bayesian_results['improvement']
+                optimization_method = 'bayesian'
+                trials_completed = bayesian_results.get('trials_completed', 25)
 
                 # 개선 여부 확인 및 적용
                 improvement_applied = False
@@ -869,15 +761,32 @@ class ContinuousImprovementEngine:
                         self.logger.error(f"최적화 결과 적용 실패: {e}")
                         rollback_reason = f"적용 실패: {e}"
                         improvement_applied = False
+                elif final_improvement < -0.05:  # [FIX] 5% 이상 성능 하락 감지
+                    # 성능 하락률 계산
+                    degradation_rate = abs(final_improvement / baseline_metrics.avg_matches) if baseline_metrics.avg_matches > 0 else 0
+                    self.logger.warning(f"⚠️ 성능 하락 감지: {final_improvement:+.3f} ({degradation_rate:.1%} 하락)")
+
+                    # 자동 롤백 수행
+                    self.logger.warning("자동 롤백 시작 - 최고 성능 설정으로 복원 시도...")
+                    rollback_success = self.rollback_to_best()
+
+                    if rollback_success:
+                        rollback_reason = f"성능 하락 롤백: {final_improvement:+.3f} ({degradation_rate:.1%})"
+                        self.logger.info("✅ 자동 롤백 완료 - 최고 성능 설정 복원됨")
+                    else:
+                        rollback_reason = f"롤백 실패: {final_improvement:+.3f}"
+                        self.logger.error("❌ 자동 롤백 실패 - 백업 설정을 찾을 수 없음")
+
+                    improvement_applied = False
                 else:
-                    rollback_reason = f"개선 없음: {final_improvement:.3f} <= 0"
+                    rollback_reason = f"개선 없음: {final_improvement:.3f} (미미한 변화, 현재 설정 유지)"
                     self.logger.info(f"개선이 없어 현재 설정 유지 ({final_improvement:+.3f})")
 
                 # 세션 완료
                 self._complete_optimization_session(
                     session_id, best_params, best_performance,
                     baseline_metrics.avg_matches, final_improvement,
-                    improvement_applied, rollback_reason, grid_results['total_tests']
+                    improvement_applied, rollback_reason, trials_completed
                 )
 
                 self.status = OptimizationStatus.COMPLETED
@@ -890,7 +799,7 @@ class ContinuousImprovementEngine:
                     'improvement_rate': final_improvement / baseline_metrics.avg_matches if baseline_metrics.avg_matches > 0 else 0,
                     'improvement_applied': improvement_applied,
                     'optimization_method': optimization_method,
-                    'tests_completed': grid_results['total_tests'],
+                    'tests_completed': trials_completed,
                     'best_params': best_params,
                     'rollback_reason': rollback_reason
                 }
@@ -982,6 +891,21 @@ class ContinuousImprovementEngine:
 
         FIX: FilterAutoAdjuster가 저장한 dynamic_criteria 보존
         """
+        # 유효하지 않은 파라미터 방어 (0 또는 범위 초과 값 차단)
+        threshold = best_params.get('threshold', 0)
+        ml_bypass = best_params.get('ml_bypass', 0)
+        ml_weight = best_params.get('ml_weight', 0)
+
+        if threshold <= 0 or not (0.3 <= threshold <= 3.0):
+            self.logger.warning(f"[ContinuousImprovementEngine] 유효하지 않은 threshold={threshold}, 설정 저장 중단")
+            return
+        if ml_bypass <= 0 or not (8 <= ml_bypass <= 20):
+            self.logger.warning(f"[ContinuousImprovementEngine] 유효하지 않은 ml_bypass={ml_bypass}, 설정 저장 중단")
+            return
+        if ml_weight <= 0 or not (0.1 <= ml_weight <= 1.0):
+            self.logger.warning(f"[ContinuousImprovementEngine] 유효하지 않은 ml_weight={ml_weight}, 설정 저장 중단")
+            return
+
         # ✅ FIX: 최신 설정 파일 다시 로드 (FilterAutoAdjuster 조정값 반영)
         # 메모리 캐시(self.config) 대신 파일에서 직접 로드
         try:

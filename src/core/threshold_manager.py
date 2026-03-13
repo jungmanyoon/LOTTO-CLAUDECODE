@@ -28,19 +28,72 @@ class ThresholdChange:
 
 class ThresholdManager:
     """
-    임계값 중앙 관리자 (싱글톤)
+    임계값 중앙 관리자 (Singleton Pattern)
+
+    로또 예측 시스템의 모든 확률 임계값을 중앙에서 관리하는 싱글톤 클래스입니다.
+    Observer 패턴을 사용하여 임계값 변경 시 연결된 모든 컴포넌트에 자동 전파합니다.
 
     핵심 기능:
-    - 전역 임계값의 단일 진실 공급원(Single Source of Truth)
-    - Observer 패턴으로 모든 컴포넌트에 변경 자동 전파
-    - Decimal 사용으로 부동소수점 오류 완전 제거
-    - 변경 이력 추적 및 로깅
+        - 전역 임계값의 단일 진실 공급원 (Single Source of Truth)
+        - Observer 패턴으로 모든 컴포넌트에 변경 자동 전파
+        - Decimal 사용으로 부동소수점 오류 완전 제거
+        - 변경 이력 추적 및 로깅 (최대 100개)
+        - 설정 파일과 자동 동기화
+
+    관리 임계값:
+        - global_probability_threshold: 전역 확률 임계값 (0.3~3.0%)
+        - ml_relaxed_threshold: ML 완화 임계값 (0.1~2.0%)
+        - ml_bypass_filters: ML 우회 필터 수
+        - ml_weight: ML 가중치
+
+    사용 예시:
+        >>> tm = ThresholdManager.get_instance()  # 싱글톤 인스턴스
+        >>> threshold = tm.get_threshold()  # 현재 임계값
+        >>> tm.set_threshold(1.5, source="optimizer")  # 임계값 설정
+        >>> tm.register_observer(my_callback)  # Observer 등록
+
+    Observer 패턴:
+        임계값 변경 시 등록된 모든 observer 콜백이 호출됩니다.
+        콜백 시그니처: callback(param: str, old_value: Any, new_value: Any)
+
+        >>> def on_threshold_change(param, old_val, new_val):
+        ...     print(f"{param}: {old_val} -> {new_val}")
+        >>> tm.register_observer(on_threshold_change)
+
+    Decimal 정밀도:
+        모든 임계값은 Decimal 타입으로 저장되어 부동소수점 오류를 방지합니다.
+        소수점 2자리까지 ROUND_HALF_UP 방식으로 반올림됩니다.
+
+    Thread Safety:
+        - 싱글톤 패턴에 threading.Lock 사용
+        - 값 변경에 threading.RLock 사용
+        - 모든 setter/getter는 thread-safe
+
+    Attributes:
+        _threshold: 전역 확률 임계값 (Decimal)
+        _ml_relaxed_threshold: ML 완화 임계값 (Decimal)
+        _observers: 등록된 observer 콜백 리스트
+        _change_history: 변경 이력 리스트
+
+    Note:
+        - 항상 get_instance()로 인스턴스를 얻으세요.
+        - 테스트 시 ThresholdManager.reset_instance()로 초기화하세요.
+        - 설정 파일: configs/adaptive_filter_config.yaml
+
+    See Also:
+        - FilterManager: 임계값 observer로 등록됨
+        - ThresholdOptimizer: Optuna 기반 임계값 최적화
+        - SmartAutoLearning: 24시간 자동 학습 시스템
     """
 
     # 싱글톤 패턴
     _instance = None
     _lock = threading.Lock()
     _initialized = False
+
+    def __new__(cls):
+        """ThresholdManager() 직접 호출 시에도 싱글톤 반환"""
+        return cls.get_instance()
 
     @classmethod
     def get_instance(cls):
@@ -108,6 +161,9 @@ class ThresholdManager:
             source: 변경 소스 (config, optimizer, manual)
         """
         with self._value_lock:
+            if value is None:
+                logging.warning(f"[ThresholdManager] set_threshold: None 값 무시 (소스: {source})")
+                return
             # Decimal로 변환 (소수점 2자리 반올림)
             new_value = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -146,6 +202,9 @@ class ThresholdManager:
             source: 변경 소스
         """
         with self._value_lock:
+            if value is None:
+                logging.warning(f"[ThresholdManager] set_ml_relaxed_threshold: None 값 무시 (소스: {source})")
+                return
             new_value = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
             # 범위 검증
@@ -183,6 +242,9 @@ class ThresholdManager:
             source: 변경 소스
         """
         with self._value_lock:
+            if value is None:
+                logging.warning(f"[ThresholdManager] set_ml_bypass_filters: None 값 무시 (소스: {source})")
+                return
             if not (8 <= value <= 20):
                 logging.warning(f"[ThresholdManager] ML 우회 필터 범위 초과 무시: {value} (허용: 8~20)")
                 return
@@ -212,6 +274,9 @@ class ThresholdManager:
             source: 변경 소스
         """
         with self._value_lock:
+            if value is None:
+                logging.warning(f"[ThresholdManager] set_ml_weight: None 값 무시 (소스: {source})")
+                return
             new_value = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
             if not (Decimal("0.1") <= new_value <= Decimal("1.0")):
@@ -464,6 +529,29 @@ class ThresholdManager:
                 f"{change.parameter}: {change.old_value} → {change.new_value} "
                 f"(소스: {change.source})"
             )
+
+    # ========================================================================
+    # 리소스 정리 (Phase 2.8)
+    # ========================================================================
+
+    def cleanup(self) -> None:
+        """
+        리소스 정리 - observer 목록 초기화 및 캐시 정리
+
+        테스트 격리나 시스템 종료 시 호출
+        """
+        with self._value_lock:
+            observer_count = len(self._observers)
+            self._observers.clear()
+            self._change_history.clear()
+            logging.debug(f"[ThresholdManager] 정리 완료: {observer_count}개 observer 해제")
+
+    def clear_observers(self) -> None:
+        """Observer 목록만 초기화 (테스트 격리용)"""
+        with self._value_lock:
+            observer_count = len(self._observers)
+            self._observers.clear()
+            logging.debug(f"[ThresholdManager] {observer_count}개 observer 해제")
 
     # ========================================================================
     # 유틸리티 메서드

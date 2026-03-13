@@ -1,14 +1,17 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import logging
-from collections import defaultdict
-from math import comb
-from tqdm import tqdm
-from ..utils.constants import LottoConstants
-from .specialized_databases import PatternsDB  # PatternsDB 클래스 import
-import json
+from collections import defaultdict, OrderedDict
+import time
+import threading
 
 class PatternManager:
     """당첨 번호의 패턴을 분석하고 관리하는 클래스"""
+
+    # ============================================================
+    # FIX CRITICAL-12: 캐시 크기 제한 상수
+    # ============================================================
+    MAX_CACHE_ENTRIES = 50  # 최대 캐시 항목 수
+    CACHE_TTL_SECONDS = 3600  # 캐시 TTL (1시간)
 
     def __init__(self, db_manager):
         """PatternManager 초기화
@@ -21,10 +24,11 @@ class PatternManager:
         self.winning_numbers = []  # 빈 리스트로 초기화
 
         # ============================================================
-        # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 캐싱
+        # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 캐싱 (크기 제한 적용)
         # ============================================================
-        # 패턴 분석 결과 캐시 (data_hash -> patterns)
-        self._pattern_cache = {}
+        # FIX CRITICAL-12: OrderedDict로 변경하여 LRU 퇴출 지원
+        self._pattern_cache = OrderedDict()  # data_hash -> {'data': patterns, 'timestamp': time}
+        self._cache_lock = threading.RLock()  # 스레드 안전성
         self._last_data_hash = None
 
         # 당첨 번호 데이터 로드 시도
@@ -35,9 +39,122 @@ class PatternManager:
             logging.error(f"당첨 번호 초기화 중 오류 발생: {str(e)}")
             self.winning_numbers = []  # 오류 발생 시 빈 리스트로 재설정
 
+    # ============================================================
+    # FIX CRITICAL-12: 캐시 관리 메서드 추가
+    # ============================================================
+    def _evict_expired_cache(self) -> int:
+        """만료된 캐시 항목 퇴출 (TTL 기반)
+
+        Returns:
+            int: 퇴출된 항목 수
+        """
+        current_time = time.time()
+        expired_keys = []
+
+        with self._cache_lock:
+            for key, value in self._pattern_cache.items():
+                if current_time - value.get('timestamp', 0) > self.CACHE_TTL_SECONDS:
+                    expired_keys.append(key)
+
+            for key in expired_keys:
+                del self._pattern_cache[key]
+
+        if expired_keys:
+            logging.debug(f"패턴 캐시: {len(expired_keys)}개 만료 항목 퇴출")
+
+        return len(expired_keys)
+
+    def _evict_lru_if_needed(self) -> int:
+        """캐시 크기 초과 시 LRU 퇴출
+
+        Returns:
+            int: 퇴출된 항목 수
+        """
+        evicted = 0
+
+        with self._cache_lock:
+            while len(self._pattern_cache) >= self.MAX_CACHE_ENTRIES:
+                # OrderedDict에서 가장 오래된 항목 (첫 번째) 제거
+                oldest_key = next(iter(self._pattern_cache))
+                del self._pattern_cache[oldest_key]
+                evicted += 1
+
+        if evicted:
+            logging.debug(f"패턴 캐시: LRU 정책으로 {evicted}개 항목 퇴출")
+
+        return evicted
+
+    def _get_cached_patterns(self, data_hash: str) -> Optional[Dict]:
+        """캐시에서 패턴 조회 (LRU 업데이트 포함)
+
+        Args:
+            data_hash: 데이터 해시
+
+        Returns:
+            Optional[Dict]: 캐시된 패턴 또는 None
+        """
+        with self._cache_lock:
+            if data_hash in self._pattern_cache:
+                entry = self._pattern_cache[data_hash]
+                current_time = time.time()
+
+                # TTL 확인
+                if current_time - entry.get('timestamp', 0) > self.CACHE_TTL_SECONDS:
+                    del self._pattern_cache[data_hash]
+                    return None
+
+                # LRU 업데이트: 항목을 끝으로 이동
+                self._pattern_cache.move_to_end(data_hash)
+                return entry.get('data')
+
+        return None
+
+    def _set_cached_patterns(self, data_hash: str, patterns: Dict) -> None:
+        """캐시에 패턴 저장
+
+        Args:
+            data_hash: 데이터 해시
+            patterns: 저장할 패턴
+        """
+        # 먼저 만료된 항목 정리
+        self._evict_expired_cache()
+
+        with self._cache_lock:
+            # 크기 제한 확인 및 LRU 퇴출
+            self._evict_lru_if_needed()
+
+            # 새 항목 저장
+            self._pattern_cache[data_hash] = {
+                'data': patterns,
+                'timestamp': time.time()
+            }
+
+            # OrderedDict에서 끝으로 이동 (가장 최근 사용)
+            self._pattern_cache.move_to_end(data_hash)
+
+    def get_cache_stats(self) -> Dict:
+        """캐시 상태 통계 반환
+
+        Returns:
+            Dict: 캐시 통계 정보
+        """
+        with self._cache_lock:
+            current_time = time.time()
+            valid_count = sum(
+                1 for v in self._pattern_cache.values()
+                if current_time - v.get('timestamp', 0) <= self.CACHE_TTL_SECONDS
+            )
+
+            return {
+                'total_entries': len(self._pattern_cache),
+                'valid_entries': valid_count,
+                'max_entries': self.MAX_CACHE_ENTRIES,
+                'ttl_seconds': self.CACHE_TTL_SECONDS
+            }
+
     def _sync_winning_numbers(self, lotto_db):
         """당첨 번호 동기화
-        
+
         Args:
             lotto_db: LottoNumbersDB 인스턴스
         """
@@ -101,13 +218,13 @@ class PatternManager:
                 return False
 
             # ============================================================
-            # 🚀 PERFORMANCE OPTIMIZATION: 캐시 확인
+            # 🚀 PERFORMANCE OPTIMIZATION: 캐시 확인 (FIX CRITICAL-12: 크기 제한 적용)
             # ============================================================
             data_hash = self._get_data_hash(winning_numbers)
-            if data_hash == self._last_data_hash and data_hash in self._pattern_cache:
+            cached_patterns = self._get_cached_patterns(data_hash)
+            if data_hash == self._last_data_hash and cached_patterns is not None:
                 logging.info(f"✅ 캐시된 패턴 분석 결과 사용 (hash: {data_hash[:8]}...)")
-                patterns = self._pattern_cache[data_hash]
-                self.db_manager.save_pattern_analysis(round_num, patterns)
+                self.db_manager.save_pattern_analysis(round_num, cached_patterns)
                 return True
 
             logging.info(f"✅ 분석 대상: {round_num}회차")
@@ -119,7 +236,7 @@ class PatternManager:
             
             # 모든 패턴 분석을 순차적으로 수행
             pattern_analyses = [
-                ('number_match', self._analyze_match_patterns),
+                ('match', self._analyze_match_patterns),
                 ('odd_even', self._analyze_odd_even_patterns),
                 ('consecutive', self._analyze_consecutive_patterns),
                 ('sum_range', self._analyze_sum_patterns),
@@ -168,11 +285,12 @@ class PatternManager:
 
             if any(patterns.values()):
                 # ============================================================
-                # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 결과 캐싱
+                # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 결과 캐싱 (FIX CRITICAL-12: 크기 제한 적용)
                 # ============================================================
-                self._pattern_cache[data_hash] = patterns
+                self._set_cached_patterns(data_hash, patterns)
                 self._last_data_hash = data_hash
-                logging.info(f"✅ 패턴 분석 결과 캐시 저장 (hash: {data_hash[:8]}...)")
+                cache_stats = self.get_cache_stats()
+                logging.info(f"✅ 패턴 분석 결과 캐시 저장 (hash: {data_hash[:8]}..., 항목: {cache_stats['total_entries']}/{cache_stats['max_entries']})")
 
                 self.db_manager.save_pattern_analysis(round_num, patterns)
                 self._log_pattern_analysis(patterns)
@@ -623,7 +741,8 @@ class PatternManager:
     def _log_pattern_analysis(self, patterns: Dict) -> None:
         """패턴 분석 결과 출력"""
         logging.info("\n1. 번호 일치 패턴 분포:")
-        for k, v in patterns['number_match'].items():
+        # FIX: 'number_match' → 'match' (패턴 저장 키와 일치)
+        for k, v in patterns['match'].items():
             logging.info(f"   {k}개 일치: {v:.2f}%")
             
         logging.info("\n2. 홀짝 분포:")
@@ -1052,26 +1171,32 @@ class PatternManager:
         }
 
     def _find_max_geometric_sequence(self, numbers: List[int]) -> int:
-        """가장 긴 등비수열의 길이 찾기"""
+        """가장 긴 등비수열의 길이 찾기
+
+        FIX: 부동소수점 비교 및 Division by Zero 문제 수정
+        """
         n = len(numbers)
         max_length = 2
-        
+        EPSILON = 1e-9  # 부동소수점 비교 허용 오차
+
         for i in range(n-2):
             for j in range(i+1, n-1):
                 if numbers[j] == 0 or numbers[i] == 0: continue  # 0으로는 나눌 수 없음
                 ratio = numbers[j] / numbers[i]
-                if ratio == 1: continue  # 비율이 1이면 동일한 수
-                
+                # FIX: 부동소수점 비교에 허용 오차 적용
+                if abs(ratio - 1.0) < EPSILON: continue  # 비율이 1이면 동일한 수
+
                 current_length = 2
                 last = numbers[j]
-                
+
                 for k in range(j+1, n):
-                    if numbers[k] / last == ratio:
+                    # FIX: last가 0인 경우 Division by Zero 방지 및 부동소수점 비교
+                    if last != 0 and abs(numbers[k] / last - ratio) < EPSILON:
                         current_length += 1
                         last = numbers[k]
-                
+
                 max_length = max(max_length, current_length)
-        
+
         return max_length if max_length >= 3 else 0
 
     # 추가: 홀짝 교차 패턴 분석

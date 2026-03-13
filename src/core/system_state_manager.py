@@ -18,12 +18,37 @@ class SystemStateManager:
 
     STATE_FILE = "data/system_state.json"
 
-    def __init__(self):
-        """시스템 상태 관리자 초기화"""
+    def __init__(self, weekly_cycle_manager=None, backtesting_func=None):
+        """
+        시스템 상태 관리자 초기화
+
+        Args:
+            weekly_cycle_manager: WeeklyCycleManager 인스턴스 (선택)
+            backtesting_func: 백테스팅 함수 (선택)
+        """
         self.state_file = Path(self.STATE_FILE)
         self.state = self._load_state()
 
+        # ✨ NEW: Weekly Cycle Manager 통합
+        self.weekly_cycle_manager = weekly_cycle_manager
+        self.backtesting_func = backtesting_func
+
         logging.info("[SystemStateManager] 상태 관리자 초기화 완료")
+        if self.weekly_cycle_manager:
+            logging.info("[SystemStateManager] ✨ WeeklyCycleManager 통합됨")
+
+    def set_weekly_cycle_manager(self, weekly_cycle_manager, backtesting_func=None):
+        """
+        ✨ NEW: WeeklyCycleManager 설정 (나중에 설정 가능)
+
+        Args:
+            weekly_cycle_manager: WeeklyCycleManager 인스턴스
+            backtesting_func: 백테스팅 함수 (선택)
+        """
+        self.weekly_cycle_manager = weekly_cycle_manager
+        if backtesting_func:
+            self.backtesting_func = backtesting_func
+        logging.info("[SystemStateManager] WeeklyCycleManager 설정 완료")
 
     def _load_state(self) -> Dict[str, Any]:
         """상태 파일 로드"""
@@ -91,6 +116,22 @@ class SystemStateManager:
                 logging.info(f"  - 패턴 분석: {pattern_round}회차")
                 logging.info(f"  - 필터 업데이트: {filter_round}회차")
                 logging.info(f"  - ML 캐시: {ml_round}회차")
+
+                # ✨ NEW: WeeklyCycleManager에 새 회차 알림
+                if self.weekly_cycle_manager and self.backtesting_func:
+                    try:
+                        logging.info(f"[SystemState] ✨ WeeklyCycleManager에 새 회차 알림: Round #{db_round}")
+                        cycle_started = self.weekly_cycle_manager.on_new_round_detected(
+                            round_num=db_round,
+                            backtesting_func=self.backtesting_func
+                        )
+                        if cycle_started:
+                            logging.info(f"[SystemState] ✅ 새 사이클 시작됨: Round #{db_round}")
+                        else:
+                            logging.info(f"[SystemState] ℹ️ 무한 학습 모드 비활성화 또는 사이클 시작 실패")
+                    except Exception as e:
+                        logging.error(f"[SystemState] WeeklyCycleManager 호출 실패: {e}")
+
                 return True
 
             # 상태 파일 컴포넌트별 불일치 확인

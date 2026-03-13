@@ -294,9 +294,9 @@ def setup_logging(config_path: str = None):
     Args:
         config_path: 설정 파일 경로 (기본값: None)
     """
-    # 이미 설정되어 있으면 스킵
+    # 이미 설정되어 있으면 로거 반환 (None 반환 버그 수정)
     if hasattr(setup_logging, '_initialized') and setup_logging._initialized:
-        return
+        return logging.getLogger()
         
     try:
         # 기본 로그 디렉토리 생성
@@ -360,7 +360,8 @@ def setup_logging(config_path: str = None):
             log_file,
             maxBytes=max_size,
             backupCount=backup_count,
-            encoding='utf-8'
+            encoding='utf-8',
+            mode='a'
         )
         file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
@@ -414,6 +415,9 @@ def setup_logging(config_path: str = None):
 
         # ✅ FIX: except 블록에서도 플래그 설정 (중복 호출 방지)
         setup_logging._initialized = True
+
+    # 항상 로거 반환 (None 반환 버그 수정)
+    return logging.getLogger()
 
 # ==================== 구조화 로깅 헬퍼 함수 ====================
 

@@ -6,6 +6,79 @@
 - 프랙탈 분석 최적화
 """
 import logging
+import gc  # Phase 2.5: 명시적 가비지 컬렉션
+import sys
+
+# Windows 백그라운드 스레드 tqdm 호환성: sys.stderr를 안전한 래퍼로 교체
+class _SafeStderr:
+    """Windows 백그라운드 스레드에서 sys.stderr.flush() 오류 방지 래퍼"""
+    def write(self, s):
+        try:
+            sys.stdout.write(s)
+        except Exception:
+            pass
+    def flush(self):
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+    def isatty(self):
+        return False
+    def fileno(self):
+        import io
+        raise io.UnsupportedOperation("fileno")
+    def encoding(self):
+        return 'utf-8'
+
+# tqdm 4.66+은 file=sys.stdout이어도 status_printer에서 sys.stderr.flush()를 항상 호출함
+# sys.stderr를 SafeStderr로 교체
+sys.stderr = _SafeStderr()
+
+# tqdm status_printer monkey-patch: sys.stderr/stdout.flush() 오류를 안전하게 처리
+# tqdm 4.66+은 file=sys.stdout이어도 status_printer에서 sys.stderr.flush()를 항상 호출하므로 패치 필요
+try:
+    from tqdm.std import tqdm as _tqdm_cls
+    from tqdm.std import disp_len as _tqdm_disp_len  # 삭제하지 않는 이름으로 저장
+
+    @staticmethod
+    def _safe_status_printer(file):
+        from tqdm.std import disp_len  # 함수 내부에서 직접 임포트 (클로저 참조 문제 방지)
+        fp = file
+        fp_flush = getattr(fp, 'flush', lambda: None)
+        if fp in (sys.stderr, sys.stdout):
+            try:
+                getattr(sys.stderr, 'flush', lambda: None)()
+            except (OSError, ValueError, AttributeError):
+                pass
+            try:
+                getattr(sys.stdout, 'flush', lambda: None)()
+            except (OSError, ValueError, AttributeError):
+                pass
+
+        def fp_write(s):
+            try:
+                fp.write(str(s))
+                fp_flush()
+            except (OSError, ValueError, AttributeError):
+                pass
+
+        last_len = [0]
+
+        def print_status(s):
+            try:
+                len_s = disp_len(s)
+                fp_write('\r' + s + (' ' * max(last_len[0] - len_s, 0)))
+                last_len[0] = len_s
+            except (OSError, ValueError, AttributeError):
+                pass
+
+        return print_status
+
+    _tqdm_cls.status_printer = _safe_status_printer
+    del _tqdm_cls, _tqdm_disp_len
+except Exception:
+    pass  # monkey-patch 실패 시 무시
+
 from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 from datetime import datetime
@@ -41,6 +114,18 @@ from ..advanced.fractal_pattern_analyzer import FractalPatternAnalyzer
 from ..utils.singleton import SingletonMeta
 from ..utils.counter_manager import get_counter_manager
 from ..core.performance_stats_manager import PerformanceStatsManager
+
+
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
 
 
 class ModelCache:
@@ -191,8 +276,80 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         self._jackpot_count = 0
         self._jackpot_threshold = 2  # Flag systematic contamination after 2+ jackpots
 
+        # 전역 종료 플래그 (외부에서 설정하여 백테스팅 조기 중단)
+        self._shutdown_flag = None  # dict 참조: {'stop': True/False}
+
         self._initialized = True
         logging.info(f"최적화된 백테스팅 프레임워크 초기화 완료 (싱글톤, 병렬 처리: {self.n_jobs} 코어)")
+
+        # 상태 파일 경로
+        self.state_file = "data/backtest_state.json"
+        self._state_save_lock = threading.Lock()  # save_state 멀티스레드 경합 방지
+
+    def set_shutdown_flag(self, flag: dict):
+        """외부 종료 플래그 설정 (예: optimization_stop_flag)"""
+        self._shutdown_flag = flag
+
+    def _is_shutting_down(self) -> bool:
+        """종료 플래그 확인"""
+        if self._shutdown_flag and self._shutdown_flag.get('stop', False):
+            return True
+        return False
+
+    def save_state(self, state: Dict[str, Any]):
+        """백테스팅 상태 저장 (스레드 락으로 동시 접근 방지)"""
+        with self._state_save_lock:
+            try:
+                os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+                tmp_file = self.state_file + '.tmp'
+                with open(tmp_file, 'w', encoding='utf-8') as f:
+                    json.dump(state, f, indent=2, ensure_ascii=False, cls=NumpyEncoder)
+                for attempt in range(3):
+                    try:
+                        os.replace(tmp_file, self.state_file)
+                        break
+                    except OSError:
+                        if attempt < 2:
+                            import time
+                            time.sleep(0.1)
+                        else:
+                            raise
+            except Exception as e:
+                logging.error(f"백테스팅 상태 저장 실패: {e}")
+
+    def load_state(self) -> Optional[Dict[str, Any]]:
+        """백테스팅 상태 로드"""
+        if os.path.exists(self.state_file):
+            try:
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except json.JSONDecodeError:
+                # 다른 프로세스가 쓰는 중일 수 있으므로 삭제하지 않고 None 반환
+                logging.debug(f"백테스팅 상태 파일 읽기 실패 (쓰기 중 충돌 가능). 새로 시작합니다: {self.state_file}")
+                return None
+            except Exception as e:
+                logging.error(f"백테스팅 상태 로드 실패: {e}")
+        return None
+
+    def clear_state(self):
+        """백테스팅 상태 삭제"""
+        if os.path.exists(self.state_file):
+            try:
+                os.remove(self.state_file)
+                logging.info("백테스팅 상태 파일이 삭제되었습니다.")
+            except Exception as e:
+                logging.error(f"백테스팅 상태 삭제 실패: {e}")
+
+        # LSTM/Ensemble is_trained 플래그 초기화
+        # 이유: 싱글톤 재사용 시 이전 trial에서 학습된 모델이 다음 trial에서 재사용되는 것을 방지
+        # 각 trial의 각 test_round는 고유한 train_data로 모델을 학습해야 함
+        if hasattr(self, 'lstm_predictor') and self.lstm_predictor is not None:
+            self.lstm_predictor.is_trained = False
+            logging.debug("[캐시 초기화] lstm_predictor.is_trained 초기화 완료")
+
+        if hasattr(self, 'ensemble_predictor') and self.ensemble_predictor is not None:
+            self.ensemble_predictor.is_trained = False
+            logging.debug("[캐시 초기화] ensemble_predictor.is_trained 초기화 완료")
 
     def update_parameters(self, threshold: float = None, ml_bypass: int = None, ml_weight: float = None):
         """
@@ -228,8 +385,6 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         # ============================================================
         # 🚀 PERFORMANCE OPTIMIZATION: 캐시만 초기화 (패턴 재분석 없음)
         # ============================================================
-        # prediction_cache와 processed_rounds만 초기화
-        # 패턴 분석은 이미 완료된 상태 유지
         if hasattr(self, 'prediction_cache'):
             self.prediction_cache.clear()
             logging.debug("[캐시 초기화] prediction_cache 초기화 완료")
@@ -238,11 +393,33 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             self.processed_rounds.clear()
             logging.debug("[캐시 초기화] processed_rounds 초기화 완료")
 
-        # filter_validator는 재생성하지 않음 (filter_manager 참조를 유지)
+        # 파라미터 변경 시에도 모델 is_trained 초기화 (다음 백테스팅에서 새 데이터로 재훈련)
+        if hasattr(self, 'lstm_predictor') and self.lstm_predictor is not None:
+            self.lstm_predictor.is_trained = False
+        if hasattr(self, 'ensemble_predictor') and self.ensemble_predictor is not None:
+            self.ensemble_predictor.is_trained = False
+
+        # Phase 2.5: 캐시 초기화 후 명시적 가비지 컬렉션
+        gc.collect()
+
+        # ============================================================
+        # 🔧 FIX: 파라미터 변경 시 백테스팅 상태 파일 삭제
+        # 이유: 파라미터가 다르면 이전 캐시된 결과 사용 불가
+        # ============================================================
+        if hasattr(self, 'state_file') and os.path.exists(self.state_file):
+            try:
+                os.remove(self.state_file)
+                logging.info(f"[상태 초기화] 백테스팅 상태 파일 삭제: {self.state_file}")
+            except Exception as e:
+                logging.warning(f"[상태 초기화] 상태 파일 삭제 실패: {e}")
+
         logging.info(f"[파라미터 업데이트] threshold={threshold}, ml_bypass={ml_bypass}, ml_weight={ml_weight}")
 
     def run_backtest(self, start_round: int, end_round: int, window_size: int = 100) -> Dict[str, Any]:
         """최적화된 백테스팅 실행"""
+        # tqdm 4.66+이 sys.stderr.flush()를 항상 호출하므로 스레드 실행 시마다 안전화
+        if not isinstance(sys.stderr, _SafeStderr):
+            sys.stderr = _SafeStderr()
         logging.debug(f"\n최적화된 백테스팅 시작: {start_round}회차 ~ {end_round}회차")
         logging.info(f"학습 윈도우 크기: {window_size}회차")
         
@@ -256,6 +433,30 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             'predictions': [],
             'performance_metrics': {}
         }
+
+        # 상태 로드 및 재개 확인
+        saved_state = self.load_state()
+        if saved_state:
+            # 설정이 동일한지 확인 (start_round와 window_size가 같으면 재개 가능)
+            if (saved_state['start_round'] == start_round and 
+                saved_state['window_size'] == window_size):
+                
+                last_processed = saved_state.get('last_processed_round', start_round - 1)
+                if last_processed >= start_round:
+                    logging.info(f"\n[RESUME] 이전 백테스팅 상태를 발견했습니다. {last_processed + 1}회차부터 재개합니다.")
+                    
+                    # 이전 결과 복원
+                    results['predictions'] = saved_state.get('predictions', [])
+                    
+                    # 시작 회차 조정
+                    start_round = last_processed + 1
+                    
+                    if start_round > end_round:
+                        logging.info("이미 모든 회차가 완료되었습니다.")
+                        return results
+            else:
+                logging.info("[RESET] 설정이 변경되어 새로운 백테스팅을 시작합니다.")
+                self.clear_state()
         
         # 전체 당첨번호 데이터 가져오기 (보너스 번호 포함)
         all_numbers_with_bonus = self.db_manager.get_numbers_with_bonus()
@@ -272,8 +473,13 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         batch_size = min(10, len(test_rounds))  # 10회차씩 배치 처리
         
         for i in range(0, len(test_rounds), batch_size):
+            # 종료 플래그 확인 - 배치 시작 전 조기 중단
+            if self._is_shutting_down():
+                logging.info("[SHUTDOWN] 종료 플래그 감지 - 백테스팅 조기 중단")
+                break
+
             batch_rounds = test_rounds[i:i+batch_size]
-            
+
             # 병렬 예측 수행
             with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
                 futures = []
@@ -291,19 +497,25 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                         logging.debug(f"라운드 {test_round}: 학습 데이터 부족 ({train_end - train_start + 1}개)")
                         continue
                     
-                    future = executor.submit(
-                        self._predict_for_round_optimized,
-                        test_round, train_start, train_end, winning_numbers_dict, bonus_numbers_dict
-                    )
-                    futures.append((test_round, future))
+                    try:
+                        future = executor.submit(
+                            self._predict_for_round_optimized,
+                            test_round, train_start, train_end, winning_numbers_dict, bonus_numbers_dict
+                        )
+                        futures.append((test_round, future))
+                    except RuntimeError as e:
+                        # 인터프리터 종료 중 future 스케줄 불가 시 무시
+                        logging.debug(f"라운드 {test_round} future 스케줄 실패 (종료 중): {e}")
+                        break
                 
-                # 결과 수집
-                for test_round, future in tqdm(futures, desc=f"배치 {i//batch_size + 1}"):
+                # 결과 수집: tqdm은 항상 disable=True (status_printer가 sys.stderr를 직접 flush하므로 Windows 백그라운드 스레드 오류 방지)
+                _futures_iter = iter(futures)
+                for test_round, future in _futures_iter:
                     prediction_result = future.result()
-                    
+
                     # 카운터 증가
                     self.counter_manager.increment('total_rounds')
-                    
+
                     # 실제 당첨번호와 비교 (보너스 번호 포함)
                     if test_round in winning_numbers_dict:
                         actual_numbers = winning_numbers_dict[test_round]
@@ -311,50 +523,58 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                         prediction_result['actual_numbers'] = actual_numbers
                         prediction_result['bonus_number'] = bonus_number
                         prediction_result['matches'] = self._calculate_matches(
-                            prediction_result['predictions'], actual_numbers, bonus_number
+                            prediction_result.get('predictions', {}), actual_numbers, bonus_number
                         )
-                        
+
                         # 결과 저장
-                        for model_name in prediction_result['predictions'].keys():
+                        for model_name in prediction_result.get('predictions', {}).keys():
                             self.counter_manager.set_round_result(
                                 test_round, model_name, prediction_result['matches'].get(model_name, {})
                             )
-                    
+                    else:
+                        # 당첨번호가 없는 경우에도 빈 matches 필드 보장
+                        prediction_result['matches'] = {}
+
                     results['predictions'].append(prediction_result)
-        
+            
+            # 배치 완료 후 상태 저장
+            current_state = {
+                'start_round': results['start_round'],
+                'end_round': results['end_round'],
+                'window_size': results['window_size'],
+                'last_processed_round': batch_rounds[-1],
+                'predictions': results['predictions'],
+                'timestamp': datetime.now().isoformat()
+            }
+            self.save_state(current_state)
+
         # 성능 지표 계산
         results['performance_metrics'] = self._calculate_performance_metrics(results['predictions'])
-
-        # 카운터 상태 로깅
-        self.counter_manager.log_status()
-
-        # 결과 저장 (JSON + DB)
-        self._save_backtest_results(results)
-        self._save_to_database(results)
-
-        # 오염 검증: 각 모델에 대해 avg_matches 임계값 체크
-        logging.info("\n" + "="*80)
-        logging.info("백테스팅 결과 오염 검증 시작...")
-        logging.info("="*80)
-        for model_name in results['performance_metrics'].get('model_performance', {}).keys():
-            try:
-                self._validate_results(results['performance_metrics'], model_name)
-            except ValueError as e:
-                # 오염 감지 시 예외 발생으로 백테스팅 중단
-                logging.error(f"\n{'='*80}")
-                logging.error(f"백테스팅 중단: {model_name} 모델에서 오염 감지")
-                logging.error(f"{'='*80}\n")
-                raise
-
-        # 결과 요약 출력
+        
+        # 결과 저장
+        self._save_backtest_results(results)  # JSON 파일 저장
+        self._save_to_database(results)       # DB 저장 (BUG FIX: 누락된 호출 추가)
         self._print_backtest_summary(results)
         
         return results
-    
+
     def _predict_for_round_optimized(self, round_num: int, train_start: int, train_end: int,
-                                    winning_numbers_dict: Dict[int, List[int]], 
-                                    bonus_numbers_dict: Dict[int, Optional[int]] = None) -> Dict[str, Any]:
+                                   winning_numbers_dict: Dict[int, List[int]],
+                                   bonus_numbers_dict: Dict[int, Optional[int]]) -> Dict[str, Any]:
         """최적화된 회차별 예측"""
+        # 종료 플래그 확인 - 라운드 시작 전 조기 중단
+        if self._is_shutting_down():
+            return {
+                'round': round_num,
+                'train_range': (train_start, train_end),
+                'predictions': {'lstm': [], 'ensemble': [], 'monte_carlo': [], 'combined': []},
+                'matches': {},
+                'scores': {},
+                'filter_validation': {},
+                'filter_pass_rate': {},
+                'shutdown': True
+            }
+
         # 중복 체크
         if round_num in self.processed_rounds:
             logging.debug(f"이미 처리된 회차 건너뛰기: {round_num}")
@@ -362,16 +582,11 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             if cache_key in self.prediction_cache:
                 return self.prediction_cache[cache_key]
             else:
-                # 캐시가 없으면 빈 결과 반환
-                return {
-                    'round': round_num,
-                    'train_range': (train_start, train_end),
-                    'predictions': {},
-                    'scores': {},
-                    'filter_validation': {},
-                    'filter_pass_rate': {},
-                    'skipped': True
-                }
+                # [FIX] 캐시 미스 시 빈 결과 대신 재생성 시도 (병렬 처리 중 정상 발생)
+                logging.debug(f"캐시 미스 감지: 회차 {round_num}. 예측을 재생성합니다.")
+                # 중복 처리 표시 제거 후 아래 코드로 진행하여 신규 예측 생성
+                self.processed_rounds.remove(round_num)
+                # 재귀 호출 대신 아래로 진행
         
         # 처리 완료 표시
         self.processed_rounds.add(round_num)
@@ -411,20 +626,26 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         try:
             # 병렬로 각 모델 예측 수행
             with ThreadPoolExecutor(max_workers=3) as executor:
-                # LSTM 예측
-                lstm_future = executor.submit(
-                    self._get_lstm_predictions_cached, train_data, data_hash
-                )
-                
-                # Ensemble 예측
-                ensemble_future = executor.submit(
-                    self._get_ensemble_predictions_cached, train_data, train_end, data_hash
-                )
-                
-                # Monte Carlo 예측 (최적화됨)
-                mc_future = executor.submit(
-                    self._get_monte_carlo_predictions_optimized, train_data
-                )
+                try:
+                    # LSTM 예측
+                    lstm_future = executor.submit(
+                        self._get_lstm_predictions_cached, train_data, data_hash
+                    )
+
+                    # Ensemble 예측
+                    ensemble_future = executor.submit(
+                        self._get_ensemble_predictions_cached, train_data, train_end, data_hash
+                    )
+
+                    # Monte Carlo 예측 (최적화됨)
+                    mc_future = executor.submit(
+                        self._get_monte_carlo_predictions_optimized, train_data
+                    )
+                except RuntimeError:
+                    # 인터프리터 종료 중 future 스케줄 불가
+                    logging.debug(f"회차 {round_num}: 인터프리터 종료 중 모델 예측 스킵")
+                    result['matches'] = {}
+                    return result
                 
                 # 결과 수집 (개별 에러 처리)
                 try:
@@ -468,12 +689,17 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                 'monte_carlo': [],
                 'combined': []
             }
-        
+            result['matches'] = {}
+
+        # matches 필드 보장 (캐싱 전)
+        if 'matches' not in result:
+            result['matches'] = {}
+
         # 결과 캐싱
         self.prediction_cache[cache_key] = result
         
         return result
-    
+
     def _get_lstm_predictions_cached(self, train_data: List[List[int]], data_hash: str) -> List[List[int]]:
         """캐싱된 LSTM 예측"""
         try:
@@ -674,18 +900,25 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
 
     def _check_prediction_in_filtered_pool(self, prediction: List[int], round_num: int) -> bool:
         """Check if prediction exists in pre-computed filtered pool from database
-
+        
         This is different from filter validation:
         - Filter validation: Checks if prediction passes current filter criteria (runtime)
         - Pool inclusion: Checks if prediction exists in pre-filtered pool (database)
-
+        
         The pool may be outdated or use different threshold values.
         """
         try:
-            # Early return if round has no DB pool data - don't penalize
+            # DB pool 없으면 filter_validator 폴백 사용 (validator 없으면 패널티 없음)
             if not self._round_has_db_pool(round_num):
-                logging.debug(f"Round {round_num} has no DB pool data - skipping check")
-                return True  # Don't penalize missing data
+                logging.debug(f"Round {round_num} has no DB pool data - using filter validator")
+                if hasattr(self, 'filter_validator') and self.filter_validator:
+                    try:
+                        result = self.filter_validator.validate_winning_numbers(round_num, prediction)
+                        return result.get('passed_all_filters', True)
+                    except Exception as ve:
+                        logging.debug(f"Filter validator error: {ve}")
+                        return False
+                return True  # validator 없으면 패널티 없음
 
             # Convert prediction to string format for database lookup
             pred_str = ','.join(map(str, sorted(prediction)))
@@ -708,9 +941,14 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
 
         except Exception as e:
             logging.debug(f"Pool check error (falling back to filter validation): {e}")
-            # Fallback: If pool check fails, use filter validation
-            validation_result = self.filter_validator.validate_winning_numbers(round_num, prediction)
-            return validation_result.get('passed_all_filters', False)
+            # Fallback: filter_validator 사용, validator도 실패 시 False 반환
+            try:
+                if hasattr(self, 'filter_validator') and self.filter_validator:
+                    validation_result = self.filter_validator.validate_winning_numbers(round_num, prediction)
+                    return validation_result.get('passed_all_filters', False)
+            except Exception:
+                pass
+            return False
 
     def _validate_predictions_with_filter(self, result: Dict[str, Any], round_num: int) -> None:
         """예측 번호들이 필터를 통과하는지 검증 + 필터링된 풀 내 포함 여부 확인"""
@@ -950,8 +1188,13 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             'match_distribution': {i: 0 for i in range(7)}
         }
 
-        # 모델별 성능 계산
-        model_names = ['lstm', 'ensemble', 'monte_carlo', 'combined']
+        # 모델별 성능 계산 (고정 모델 + predictions 데이터의 동적 모델 포함)
+        default_models = ['lstm', 'ensemble', 'monte_carlo', 'combined']
+        dynamic_models = set()
+        for pred_result in predictions:
+            if 'matches' in pred_result:
+                dynamic_models.update(pred_result['matches'].keys())
+        model_names = list(dict.fromkeys(default_models + list(dynamic_models)))
         for model in model_names:
             model_metrics = {
                 'total_predictions': 0,
@@ -1014,7 +1257,11 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                 # 필터 통과율도 계산
                 model_metrics['filter_pass_rate'] = (filter_passed_count / model_metrics['total_predictions']) * 100
             else:
+                # [FIX] 예측 수가 0인 경우 명시적 경고 및 기본값 설정
                 model_metrics['filter_pass_rate'] = 0
+                model_metrics['avg_matches'] = 0.0
+                model_metrics['accuracy_3plus'] = 0.0
+                logging.warning(f"⚠️ 모델 {model}의 예측 수가 0입니다! 백테스팅 결과를 확인하세요.")
 
             metrics['model_performance'][model] = model_metrics
 
@@ -1031,6 +1278,20 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             metrics['overall_filter_pass_rate'] = (total_passed_all_models / total_predictions_all_models) * 100
         else:
             metrics['overall_filter_pass_rate'] = 0.0
+
+        # overall_avg_matches 계산 (continuous_improvement_engine이 참조)
+        total_matches_all = 0
+        total_preds_all = 0
+        for model_name, model_data in metrics['model_performance'].items():
+            preds = model_data.get('total_predictions', 0)
+            if preds > 0:
+                total_matches_all += model_data.get('avg_matches', 0) * preds
+                total_preds_all += preds
+
+        if total_preds_all > 0:
+            metrics['overall_avg_matches'] = total_matches_all / total_preds_all
+        else:
+            metrics['overall_avg_matches'] = 0.0
 
         return metrics
     

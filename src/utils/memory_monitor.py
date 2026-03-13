@@ -9,6 +9,7 @@ import time
 from typing import Optional, Dict, List
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections import deque
 import threading
 
 @dataclass
@@ -34,7 +35,7 @@ class MemoryMonitor:
         self.enable_warnings = enable_warnings  # 경고 활성화 플래그
         self.logger = logging.getLogger(__name__)
         self.process = psutil.Process()
-        self.snapshots: List[MemorySnapshot] = []
+        self.snapshots: deque = deque(maxlen=1000)
         self.baseline_mb: Optional[float] = None
         self.peak_mb: float = 0
         self.monitoring = False
@@ -142,7 +143,7 @@ class MemoryMonitor:
         # 주요 스냅샷
         if len(self.snapshots) > 0:
             lines.append(f"\n주요 스냅샷 (최근 5개):")
-            for snapshot in self.snapshots[-5:]:
+            for snapshot in list(self.snapshots)[-5:]:
                 if snapshot.description:
                     lines.append(f"  - {snapshot.description}: {snapshot.rss_mb:.1f}MB")
 
@@ -207,3 +208,37 @@ def log_memory(stage: str = ""):
     """간편 메모리 로깅"""
     monitor = get_memory_monitor()
     monitor.log_memory_usage(stage)
+
+
+def force_memory_cleanup(threshold_percent: float = 80.0) -> float:
+    """
+    Phase 2.5: 강제 메모리 정리 유틸리티
+
+    Args:
+        threshold_percent: 메모리 사용률 임계값 (이 값 초과시만 정리)
+
+    Returns:
+        float: 해제된 메모리 양 (MB), 정리가 필요 없었으면 0
+    """
+    import gc
+    import psutil
+
+    sys_mem = psutil.virtual_memory()
+
+    # 임계값 초과시만 정리
+    if sys_mem.percent < threshold_percent:
+        return 0.0
+
+    process = psutil.Process()
+    before_mb = process.memory_info().rss / 1024 / 1024
+
+    # 강제 가비지 컬렉션
+    gc.collect()
+
+    after_mb = process.memory_info().rss / 1024 / 1024
+    freed_mb = before_mb - after_mb
+
+    if freed_mb > 1.0:  # 1MB 이상 해제된 경우만 로깅
+        logging.debug(f"[메모리 정리] {freed_mb:.1f}MB 해제됨 (시스템 사용률: {sys_mem.percent:.1f}%)")
+
+    return max(0.0, freed_mb)

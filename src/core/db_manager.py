@@ -2,7 +2,6 @@ import os
 from typing import Dict, List, Optional, Tuple, Any
 import logging
 import sqlite3
-import json
 import threading
 from .db_structure import DatabasePaths
 from .specialized_databases import (
@@ -14,8 +13,47 @@ from .specialized_databases import (
 from ..utils.constants import LottoConstants
 
 class DatabaseManager:
-    """통합 데이터베이스 관리자 (Singleton Pattern)"""
-    
+    """
+    통합 데이터베이스 관리자 (Singleton Pattern)
+
+    로또 예측 시스템의 모든 데이터베이스 접근을 중앙 관리하는 싱글톤 클래스입니다.
+    여러 특화된 데이터베이스(당첨번호, 조합, 필터, 패턴)를 통합하여
+    일관된 인터페이스를 제공합니다.
+
+    주요 기능:
+        - 당첨번호 데이터 관리 (LottoNumbersDB)
+        - 조합 데이터 캐싱 (CombinationsDB)
+        - 16개 필터 결과 저장 (FilterDB)
+        - 패턴 분석 결과 저장 (PatternsDB)
+        - 이벤트 기반 콜백 시스템
+
+    사용 예시:
+        >>> db = DatabaseManager()  # 싱글톤 인스턴스 반환
+        >>> numbers = db.get_numbers_with_bonus()  # 보너스 포함 당첨번호
+        >>> last_round = db.get_last_round()  # 마지막 회차
+
+    Thread Safety:
+        - 싱글톤 패턴에 threading.Lock 사용
+        - 각 특화 DB는 자체 연결 풀 관리
+        - WAL 모드로 동시 읽기/쓰기 지원
+
+    Events:
+        - new_round_added: 새 회차 추가 시
+        - data_updated: 데이터 업데이트 시
+        - pattern_updated: 패턴 분석 완료 시
+        - filter_updated: 필터 결과 업데이트 시
+
+    Note:
+        - 절대 직접 인스턴스를 생성하지 마세요. DatabaseManager()로 접근하세요.
+        - 테스트 시 DatabaseManager._instance = None으로 초기화하세요.
+
+    See Also:
+        - LottoNumbersDB: 당첨번호 전용 DB
+        - CombinationsDB: 조합 데이터 전용 DB
+        - FilterDB: 필터 결과 전용 DB
+        - PatternsDB: 패턴 분석 전용 DB
+    """
+
     _instance = None
     _lock = threading.Lock()
     _initialized = False
@@ -29,12 +67,13 @@ class DatabaseManager:
         return cls._instance
     
     def __init__(self, base_dir: str = 'data'):
-        # 이미 초기화되었으면 재초기화 방지
-        if DatabaseManager._initialized:
+        # 이미 초기화되었으면 재초기화 방지 (인스턴스 속성 기반 체크)
+        # _initialized 클래스 변수만 체크하면 _instance=None 리셋 후 빈 인스턴스 생성 버그 발생
+        if hasattr(self, 'lotto_db'):
             return
 
         with DatabaseManager._lock:
-            if DatabaseManager._initialized:
+            if hasattr(self, 'lotto_db'):
                 return
 
             self.paths = DatabasePaths(base_dir)
@@ -84,7 +123,8 @@ class DatabaseManager:
                 'prime_composite': 'prime_composite_filter.db',
                 'digit_sum': 'digit_sum_filter.db',
                 'dispersion': 'dispersion_filter.db',
-                'ml_prediction': 'ml_prediction_filter.db'        # ML 예측 필터 추가
+                'ml_prediction': 'ml_prediction_filter.db',       # ML 예측 필터 추가
+                'ac_value': 'ac_value_filter.db'                  # AC값 필터 추가
             }
             
             # 각 필터의 DB 파일 생성 및 초기화
@@ -149,13 +189,26 @@ class DatabaseManager:
         Args:
             event: 이벤트 타입
             *args, **kwargs: 콜백 함수에 전달할 인자
+
+        Note:
+            부분 실패를 허용하며, 실패한 콜백은 로그에 기록
         """
         if event in self.event_callbacks:
+            failed_callbacks = []
             for callback in self.event_callbacks[event]:
                 try:
                     callback(*args, **kwargs)
                 except Exception as e:
-                    logging.error(f"[DatabaseManager] {event} 콜백 실행 오류: {e}")
+                    callback_name = getattr(callback, '__name__', repr(callback))
+                    logging.error(f"[DatabaseManager] {event} 콜백 실행 오류 ({callback_name}): {e}")
+                    failed_callbacks.append((callback_name, e))
+
+            # 실패 요약 로그
+            if failed_callbacks:
+                logging.warning(
+                    f"[DatabaseManager] {len(failed_callbacks)}/{len(self.event_callbacks[event])} "
+                    f"callbacks failed for '{event}' event"
+                )
 
     def get_last_round(self) -> int:
         """마지막으로 저장된 회차 번호 조회"""

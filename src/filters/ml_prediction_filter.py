@@ -71,29 +71,29 @@ class MLPredictionFilter(BaseFilter):
                 # 기본 예측 방식
                 probabilities = np.ones(45) / 45  # 균등 분포
             
-            # 조합 필터링
-            filtered_combinations = []
-            
-            for combo_str in combinations:
-                # 타입 체크 추가
-                if isinstance(combo_str, str):
-                    numbers = [int(n) for n in combo_str.split(',')]
-                else:
-                    numbers = combo_str
-                
-                # 조합의 평균 확률 계산
-                combo_probability = np.mean([probabilities[n-1] for n in numbers])
-                
-                # 임계값 이상이면 유지
-                if combo_probability >= self.threshold / 45:  # 정규화된 임계값
-                    filtered_combinations.append(combo_str)
-            
+            # numpy 벡터화 필터링
+            threshold_normalized = self.threshold / 45
+
+            # 조합을 numpy 배열로 일괄 변환
+            combo_arrays = np.array(
+                [list(map(int, c.split(','))) if isinstance(c, str) else list(c)
+                 for c in combinations],
+                dtype=np.int32
+            )
+
+            # 벡터화된 평균 확률 계산 (인덱스 -1로 0-based)
+            combo_probs = np.mean(probabilities[combo_arrays - 1], axis=1)
+
+            # 임계값 필터링
+            valid_mask = combo_probs >= threshold_normalized
+            filtered_combinations = [combinations[i] for i in range(len(combinations)) if valid_mask[i]]
+
             # 결과 로깅
             filtered_count = len(combinations) - len(filtered_combinations)
             if filtered_count > 0:
                 logging.info(f"ML 예측 필터: {filtered_count}개 제외 "
                            f"({filtered_count/len(combinations)*100:.1f}%)")
-            
+
             return filtered_combinations
             
         except Exception as e:

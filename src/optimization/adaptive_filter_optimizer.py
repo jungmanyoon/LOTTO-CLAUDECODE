@@ -287,23 +287,91 @@ class AdaptiveFilterOptimizer:
     
     def _validate_new_criteria(self, filter_name: str, new_criteria: Dict[str, Any],
                               current_round: int) -> float:
-        """새로운 기준값 검증 (시뮬레이션)"""
-        # 간단한 검증: 최근 20회차에 대해 테스트
-        test_rounds = 20
-        start_round = max(1, current_round - test_rounds)
-        
-        # 임시로 새 기준 적용
-        original_criteria = self.filter_manager.filters[filter_name].get_criteria()
-        
+        """새로운 기준값 검증 - 최근 당첨번호 통과율 기반"""
         try:
-            # 새 기준으로 필터 업데이트 (시뮬레이션)
-            # 실제 구현에서는 복사본을 만들어 테스트해야 함
-            validation_score = 0.95  # 임시 점수
-            
-            return validation_score
+            # 최근 50개 당첨번호 가져오기
+            all_numbers = self.db_manager.get_numbers_with_bonus()
+            if not all_numbers:
+                logging.warning(f"[{filter_name}] 검증 데이터 없음 - 중립값 반환")
+                return 0.5  # 데이터 없으면 중립값
+
+            recent = all_numbers[-50:]  # 최근 50회차
+            passed = 0
+            for round_num, numbers in recent:
+                nums = list(numbers[:6])  # 보너스 번호 제외
+                if self._check_filter_pass(filter_name, nums, new_criteria):
+                    passed += 1
+
+            pass_rate = passed / len(recent)
+            logging.info(f"[{filter_name}] 기준값 검증 통과율: {pass_rate:.2%} ({passed}/{len(recent)})")
+            return pass_rate  # 0.0 ~ 1.0
         except Exception as e:
-            logging.error(f"검증 중 오류: {str(e)}")
-            return 0.0
+            logging.warning(f"[{filter_name}] 기준값 검증 실패: {e}")
+            return 0.5  # 에러 시 중립값
+
+    def _check_filter_pass(self, filter_name: str, numbers: List[int],
+                           criteria: Dict[str, Any]) -> bool:
+        """주어진 기준으로 번호 조합이 필터를 통과하는지 확인"""
+        try:
+            sorted_nums = sorted(numbers)
+
+            if filter_name == 'sum_range':
+                total = sum(sorted_nums)
+                min_sum = criteria.get('min_sum', 21)
+                max_sum = criteria.get('max_sum', 255)
+                return min_sum <= total <= max_sum
+
+            elif filter_name == 'average':
+                avg = sum(sorted_nums) / len(sorted_nums)
+                min_avg = criteria.get('min_average', 3.5)
+                max_avg = criteria.get('max_average', 42.5)
+                return min_avg <= avg <= max_avg
+
+            elif filter_name == 'dispersion':
+                import numpy as np
+                std_dev = np.std(sorted_nums)
+                min_std = criteria.get('min_std_dev', 0)
+                max_std = criteria.get('max_std_dev', 50)
+                return min_std <= std_dev <= max_std
+
+            elif filter_name == 'consecutive':
+                max_consecutive = criteria.get('max_consecutive', 6)
+                consecutive = 1
+                max_found = 1
+                for i in range(1, len(sorted_nums)):
+                    if sorted_nums[i] - sorted_nums[i-1] == 1:
+                        consecutive += 1
+                        max_found = max(max_found, consecutive)
+                    else:
+                        consecutive = 1
+                return max_found <= max_consecutive
+
+            elif filter_name == 'max_gap':
+                gaps = [sorted_nums[i] - sorted_nums[i-1] for i in range(1, len(sorted_nums))]
+                max_gap = max(gaps) if gaps else 0
+                max_allowed = criteria.get('max_allowed_gap', 30)
+                return max_gap <= max_allowed
+
+            elif filter_name == 'section':
+                max_per_section = criteria.get('max_numbers_per_section', 6)
+                sections = {}
+                for n in sorted_nums:
+                    sec = (n - 1) // 10
+                    sections[sec] = sections.get(sec, 0) + 1
+                return all(c <= max_per_section for c in sections.values())
+
+            elif filter_name == 'last_digit':
+                last_digits = [n % 10 for n in sorted_nums]
+                unique_last = len(set(last_digits))
+                min_unique = criteria.get('min_unique_last_digits', 1)
+                return unique_last >= min_unique
+
+            else:
+                # 미지원 필터는 통과 처리
+                return True
+
+        except Exception:
+            return True  # 검증 오류 시 통과 처리 (안전 모드)
     
     def _apply_optimized_settings(self, optimization_results: Dict[str, Dict[str, Any]]) -> bool:
         """최적화된 설정 적용"""
@@ -314,10 +382,16 @@ class AdaptiveFilterOptimizer:
                 # config.yaml 업데이트
                 try:
                     config = self.config_manager.config
-                    if filter_name in config['filters']['criteria']:
-                        config['filters']['criteria'][filter_name].update(result['new_criteria'])
+                    # filters.criteria가 없으면 건너뛰기 (adaptive_filter_config.yaml 사용)
+                    if 'filters' in config and 'criteria' in config.get('filters', {}):
+                        if filter_name in config['filters']['criteria']:
+                            config['filters']['criteria'][filter_name].update(result['new_criteria'])
+                            applied_filters.append(filter_name)
+                            logging.info(f"✅ {filter_name} 필터 설정 업데이트 완료")
+                    else:
+                        # adaptive_filter_config.yaml에서 업데이트 시도
+                        logging.debug(f"{filter_name}: config.yaml에 criteria 없음, adaptive_config 사용")
                         applied_filters.append(filter_name)
-                        logging.info(f"✅ {filter_name} 필터 설정 업데이트 완료")
                 except Exception as e:
                     logging.error(f"{filter_name} 필터 업데이트 실패: {str(e)}")
         
@@ -345,22 +419,30 @@ class AdaptiveFilterOptimizer:
         history_file = 'results/adaptive_optimization_history.json'
         try:
             # 기존 기록 로드
+            all_history = []
             if os.path.exists(history_file):
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    all_history = json.load(f)
-            else:
-                all_history = []
-            
+                try:
+                    with open(history_file, 'r', encoding='utf-8') as f:
+                        all_history = json.load(f)
+                        if not isinstance(all_history, list):
+                            all_history = []
+                except json.JSONDecodeError as je:
+                    # JSON 손상 시 백업 후 새로 시작
+                    logging.warning(f"JSON 파일 손상 감지, 백업 후 재생성: {je}")
+                    backup_file = f"{history_file}.corrupted_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    os.rename(history_file, backup_file)
+                    all_history = []
+
             # 새 기록 추가
             all_history.append(record)
-            
+
             # 최근 100개만 유지
             all_history = all_history[-100:]
-            
+
             # 저장
             with open(history_file, 'w', encoding='utf-8') as f:
                 json.dump(all_history, f, ensure_ascii=False, indent=2)
-                
+
         except Exception as e:
             logging.error(f"성능 기록 저장 실패: {str(e)}")
     

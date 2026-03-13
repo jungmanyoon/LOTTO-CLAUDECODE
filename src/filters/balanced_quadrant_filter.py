@@ -19,6 +19,7 @@ from typing import List, Dict, Any
 import logging
 import numpy as np
 from .base_filter import BaseFilter
+from ..filter_optimizer import FilterOptimizer
 
 
 class BalancedQuadrantFilter(BaseFilter):
@@ -44,7 +45,8 @@ class BalancedQuadrantFilter(BaseFilter):
                 - max_per_quadrant: 한 사분면 최대 허용 개수 (기본값: 3)
         """
         super().__init__(db_manager, criteria)
-        self.computation_cost = 1.0  # 단순 계산으로 낮은 비용
+        self.computation_cost = 1.0
+        self.optimizer = FilterOptimizer(self._process_chunk_wrapper)
 
         # 과거 당첨번호 사분면 분포 분석 (참고용)
         self._analyze_historical_quadrants()
@@ -143,7 +145,7 @@ class BalancedQuadrantFilter(BaseFilter):
         return counts
 
     def apply(self, combinations: List[str], round_num: int) -> List[str]:
-        """필터 적용 - 사분면 균형 검사
+        """필터 적용 - numpy 벡터화된 사분면 균형 검사
 
         Args:
             combinations: 필터링할 조합 목록
@@ -155,60 +157,44 @@ class BalancedQuadrantFilter(BaseFilter):
         if not combinations:
             return []
 
-        max_per_quadrant = self.criteria['max_per_quadrant']
-        filtered = []
-        excluded_count = 0
+        return self.optimizer.optimize_filter(
+            combinations=combinations,
+            desc="balanced_quadrant 필터 진행률",
+            max_per_quadrant=self.criteria['max_per_quadrant']
+        )
 
-        total = len(combinations)
-        log_interval = max(1, total // 10)  # 10% 단위 로깅
+    @staticmethod
+    def _process_chunk_wrapper(combinations_chunk: List[str], **kwargs) -> List[str]:
+        """FilterOptimizer용 래퍼 함수"""
+        return BalancedQuadrantFilter._process_chunk_vectorized(
+            combinations_chunk,
+            kwargs.get('max_per_quadrant', 3)
+        )
 
-        for idx, combo_str in enumerate(combinations):
-            # 진행률 로깅 (10% 단위)
-            if idx > 0 and idx % log_interval == 0:
-                progress = (idx / total) * 100
-                exclusion_rate = (excluded_count / idx) * 100
-                logging.debug(
-                    f"[BalancedQuadrantFilter] 진행률: {progress:.0f}% | "
-                    f"제외율: {exclusion_rate:.1f}%"
-                )
-
-            # 조합을 숫자 리스트로 변환
-            numbers = list(map(int, combo_str.split(',')))
-
-            # 사분면별 개수 계산
-            quadrant_counts = self._count_by_quadrant(numbers)
-            max_count = max(quadrant_counts.values())
-
-            # 최대 개수가 허용 범위 내면 통과
-            if max_count <= max_per_quadrant:
-                filtered.append(combo_str)
-            else:
-                excluded_count += 1
-                # 어느 사분면에 몰렸는지 찾기
-                overloaded_quadrants = [q for q, c in quadrant_counts.items() if c > max_per_quadrant]
-                logging.debug(
-                    f"[BalancedQuadrantFilter] 제외: {combo_str} - "
-                    f"{overloaded_quadrants} 사분면에 {max_count}개 (> {max_per_quadrant})"
-                )
-
-        # 최종 결과 로깅 (조건부)
-        remaining = len(filtered)
-        excluded = total - remaining
-        exclusion_rate = (excluded / total * 100) if total > 0 else 0
-
-        # 실제로 제외된 조합이 있을 때만 INFO 레벨로 로깅
-        if excluded > 0:
-            logging.info(
-                f"[BalancedQuadrantFilter] 완료 - "
-                f"{remaining:,}/{total:,}개 남음 ({excluded:,}개 제외, {exclusion_rate:.2f}%)"
-            )
-        else:
-            logging.debug(
-                f"[BalancedQuadrantFilter] 완료 - "
-                f"{remaining:,}/{total:,}개 남음 (제외 없음)"
+    @staticmethod
+    def _process_chunk_vectorized(combinations_chunk: List[str],
+                                  max_per_quadrant: int) -> List[str]:
+        """청크 단위 벡터화 필터링"""
+        try:
+            chunk_arrays = np.array(
+                [list(map(int, c.split(','))) for c in combinations_chunk],
+                dtype=np.int8
             )
 
-        return filtered
+            # 각 사분면 카운트 (벡터화)
+            q1 = np.sum((chunk_arrays >= 1) & (chunk_arrays <= 11), axis=1)
+            q2 = np.sum((chunk_arrays >= 12) & (chunk_arrays <= 22), axis=1)
+            q3 = np.sum((chunk_arrays >= 23) & (chunk_arrays <= 33), axis=1)
+            q4 = np.sum((chunk_arrays >= 34) & (chunk_arrays <= 45), axis=1)
+
+            max_counts = np.maximum(np.maximum(q1, q2), np.maximum(q3, q4))
+            valid = max_counts <= max_per_quadrant
+
+            return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid[i]]
+
+        except Exception as e:
+            logging.error(f"[BalancedQuadrantFilter] 청크 처리 오류: {e}")
+            return combinations_chunk
 
     def check_combination(self, combination: str, round_num: int) -> bool:
         """단일 조합이 필터 조건을 만족하는지 확인

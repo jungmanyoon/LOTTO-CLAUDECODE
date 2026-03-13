@@ -186,27 +186,31 @@ class MonteCarloSimulator:
         self.probability_matrix /= self.probability_matrix.sum()
     
     def _adjust_for_temporal(self):
-        """시간적 요소 기반 확률 조정"""
-        # 최근 출현 간격 분석
-        last_appearance = {}
-        
-        for round_idx, numbers in enumerate(self.historical_data):
-            for num in numbers:
-                last_appearance[num] = round_idx
-        
-        current_round = len(self.historical_data)
-        
-        # 오래 나오지 않은 번호 가중치 증가
-        for num in range(1, 46):
-            if num in last_appearance:
-                gap = current_round - last_appearance[num]
-                if gap > 20:  # 20회 이상 미출현
-                    self.probability_matrix[num - 1] *= 1.2
-                elif gap < 5:  # 최근 5회 내 출현
-                    self.probability_matrix[num - 1] *= 0.9
-        
-        # 정규화
-        self.probability_matrix /= self.probability_matrix.sum()
+        """시간적 요소 기반 확률 조정 (비활성화됨)
+
+        [FIX-05] 도박사의 오류(Gambler's Fallacy) 제거
+        - 이전 로직: 오래 나오지 않은 번호 가중치 +20%, 최근 나온 번호 -10%
+        - 문제: 각 추첨은 독립 사건이므로, 과거 미출현이 미래 출현 확률을 높이지 않음
+        - 수정: 가중치 조정 로직을 비활성화하고 확률 행렬을 균등하게 유지
+        """
+        # 아래 로직은 도박사의 오류에 해당하여 비활성화
+        # 각 로또 추첨은 독립 시행이므로, 출현 간격에 따른 가중치 조정은 통계적으로 무효함
+        #
+        # last_appearance = {}
+        # for round_idx, numbers in enumerate(self.historical_data):
+        #     for num in numbers:
+        #         last_appearance[num] = round_idx
+        # current_round = len(self.historical_data)
+        # for num in range(1, 46):
+        #     if num in last_appearance:
+        #         gap = current_round - last_appearance[num]
+        #         if gap > 20:
+        #             self.probability_matrix[num - 1] *= 1.2
+        #         elif gap < 5:
+        #             self.probability_matrix[num - 1] *= 0.9
+        # self.probability_matrix /= self.probability_matrix.sum()
+
+        logging.debug("_adjust_for_temporal: 도박사의 오류 방지를 위해 시간 기반 가중치 조정 비활성화됨")
     
     def _generate_weighted_combination(self) -> List[int]:
         """가중치 기반 번호 조합 생성

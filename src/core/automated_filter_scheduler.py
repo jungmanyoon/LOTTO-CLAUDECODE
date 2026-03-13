@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta
 import json
 import os
+import threading
 from typing import Dict, Any, Optional
 
 class AutomatedFilterScheduler:
@@ -37,10 +38,11 @@ class AutomatedFilterScheduler:
         # 실행 히스토리
         self.execution_history = self._load_history()
         
-        # 실행 상태
+        # 실행 상태 (Thread-Safe)
         self.is_running = False
         self.last_execution = None
-        
+        self._execution_lock = threading.Lock()  # Race Condition 방지
+
         logging.info("[자동화 스케줄러] 초기화 완료")
     
     def _load_history(self) -> list:
@@ -94,91 +96,119 @@ class AutomatedFilterScheduler:
     
     def execute_weekly_update(self, force: bool = False) -> Dict[str, Any]:
         """
-        주간 업데이트 실행
-        
+        주간 업데이트 실행 (Thread-Safe)
+
         Args:
             force: 강제 실행 여부
-            
+
         Returns:
             실행 결과
         """
-        logging.info("\n" + "="*80)
-        logging.info("[자동화] 주간 필터 업데이트 프로세스 시작")
-        logging.info("="*80)
-        
-        start_time = time.time()
-        result = {
-            'timestamp': datetime.now().isoformat(),
-            'success': False,
-            'steps': {}
-        }
-        
+        # FIX: Race Condition 방지 - 락 획득 시도
+        if not self._execution_lock.acquire(blocking=False):
+            logging.warning("[자동화] 이미 다른 업데이트가 진행 중입니다. 건너뜀")
+            return {
+                'timestamp': datetime.now().isoformat(),
+                'success': False,
+                'message': 'Another update is already running',
+                'skipped': True
+            }
+
         try:
-            # 1. 새 회차 확인
-            new_round = self.check_new_round()
-            if not new_round and not force:
-                logging.info("[자동화] 새 회차가 없습니다. 업데이트 건너뜀")
-                result['message'] = "No new round"
-                return result
-            
-            result['round'] = new_round or self.db_manager.get_last_round()
-            
-            # 2. 백업 생성
-            logging.info("\n[STEP 1/5] 현재 상태 백업...")
-            backup_result = self._create_backup()
-            result['steps']['backup'] = backup_result
-            
-            # 3. 필터 업데이트
-            logging.info("\n[STEP 2/5] 필터 기준 업데이트...")
-            update_result = self.integrated_manager.update_filters_weekly(new_round)
-            result['steps']['filter_update'] = {
-                'success': 'error' not in update_result,
-                'updated_filters': len(update_result.get('updated_filters', [])),
-                'duration': update_result.get('duration', 0)
-            }
-            
-            # 4. 814만개 조합 재필터링
-            logging.info("\n[STEP 3/5] 전체 조합 재필터링...")
-            refilter_start = time.time()
-            self._refilter_all_combinations()
-            result['steps']['refiltering'] = {
-                'success': True,
-                'duration': time.time() - refilter_start
-            }
-            
-            # 5. 검증
-            logging.info("\n[STEP 4/5] 필터링 결과 검증...")
-            validation_result = self._validate_filtering()
-            result['steps']['validation'] = validation_result
-            
-            # 6. 리포트 생성
-            logging.info("\n[STEP 5/5] 리포트 생성...")
-            report = self._generate_report(result)
-            result['steps']['report'] = {'success': True, 'path': report}
-            
-            # 성공 처리
-            result['success'] = True
-            result['duration'] = time.time() - start_time
-            
-            # 히스토리 저장
-            self.execution_history.append(result)
-            self._save_history()
-            
-            # 결과 출력
+            # 이중 체크 (Double-checked locking)
+            if self.is_running:
+                logging.warning("[자동화] 업데이트가 이미 실행 중입니다")
+                return {
+                    'timestamp': datetime.now().isoformat(),
+                    'success': False,
+                    'message': 'Update already running',
+                    'skipped': True
+                }
+
+            self.is_running = True
+
             logging.info("\n" + "="*80)
-            logging.info("[자동화] 주간 업데이트 완료")
-            logging.info(f"  - 회차: {result['round']}")
-            logging.info(f"  - 소요 시간: {result['duration']:.1f}초")
-            logging.info(f"  - 결과: {'성공' if result['success'] else '실패'}")
+            logging.info("[자동화] 주간 필터 업데이트 프로세스 시작")
             logging.info("="*80)
-            
-        except Exception as e:
-            logging.error(f"주간 업데이트 실패: {e}")
-            import traceback
-            traceback.print_exc()
-            result['error'] = str(e)
-        
-        return result
+
+            start_time = time.time()
+            result = {
+                'timestamp': datetime.now().isoformat(),
+                'success': False,
+                'steps': {}
+            }
+
+            try:
+                # 1. 새 회차 확인
+                new_round = self.check_new_round()
+                if not new_round and not force:
+                    logging.info("[자동화] 새 회차가 없습니다. 업데이트 건너뜀")
+                    result['message'] = "No new round"
+                    return result
+
+                result['round'] = new_round or self.db_manager.get_last_round()
+
+                # 2. 백업 생성
+                logging.info("\n[STEP 1/5] 현재 상태 백업...")
+                backup_result = self._create_backup()
+                result['steps']['backup'] = backup_result
+
+                # 3. 필터 업데이트
+                logging.info("\n[STEP 2/5] 필터 기준 업데이트...")
+                update_result = self.integrated_manager.update_filters_weekly(new_round)
+                result['steps']['filter_update'] = {
+                    'success': 'error' not in update_result,
+                    'updated_filters': len(update_result.get('updated_filters', [])),
+                    'duration': update_result.get('duration', 0)
+                }
+
+                # 4. 814만개 조합 재필터링
+                logging.info("\n[STEP 3/5] 전체 조합 재필터링...")
+                refilter_start = time.time()
+                self._refilter_all_combinations()
+                result['steps']['refiltering'] = {
+                    'success': True,
+                    'duration': time.time() - refilter_start
+                }
+
+                # 5. 검증
+                logging.info("\n[STEP 4/5] 필터링 결과 검증...")
+                validation_result = self._validate_filtering()
+                result['steps']['validation'] = validation_result
+
+                # 6. 리포트 생성
+                logging.info("\n[STEP 5/5] 리포트 생성...")
+                report = self._generate_report(result)
+                result['steps']['report'] = {'success': True, 'path': report}
+
+                # 성공 처리
+                result['success'] = True
+                result['duration'] = time.time() - start_time
+
+                # 히스토리 저장
+                self.execution_history.append(result)
+                self._save_history()
+
+                # 결과 출력
+                logging.info("\n" + "="*80)
+                logging.info("[자동화] 주간 업데이트 완료")
+                logging.info(f"  - 회차: {result['round']}")
+                logging.info(f"  - 소요 시간: {result['duration']:.1f}초")
+                logging.info(f"  - 결과: {'성공' if result['success'] else '실패'}")
+                logging.info("="*80)
+
+            except Exception as e:
+                logging.error(f"주간 업데이트 실패: {e}")
+                import traceback
+                traceback.print_exc()
+                result['error'] = str(e)
+
+            return result
+
+        finally:
+            # 락 해제 및 상태 초기화
+            self.is_running = False
+            self._execution_lock.release()
     
     def _create_backup(self) -> Dict[str, Any]:
         """백업 생성"""

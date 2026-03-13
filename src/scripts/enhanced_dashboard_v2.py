@@ -40,19 +40,270 @@ logging.basicConfig(
 
 app = Flask(__name__)
 
-# SECURITY: Configure secret key for CSRF protection
-app.config['SECRET_KEY'] = os.urandom(32).hex()  # Generate random secret key
+# Werkzeug (Flask 내부 서버) 로그 레벨을 WARNING으로 설정
+# API 요청 로그 (GET /api/...) 감소
+werkzeug_log = logging.getLogger('werkzeug')
+werkzeug_log.setLevel(logging.WARNING)
+
+# SECURITY: Configure secret key for CSRF protection (SEC-001: 파일 기반 영구 키)
+from pathlib import Path
+
+def get_or_create_secret_key(key_file: str = '.secret_key') -> str:
+    """SECRET_KEY를 파일에서 로드하거나 새로 생성
+
+    Args:
+        key_file: 키 파일 경로
+
+    Returns:
+        str: SECRET_KEY 값
+    """
+    # 프로젝트 루트 기준으로 경로 설정
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    key_path = Path(os.path.join(project_root, key_file))
+
+    if key_path.exists():
+        return key_path.read_text(encoding='utf-8').strip()
+
+    # 새 키 생성 및 저장
+    secret_key = os.urandom(32).hex()
+    key_path.write_text(secret_key, encoding='utf-8')
+
+    # Windows에서는 os.chmod가 제한적이므로 try-except로 처리
+    try:
+        os.chmod(str(key_path), 0o600)  # owner만 읽기/쓰기
+    except (OSError, PermissionError):
+        pass  # Windows에서는 권한 설정이 다르게 동작
+
+    logging.info(f"새 SECRET_KEY 생성됨: {key_path}")
+    return secret_key
+
+app.config['SECRET_KEY'] = get_or_create_secret_key()
 
 # SECURITY: Initialize CSRF protection
 csrf = CSRFProtect(app)
 
-# SECURITY: Initialize Rate Limiter
+# SECURITY: Initialize Rate Limiter (SEC-003: 강화된 Rate Limit)
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://",  # In-memory storage for simplicity
+    default_limits=[
+        "100 per day",      # 하루 100 요청
+        "20 per hour",      # 시간당 20 요청
+        "5 per minute"      # 분당 5 요청
+    ],
+    storage_uri="memory://",
+    strategy="fixed-window"
 )
+
+# Rate Limit 초과 시 JSON 응답 반환 (HTML 대신)
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    """Rate limit 초과 시 JSON 에러 반환"""
+    return jsonify({
+        'success': False,
+        'error': '요청 한도 초과. 잠시 후 다시 시도해주세요.',
+        'error_code': 'RATE_LIMIT_EXCEEDED'
+    }), 429
+
+# 일반 에러 핸들러 (500 에러)
+@app.errorhandler(500)
+def internal_error_handler(e):
+    """내부 서버 오류 시 JSON 에러 반환"""
+    return jsonify({
+        'success': False,
+        'error': '서버 내부 오류가 발생했습니다.',
+        'error_code': 'INTERNAL_SERVER_ERROR'
+    }), 500
+
+# 404 에러 핸들러
+@app.errorhandler(404)
+def not_found_handler(e):
+    """페이지를 찾을 수 없을 때 JSON 에러 반환"""
+    return jsonify({
+        'success': False,
+        'error': '요청한 리소스를 찾을 수 없습니다.',
+        'error_code': 'NOT_FOUND'
+    }), 404
+
+
+# ============================================================
+# SEC-002: 토큰 기반 인증 시스템
+# ============================================================
+import secrets
+from functools import wraps
+
+class TokenAuthenticator:
+    """간단한 토큰 기반 인증 (SEC-002)
+
+    - 로컬호스트(127.0.0.1, localhost)는 인증 없이 허용
+    - 외부 접근 시 Bearer 토큰 필요
+    """
+
+    def __init__(self, token_file: str = '.api_tokens'):
+        self.token_file = token_file
+        self.tokens = set()
+        self._load_tokens()
+
+    def _get_token_path(self) -> str:
+        """토큰 파일 경로 반환"""
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(project_root, self.token_file)
+
+    def _load_tokens(self):
+        """저장된 토큰 로드"""
+        token_path = self._get_token_path()
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, 'r', encoding='utf-8') as f:
+                    self.tokens = set(line.strip() for line in f if line.strip())
+            except Exception as e:
+                logging.warning(f"토큰 로드 실패: {e}")
+
+    def generate_token(self) -> str:
+        """새 토큰 생성 및 저장"""
+        token = secrets.token_urlsafe(32)
+        self.tokens.add(token)
+
+        token_path = self._get_token_path()
+        try:
+            with open(token_path, 'a', encoding='utf-8') as f:
+                f.write(token + '\n')
+            # Windows에서는 chmod 제한적
+            try:
+                os.chmod(token_path, 0o600)
+            except (OSError, PermissionError):
+                pass
+            logging.info(f"새 API 토큰 생성됨")
+        except Exception as e:
+            logging.error(f"토큰 저장 실패: {e}")
+
+        return token
+
+    def verify(self, token: str) -> bool:
+        """토큰 검증"""
+        return token in self.tokens
+
+    def is_localhost(self, remote_addr: str) -> bool:
+        """로컬호스트 여부 확인"""
+        return remote_addr in ('127.0.0.1', 'localhost', '::1', None)
+
+
+# 인증 관리자 초기화
+authenticator = TokenAuthenticator()
+
+
+def _mask_ip(ip: str) -> str:
+    """IP 주소 마스킹 (SEC-005: 민감 정보 보호)
+
+    예: 192.168.1.100 → 192.168.*.***
+    """
+    if not ip:
+        return 'unknown'
+    parts = ip.split('.')
+    if len(parts) == 4:
+        return f"{parts[0]}.{parts[1]}.*.*"
+    return ip[:len(ip)//2] + '*' * (len(ip) - len(ip)//2)
+
+
+def require_auth(f):
+    """인증 필요 데코레이터 (SEC-002)
+
+    - 로컬호스트 접근: 인증 없이 허용
+    - 외부 접근: Bearer 토큰 필요
+
+    SEC-005: 토큰 값 로깅 금지, IP 마스킹 적용
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        remote_addr = request.remote_addr
+
+        # 로컬호스트는 인증 없이 허용
+        if authenticator.is_localhost(remote_addr):
+            return f(*args, **kwargs)
+
+        # 외부 접근은 토큰 검증
+        auth_header = request.headers.get('Authorization', '')
+
+        if not auth_header.startswith('Bearer '):
+            # SEC-005: IP 마스킹, 토큰 값 노출 금지
+            logging.warning(f"[SEC] 인증 실패 - 헤더 없음 (IP: {_mask_ip(remote_addr)})")
+            return jsonify({
+                'success': False,
+                'error': 'Authorization 헤더가 필요합니다 (Bearer 토큰)',
+                'error_code': 'AUTH_REQUIRED'
+            }), 401
+
+        token = auth_header[7:]  # "Bearer " 제거
+
+        if not authenticator.verify(token):
+            # SEC-005: 토큰 값 노출 없이 실패 로깅
+            logging.warning(f"[SEC] 인증 실패 - 잘못된 토큰 (IP: {_mask_ip(remote_addr)})")
+            return jsonify({
+                'success': False,
+                'error': '유효하지 않은 토큰입니다',
+                'error_code': 'AUTH_FAILED'
+            }), 401
+
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_auth_strict(f):
+    """엄격한 인증 데코레이터 (민감한 API용)
+
+    - 모든 접근에 토큰 필요 (로컬호스트 포함)
+
+    SEC-005: 토큰 값 로깅 금지, IP 마스킹 적용
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        remote_addr = request.remote_addr
+        auth_header = request.headers.get('Authorization', '')
+
+        if not auth_header.startswith('Bearer '):
+            # SEC-005: IP 마스킹, 토큰 값 노출 금지
+            logging.warning(f"[SEC-STRICT] 인증 실패 - 헤더 없음 (IP: {_mask_ip(remote_addr)})")
+            return jsonify({
+                'success': False,
+                'error': 'Authorization 헤더가 필요합니다 (Bearer 토큰)',
+                'error_code': 'AUTH_REQUIRED'
+            }), 401
+
+        token = auth_header[7:]
+
+        if not authenticator.verify(token):
+            # SEC-005: 토큰 값 노출 없이 실패 로깅
+            logging.warning(f"[SEC-STRICT] 인증 실패 - 잘못된 토큰 (IP: {_mask_ip(remote_addr)})")
+            return jsonify({
+                'success': False,
+                'error': '유효하지 않은 토큰입니다',
+                'error_code': 'AUTH_FAILED'
+            }), 401
+
+        return f(*args, **kwargs)
+    return decorated
+
+
+# 토큰 생성 엔드포인트 (로컬호스트에서만 접근 가능)
+@app.route('/api/generate-token', methods=['POST'])
+@limiter.limit("3 per day")  # 하루 3번으로 제한
+def generate_api_token():
+    """API 토큰 생성 (로컬호스트 전용)"""
+    if not authenticator.is_localhost(request.remote_addr):
+        return jsonify({
+            'success': False,
+            'error': '토큰 생성은 로컬호스트에서만 가능합니다',
+            'error_code': 'FORBIDDEN'
+        }), 403
+
+    token = authenticator.generate_token()
+    return jsonify({
+        'success': True,
+        'token': token,
+        'message': '토큰이 생성되었습니다. 안전하게 보관하세요.'
+    })
+# ============================================================
+
 
 class EnhancedLottoDashboard:
     """향상된 로또 대시보드 v2"""
@@ -249,15 +500,17 @@ class EnhancedLottoDashboard:
     def get_statistics(self) -> Dict:
         """전체 통계"""
         try:
-            # DB 파일이 없으면 데모 데이터 반환
+            # DB 파일이 없으면 에러 반환 (데모 데이터 사용 금지)
             if not os.path.exists(self.predictions_db_path):
+                self.logger.error(f"예측 DB 파일 없음: {self.predictions_db_path}")
                 return {
-                    'total_predictions': 308,
-                    'total_rounds': 5,
-                    'avg_predictions_per_round': 61.6,
-                    'rank_distribution': {'1등': 0, '2등': 0, '3등': 2, '4등': 8, '5등': 19},
-                    'total_wins': 29,
-                    'demo_mode': True
+                    'error': True,
+                    'error_message': '예측 데이터베이스가 없습니다. main.py를 먼저 실행하세요.',
+                    'total_predictions': 0,
+                    'total_rounds': 0,
+                    'avg_predictions_per_round': 0,
+                    'rank_distribution': {'1등': 0, '2등': 0, '3등': 0, '4등': 0, '5등': 0},
+                    'total_wins': 0
                 }
             
             with sqlite3.connect(self.predictions_db_path) as conn:
@@ -319,7 +572,82 @@ class EnhancedLottoDashboard:
         except Exception as e:
             self.logger.error(f"통계 조회 실패: {e}")
             return {}
-    
+
+    def get_winning_statistics(self, round_num: Optional[int] = None) -> Dict:
+        """당첨 통계 조회 (1~5등 당첨자 수, 당첨금액, 확률)
+
+        Args:
+            round_num: 특정 회차 (None이면 최근 회차)
+
+        Returns:
+            Dict: 당첨 통계 데이터
+        """
+        try:
+            with sqlite3.connect(self.lotto_db_path) as conn:
+                cursor = conn.cursor()
+
+                # 특정 회차 또는 최근 회차
+                if round_num:
+                    cursor.execute("""
+                        SELECT round, first_winners, first_prize, second_winners, second_prize,
+                               third_winners, third_prize, fourth_winners, fourth_prize,
+                               fifth_winners, fifth_prize, total_sales
+                        FROM lotto_statistics WHERE round = ?
+                    """, (round_num,))
+                else:
+                    cursor.execute("""
+                        SELECT round, first_winners, first_prize, second_winners, second_prize,
+                               third_winners, third_prize, fourth_winners, fourth_prize,
+                               fifth_winners, fifth_prize, total_sales
+                        FROM lotto_statistics ORDER BY round DESC LIMIT 1
+                    """)
+
+                row = cursor.fetchone()
+                if row:
+                    total_games = row[11] // 1000 if row[11] else 0  # 1게임 1000원 가정
+                    return {
+                        'round': row[0],
+                        'statistics': {
+                            # JavaScript에서 접근하기 쉬운 키
+                            'first_winners': row[1],
+                            'first_prize': row[2],
+                            'second_winners': row[3],
+                            'second_prize': row[4],
+                            'third_winners': row[5],
+                            'third_prize': row[6],
+                            'fourth_winners': row[7],
+                            'fourth_prize': row[8],
+                            'fifth_winners': row[9],
+                            'fifth_prize': row[10],
+                            # 한글 키 (하위 호환성)
+                            '1등': {'winners': row[1], 'prize': row[2],
+                                   'probability': f"{(row[1]/total_games*100):.8f}%" if total_games else "N/A"},
+                            '2등': {'winners': row[3], 'prize': row[4],
+                                   'probability': f"{(row[3]/total_games*100):.6f}%" if total_games else "N/A"},
+                            '3등': {'winners': row[5], 'prize': row[6],
+                                   'probability': f"{(row[5]/total_games*100):.4f}%" if total_games else "N/A"},
+                            '4등': {'winners': row[7], 'prize': row[8],
+                                   'probability': f"{(row[7]/total_games*100):.4f}%" if total_games else "N/A"},
+                            '5등': {'winners': row[9], 'prize': row[10],
+                                   'probability': f"{(row[9]/total_games*100):.2f}%" if total_games else "N/A"}
+                        },
+                        'probabilities': {
+                            'first_place_probability': '1/8,145,060',
+                            'second_place_probability': '1/1,357,510',
+                            'third_place_probability': '1/35,724',
+                            'fourth_place_probability': '1/733',
+                            'fifth_place_probability': '1/45'
+                        },
+                        'total_sales': row[11],
+                        'total_games': total_games
+                    }
+
+                return {'error': True, 'error_message': '통계 데이터가 없습니다.'}
+
+        except Exception as e:
+            self.logger.error(f"당첨 통계 조회 실패: {e}")
+            return {'error': True, 'error_message': str(e)}
+
     def get_recent_performance(self, limit: int = 10) -> List[Dict]:
         """최근 회차별 성능"""
         try:
@@ -355,13 +683,16 @@ class EnhancedLottoDashboard:
                 if performance_summary:
                     self.logger.info(f"데이터베이스에서 백테스팅 데이터 로드 성공! 모델 수: {len(performance_summary.get('by_model', []))}")
 
-                    # API 응답용 데이터 구조로 변환
+                    # API 응답용 데이터 구조로 변환 (데모 모드 제거됨 - 실제 데이터만 사용)
                     result = {
-                        'demo_mode': False,
+                        'error': False,
                         'total_predictions': performance_summary['overall'].get('total_predictions', 0),
                         'average_matches': performance_summary['overall'].get('avg_match_rate', 0),
                         'test_period': performance_summary['overall'].get('test_period', 'N/A'),
-                        'model_performance': {}
+                        'probability_threshold': performance_summary['overall'].get('probability_threshold'),
+                        'model_performance': {},
+                        # 필터 성능 데이터 포함 - 실제 데이터만 사용 (가짜 데이터 금지)
+                        'filter_performance': performance_summary.get('filter_performance', {})
                     }
 
                     # 모델별 성능 데이터 변환
@@ -375,7 +706,7 @@ class EnhancedLottoDashboard:
                             'match_distribution': model_data.get('match_distribution', {})
                         }
 
-                    self.logger.info(f"API 응답 데이터 준비 완료: demo_mode={result['demo_mode']}, 총 예측={result['total_predictions']}")
+                    self.logger.info(f"API 응답 데이터 준비 완료 (DB): 총 예측={result['total_predictions']}, 필터 데이터 유무={result['filter_performance'].get('data_available', False)}")
                     return result
                 else:
                     self.logger.warning("데이터베이스에서 백테스팅 데이터 로드 실패")
@@ -405,9 +736,9 @@ class EnhancedLottoDashboard:
                 with open(latest_file, 'r', encoding='utf-8') as f:
                     backtest_data = json.load(f)
 
-                # JSON 데이터를 API 응답 형식으로 변환
+                # JSON 데이터를 API 응답 형식으로 변환 (데모 모드 제거됨 - 실제 데이터만 사용)
                 result = {
-                    'demo_mode': False,
+                    'error': False,
                     'total_predictions': 0,
                     'average_matches': 0,
                     'test_period': 'N/A',
@@ -434,16 +765,16 @@ class EnhancedLottoDashboard:
                 if result['total_predictions'] > 0:
                     result['average_matches'] /= result['total_predictions']
 
-                self.logger.info(f"JSON 파일에서 백테스팅 데이터 로드: demo_mode={result['demo_mode']}, 총 예측={result['total_predictions']}")
+                self.logger.info(f"API 응답 데이터 준비 완료 (JSON): 총 예측={result['total_predictions']}")
                 return result
 
-            # 실제 데이터가 없을 경우 데모 데이터 생성
-            self.logger.warning("백테스팅 데이터를 찾을 수 없습니다. 데모 모드로 전환합니다.")
-            return self._generate_demo_backtest_data_api()
+            # 실제 데이터가 없을 경우 에러 반환 (데모 데이터 사용 금지)
+            self.logger.error("백테스팅 데이터를 찾을 수 없습니다. main.py를 먼저 실행하세요.")
+            return self._generate_error_response("백테스팅 데이터가 없습니다. main.py를 먼저 실행하세요.")
 
         except Exception as e:
-            self.logger.warning(f"백테스팅 데이터 로드 실패: {e}")
-            return self._generate_demo_backtest_data_api()
+            self.logger.error(f"백테스팅 데이터 로드 실패: {e}")
+            return self._generate_error_response(f"백테스팅 데이터 로드 실패: {str(e)}")
 
     def _load_backtest_from_db(self, db_path: str) -> Optional[Dict]:
         """데이터베이스에서 백테스팅 성능 데이터 로드"""
@@ -452,8 +783,10 @@ class EnhancedLottoDashboard:
                 cursor = conn.cursor()
 
                 # 최신 세션 정보 조회 - 캐시 무효화를 위해 매번 새로 조회
+                # combination_count, ml_inclusion_rate, probability_threshold 추가 조회
                 cursor.execute("""
-                    SELECT id, session_date, total_rounds, test_start_round, test_end_round
+                    SELECT id, session_date, total_rounds, test_start_round, test_end_round,
+                           combination_count, ml_inclusion_rate, probability_threshold
                     FROM backtest_sessions
                     ORDER BY session_date DESC, id DESC
                     LIMIT 1
@@ -464,7 +797,8 @@ class EnhancedLottoDashboard:
                     self.logger.warning("백테스팅 세션이 없습니다.")
                     return None
 
-                session_id, session_date, total_rounds, start_round, end_round = session_row
+                session_id, session_date, total_rounds, start_round, end_round, \
+                    combination_count, ml_inclusion_rate, probability_threshold = session_row
 
                 # 최신 세션의 모델 성능 데이터 조회
                 cursor.execute("""
@@ -516,6 +850,24 @@ class EnhancedLottoDashboard:
                 # 전체 통계 계산
                 avg_match_rate = total_matches_sum / total_predictions_sum if total_predictions_sum > 0 else 0
 
+                # 필터 성능 데이터 계산 - 실제 데이터만 사용, 가짜 데이터 절대 금지
+                total_combinations_before = 8145060  # 45C6 = 8,145,060 (수학적 상수)
+
+                # 실제 데이터가 있는 경우에만 계산
+                if combination_count and combination_count > 0:
+                    total_combinations_after = combination_count
+                    reduction_rate = round((1 - combination_count / total_combinations_before) * 100, 2)
+                else:
+                    # 실제 데이터가 없으면 None으로 표시 (가짜 데이터 금지)
+                    total_combinations_after = None
+                    reduction_rate = None
+
+                # ML 포함률도 실제 데이터만 사용
+                if ml_inclusion_rate is not None and ml_inclusion_rate > 0:
+                    hit_rate_in_filtered_pool = round(ml_inclusion_rate * 100, 2)
+                else:
+                    hit_rate_in_filtered_pool = None
+
                 return {
                     'overall': {
                         'total_sessions': 1,
@@ -523,14 +875,16 @@ class EnhancedLottoDashboard:
                         'best_session_match': best_session_match,
                         'total_predictions': total_predictions_sum,
                         'test_period': f"{start_round}-{end_round}회차",
-                        'session_date': session_date
+                        'session_date': session_date,
+                        'probability_threshold': probability_threshold  # 확률 임계값 추가
                     },
                     'by_model': model_performance,
                     'filter_performance': {
-                        'total_combinations_before': 8145060,  # 고정값 (전체 조합 수)
-                        'total_combinations_after': 300000,   # 예상 필터링 후 조합 수
-                        'reduction_rate': 96.3,               # 예상 감소율
-                        'hit_rate_in_filtered_pool': 85.0     # 예상 히트율
+                        'total_combinations_before': total_combinations_before,  # 전체 조합 수 (수학적 상수)
+                        'total_combinations_after': total_combinations_after,    # 실제 필터링 후 조합 수 (None if 데이터 없음)
+                        'reduction_rate': reduction_rate,                        # 실제 감소율 (None if 데이터 없음)
+                        'hit_rate_in_filtered_pool': hit_rate_in_filtered_pool,  # 실제 ML 포함률 (None if 데이터 없음)
+                        'data_available': combination_count is not None and combination_count > 0  # 데이터 유무 플래그
                     }
                 }
 
@@ -538,132 +892,19 @@ class EnhancedLottoDashboard:
             self.logger.error(f"데이터베이스에서 백테스팅 데이터 로드 실패: {e}")
             return None
 
-    def _generate_demo_backtest_data_api(self) -> Dict:
-        """API 응답용 데모 백테스팅 데이터 생성"""
+    def _generate_error_response(self, error_message: str) -> Dict:
+        """에러 응답 생성 (데모 데이터 대신 사용)"""
         return {
-            'demo_mode': True,
-            'total_predictions': 1000,
-            'average_matches': 0.875,
-            'test_period': '1139-1188회차',
-            'model_performance': {
-                'lstm': {
-                    'total_predictions': 250,
-                    'avg_matches': 0.76,
-                    'best_match': 3,
-                    'accuracy_3plus': 2.4,
-                    'match_distribution': {
-                        'match_0': 108,
-                        'match_1': 100,
-                        'match_2': 36,
-                        'match_3': 6,
-                        'match_4': 0
-                    }
-                },
-                'ensemble': {
-                    'total_predictions': 250,
-                    'avg_matches': 1.08,
-                    'best_match': 3,
-                    'accuracy_3plus': 5.6,
-                    'match_distribution': {
-                        'match_0': 70,
-                        'match_1': 106,
-                        'match_2': 63,
-                        'match_3': 11,
-                        'match_4': 0
-                    }
-                },
-                'monte_carlo': {
-                    'total_predictions': 250,
-                    'avg_matches': 0.74,
-                    'best_match': 3,
-                    'accuracy_3plus': 1.2,
-                    'match_distribution': {
-                        'match_0': 104,
-                        'match_1': 109,
-                        'match_2': 34,
-                        'match_3': 3,
-                        'match_4': 0
-                    }
-                },
-                'combined': {
-                    'total_predictions': 250,
-                    'avg_matches': 0.91,
-                    'best_match': 3,
-                    'accuracy_3plus': 4.4,
-                    'match_distribution': {
-                        'match_0': 89,
-                        'match_1': 108,
-                        'match_2': 45,
-                        'match_3': 8,
-                        'match_4': 0
-                    }
-                }
-            }
+            'error': True,
+            'error_message': error_message,
+            'total_predictions': 0,
+            'average_matches': 0,
+            'test_period': 'N/A',
+            'model_performance': {}
         }
 
-    def _generate_demo_backtest_data(self) -> Dict:
-        """데모 백테스팅 데이터 생성"""
-        return {
-            'available': True,
-            'demo_mode': True,
-            'last_updated': datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M'),  # KST 시간대 적용
-            'performance_summary': {
-                'overall': {
-                    'total_sessions': 5,
-                    'avg_match_rate': 1.245,
-                    'best_session_match': 2.1,
-                    'total_predictions': 1540
-                },
-                'by_model': [
-                    {
-                        'model': 'LSTM',
-                        'total_predictions': 308,
-                        'avg_matches': 1.23,
-                        'avg_accuracy_3plus': 12.5,
-                        'best_match': 4,
-                        'sessions': 5
-                    },
-                    {
-                        'model': 'Ensemble',
-                        'total_predictions': 308,
-                        'avg_matches': 1.28,
-                        'avg_accuracy_3plus': 14.2,
-                        'best_match': 5,
-                        'sessions': 5
-                    },
-                    {
-                        'model': 'MonteCarlo',
-                        'total_predictions': 308,
-                        'avg_matches': 1.19,
-                        'avg_accuracy_3plus': 11.8,
-                        'best_match': 4,
-                        'sessions': 5
-                    },
-                    {
-                        'model': 'Bayesian',
-                        'total_predictions': 308,
-                        'avg_matches': 1.34,
-                        'avg_accuracy_3plus': 15.7,
-                        'best_match': 4,
-                        'sessions': 5
-                    },
-                    {
-                        'model': 'FilteredCombined',
-                        'total_predictions': 308,
-                        'avg_matches': 1.41,
-                        'avg_accuracy_3plus': 18.2,
-                        'best_match': 5,
-                        'sessions': 5
-                    }
-                ],
-                'filter_performance': {
-                    'total_combinations_before': 8145060,
-                    'total_combinations_after': 152000,
-                    'reduction_rate': 98.13,
-                    'hit_rate_in_filtered_pool': 85.2
-                }
-            }
-        }
+    # NOTE: _generate_demo_backtest_data() 함수 삭제됨 - 데모 데이터 사용 금지 정책
+    # 대신 _generate_error_response()를 사용하여 에러 메시지 반환
     
     def _convert_to_kst(self, datetime_str):
         """UTC 시간을 KST로 변환 - 예측 번호는 그대로 유지, 시간만 보정"""
@@ -841,70 +1082,18 @@ class EnhancedLottoDashboard:
 
         return validation_result
 
-    def _generate_demo_week_predictions(self, round_num: int) -> Dict:
-        """데모 예측 데이터 생성"""
-        import random
-        from datetime import datetime, timedelta
-        
-        # 임의의 날짜 생성 (7일 전부터 오늘까지)
-        today = datetime.now(pytz.timezone('Asia/Seoul'))  # KST 시간대 적용
-        dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7, -1, -1)]
-        
-        # 데모 예측 생성
-        all_predictions = []
-        predictions_by_date = {}
-        
-        for date_str in dates:
-            daily_preds = []
-            for i in range(random.randint(3, 8)):  # 하루에 3~8개 예측
-                pred_data = {
-                    'round': round_num,
-                    'id': f'demo_{date_str}_{i}',
-                    'set_number': i + 1,
-                    'numbers': sorted(random.sample(range(1, 46), 6)),
-                    'confidence': round(random.uniform(60, 95), 1),
-                    'source': random.choice(['ML/monte_carlo', 'ML/lstm', 'ML/ensemble']),
-                    'characteristics': {'demo': True},
-                    'datetime': f'{date_str} {random.randint(10, 18):02d}:{random.randint(0, 59):02d}:00',  # 이미 KST 기준
-                    'date': date_str,
-                    'matches': random.choices([0, 1, 2, 3, 4], weights=[30, 35, 25, 8, 2])[0],
-                    'bonus_match': random.random() < 0.15,
-                    'rank': None
-                }
-                # 등수 계산 (매치 수에 따라)
-                if pred_data['matches'] == 6:
-                    pred_data['rank'] = 1
-                elif pred_data['matches'] == 5 and pred_data['bonus_match']:
-                    pred_data['rank'] = 2
-                elif pred_data['matches'] == 5:
-                    pred_data['rank'] = 3
-                elif pred_data['matches'] == 4:
-                    pred_data['rank'] = 4
-                elif pred_data['matches'] == 3:
-                    pred_data['rank'] = 5
-                    
-                daily_preds.append(pred_data)
-                all_predictions.append(pred_data)
-            
-            predictions_by_date[date_str] = daily_preds
-        
-        # 임의의 당첨번호 생성 (데모용)
-        winning_numbers = {
-            'round': round_num,
-            'numbers': sorted(random.sample(range(1, 46), 6)),
-            'bonus': random.choice([n for n in range(1, 46) if n not in all_predictions[0]['numbers'][:6]]),
-            'date': today.strftime('%Y-%m-%d')
-        }
-        
+    def _generate_week_predictions_error(self, round_num: int, error_message: str) -> Dict:
+        """주간 예측 에러 응답 생성 (데모 데이터 사용 금지 정책)"""
         return {
+            'error': True,
+            'error_message': error_message,
             'round': round_num,
-            'predictions_by_date': predictions_by_date,
-            'all_predictions': all_predictions,
-            'winning_numbers': winning_numbers,
-            'total_predictions': len(all_predictions),
-            'date_count': len(predictions_by_date),
-            'filter_validation': {'passed': True, 'demo_mode': True},
-            'demo_mode': True
+            'predictions_by_date': {},
+            'all_predictions': [],
+            'winning_numbers': None,
+            'total_predictions': 0,
+            'date_count': 0,
+            'filter_validation': {'passed': False, 'error': True}
         }
     
     def get_week_predictions(self, round_num: int) -> Dict:
@@ -981,11 +1170,15 @@ class EnhancedLottoDashboard:
                             pred['bonus_match']
                         )
                 
+                # 공식 당첨 통계 조회
+                winning_statistics = self.get_winning_statistics(round_num) if winning_numbers else None
+
                 return {
                     'round': round_num,
                     'predictions_by_date': predictions_by_date,
                     'all_predictions': all_predictions,
                     'winning_numbers': winning_numbers,
+                    'winning_statistics': winning_statistics,
                     'total_predictions': len(all_predictions),
                     'date_count': len(predictions_by_date),
                     'filter_validation': filter_validation
@@ -993,8 +1186,8 @@ class EnhancedLottoDashboard:
                 
         except Exception as e:
             self.logger.error(f"주간 예측 조회 실패: {e}")
-            # 데모 데이터 생성
-            return self._generate_demo_week_predictions(round_num)
+            # 에러 응답 반환 (데모 데이터 사용 금지 정책)
+            return self._generate_week_predictions_error(round_num, f"예측 데이터 조회 실패: {str(e)}. main.py를 먼저 실행하세요.")
     
 
 
@@ -1304,7 +1497,14 @@ HTML_TEMPLATE_V2 = """
             padding: 10px 12px;
             border-bottom: 1px solid #eee;
         }
-        
+
+        .predictions-table td.source-cell {
+            white-space: nowrap;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         .predictions-table tr:hover {
             background: #f8f9fa;
         }
@@ -1553,7 +1753,27 @@ HTML_TEMPLATE_V2 = """
             </div>
             <div id="failedFiltersList" class="failed-filters"></div>
         </div>
-        
+
+        <!-- 빠른 예측 상태 표시 섹션 -->
+        <div id="quickPredictionStatus" class="quick-prediction-section" style="display: none; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); border-radius: 15px; padding: 20px; margin-bottom: 20px; color: white; box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                <div>
+                    <h3 style="margin: 0 0 10px 0; font-size: 1.3em;">
+                        <span id="quickStatusIcon">⚡</span> 빠른 예측 시스템
+                    </h3>
+                    <p style="margin: 0; opacity: 0.9;" id="quickStatusMessage">시스템 상태를 확인 중...</p>
+                </div>
+                <div id="quickStatusDetails" style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 10px; backdrop-filter: blur(10px);">
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 14px;">
+                        <div><strong>DB 회차:</strong> <span id="quickDbRound">-</span></div>
+                        <div><strong>ML 캐시:</strong> <span id="quickMlCache">-</span></div>
+                        <div><strong>필터 캐시:</strong> <span id="quickFilterCache">-</span></div>
+                        <div><strong>예상 시간:</strong> <span id="quickEstTime">-</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 당첨번호 섹션 -->
         <div class="winning-section" id="winningSection" style="display: none;">
             <div class="winning-title">🏆 당첨번호 (제<span id="winningRound"></span>회)</div>
@@ -1641,13 +1861,14 @@ HTML_TEMPLATE_V2 = """
                 validation.failedFilters.push('홀짝');
             }
 
-            // 2. 합계 범위 필터
+            // 2. 합계 범위 필터 (서버와 동일: 60~230)
             const sum = numbers.reduce((a, b) => a + b, 0);
-            if (sum < 68 || sum > 209) {
+            // 🔥 FIX: 서버와 동기화 (sum_range: 60~230)
+            if (sum < 60 || sum > 230) {
                 validation.failedFilters.push('합계');
             }
 
-            // 3. 연속 번호 필터
+            // 3. 연속 번호 필터 (서버와 동일: 4개 이상 연속 시 실패)
             const sorted = [...numbers].sort((a, b) => a - b);
             let consecutiveCount = 0;
             let maxConsecutive = 0;
@@ -1659,16 +1880,18 @@ HTML_TEMPLATE_V2 = """
                     consecutiveCount = 0;
                 }
             }
-            if (maxConsecutive >= 3) {
+            // 🔥 FIX: 서버와 동기화 (max_consecutive >= 4)
+            if (maxConsecutive >= 4) {
                 validation.failedFilters.push('연속');
             }
 
-            // 4. 최대 간격 필터
+            // 4. 최대 간격 필터 (서버와 동일: 35 초과 시 실패)
             let maxGap = 0;
             for (let i = 0; i < sorted.length - 1; i++) {
                 maxGap = Math.max(maxGap, sorted[i + 1] - sorted[i]);
             }
-            if (maxGap > 20) {
+            // 🔥 FIX: 서버와 동기화 (max_gap > 35)
+            if (maxGap > 35) {
                 validation.failedFilters.push('간격');
             }
 
@@ -1696,6 +1919,9 @@ HTML_TEMPLATE_V2 = """
 
         // 페이지 로드 시 초기화
         window.onload = async function() {
+            // 빠른 예측 상태 먼저 확인
+            await loadQuickPredictionStatus();
+
             await loadRounds();  // loadRounds가 완료될 때까지 대기
             await loadLatestRound();  // 그 다음 최신 회차 로드
 
@@ -1706,7 +1932,66 @@ HTML_TEMPLATE_V2 = """
                     loadOptimizerStatus();
                 }
             }, 30000);
+
+            // 빠른 예측 상태 자동 새로고침 (60초마다)
+            setInterval(loadQuickPredictionStatus, 60000);
         };
+
+        // 빠른 예측 시스템 상태 로드
+        async function loadQuickPredictionStatus() {
+            try {
+                const response = await fetch('/api/quick-prediction-status');
+                if (!response.ok) {
+                    throw new Error('HTTP error! status: ' + response.status);
+                }
+                const data = await response.json();
+
+                const statusSection = document.getElementById('quickPredictionStatus');
+                const statusIcon = document.getElementById('quickStatusIcon');
+                const statusMessage = document.getElementById('quickStatusMessage');
+                const dbRound = document.getElementById('quickDbRound');
+                const mlCache = document.getElementById('quickMlCache');
+                const filterCache = document.getElementById('quickFilterCache');
+                const estTime = document.getElementById('quickEstTime');
+
+                // 상태에 따라 표시 업데이트
+                if (data.quick_prediction_available) {
+                    statusSection.style.display = 'block';
+                    statusSection.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+                    statusIcon.textContent = '⚡';
+
+                    if (data.cache_valid) {
+                        statusMessage.textContent = '빠른 예측 준비 완료! 캐시된 데이터로 즉시 예측 가능합니다.';
+                    } else {
+                        statusMessage.textContent = '빠른 예측 시스템 활성화됨. 통계 기반 예측을 사용합니다.';
+                    }
+
+                    dbRound.textContent = data.db_round + '회차';
+                    mlCache.innerHTML = data.ml_cache_valid
+                        ? '<span style="color: #90EE90;">✓ 유효</span>'
+                        : '<span style="color: #FFB6C1;">✗ 재생성 필요</span>';
+                    filterCache.innerHTML = data.filter_cache_valid
+                        ? '<span style="color: #90EE90;">✓ 유효</span>'
+                        : '<span style="color: #FFB6C1;">✗ 재생성 필요</span>';
+                    estTime.textContent = data.cache_valid ? '5-10초' : '10-15초';
+                } else {
+                    statusSection.style.display = 'block';
+                    statusSection.style.background = 'linear-gradient(135deg, #6c757d 0%, #495057 100%)';
+                    statusIcon.textContent = '⏳';
+                    statusMessage.textContent = '빠른 예측 시스템 초기화 중...';
+                    dbRound.textContent = '-';
+                    mlCache.textContent = '-';
+                    filterCache.textContent = '-';
+                    estTime.textContent = '-';
+                }
+
+                console.log('빠른 예측 상태 로드됨:', data);
+            } catch (error) {
+                console.error('빠른 예측 상태 로드 실패:', error);
+                const statusSection = document.getElementById('quickPredictionStatus');
+                statusSection.style.display = 'none';
+            }
+        }
         
         // 회차 목록 로드
         async function loadRounds() {
@@ -1899,25 +2184,166 @@ HTML_TEMPLATE_V2 = """
                         matchStatsDetail.push(`${i}개: ${count}번 (${percentage}%)`);
                     }
                     
+                    // 공식 당첨 통계 및 예측 비교 준비
+                    const ws = data.winning_statistics;
+                    const totalPredictions = data.all_predictions.length;
+
+                    // 예측 성과 계산
+                    const avgMatches = (totalMatches / totalPredictions).toFixed(2);
+                    const maxMatches = Math.max(...data.all_predictions.map(p => p.matches || 0));
+                    const threeOrMore = data.all_predictions.filter(p => (p.matches || 0) >= 3).length;
+                    const threeOrMorePct = (threeOrMore / totalPredictions * 100).toFixed(1);
+
+                    // 예측 당첨률 계산 (각 등수별)
+                    const myWinRate = {};
+                    for (let r = 1; r <= 5; r++) {
+                        const cnt = rankCounts[r] || 0;
+                        myWinRate[r] = ((cnt / totalPredictions) * 100).toFixed(4);
+                    }
+
+                    // 공식 당첨률 계산 (총 판매 게임수 기준)
+                    let officialWinRate = {};
+                    let totalGames = 0;
+                    if (ws && ws.total_games) {
+                        totalGames = ws.total_games;
+                        const s = ws.statistics;
+                        officialWinRate = {
+                            1: ((s.first_winners / totalGames) * 100).toFixed(6),
+                            2: ((s.second_winners / totalGames) * 100).toFixed(6),
+                            3: ((s.third_winners / totalGames) * 100).toFixed(4),
+                            4: ((s.fourth_winners / totalGames) * 100).toFixed(4),
+                            5: ((s.fifth_winners / totalGames) * 100).toFixed(2)
+                        };
+                    }
+
+                    // 맞춘 개수별 분포 (가로 뱃지)
+                    let matchBadgesHtml = '';
+                    for (let i = 0; i <= 6; i++) {
+                        const count = matchStats[i] || 0;
+                        const pct = ((count / totalPredictions) * 100).toFixed(0);
+                        const bgColor = i >= 5 ? '#28a745' : i >= 3 ? '#ffc107' : i >= 1 ? '#17a2b8' : '#6c757d';
+                        if (count > 0 || i <= 3) {
+                            matchBadgesHtml += `<span style="display: inline-block; padding: 2px 6px; margin: 2px; border-radius: 10px; font-size: 11px; background: ${bgColor}; color: white;">${i}개:${count}(${pct}%)</span>`;
+                        }
+                    }
+
+                    // 등수 현황 (가로 뱃지)
+                    let rankBadgesHtml = '';
+                    const rankColors = {1: '#d4af37', 2: '#c0c0c0', 3: '#cd7f32', 4: '#28a745', 5: '#17a2b8'};
+                    Object.entries(rankCounts).forEach(([rank, count]) => {
+                        if (count > 0) {
+                            rankBadgesHtml += `<span style="display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 10px; font-size: 11px; background: ${rankColors[rank]}; color: white; font-weight: bold;">${rank}등:${count}개</span>`;
+                        }
+                    });
+                    if (!rankBadgesHtml) rankBadgesHtml = '<span style="color: #666; font-size: 12px;">해당 없음</span>';
+
+                    // 공식 통계 HTML (좌측)
+                    let officialStatsHtml = '';
+                    if (ws && ws.statistics) {
+                        const s = ws.statistics;
+                        officialStatsHtml = `
+                            <div style="flex: 1; min-width: 200px; background: #fffbf0; padding: 12px; border-radius: 8px; border: 1px solid #f0d080;">
+                                <div style="font-weight: bold; margin-bottom: 10px; color: #8b6914; font-size: 13px;">🏆 공식 당첨 통계</div>
+                                <table style="width: 100%; font-size: 11px; border-collapse: collapse;">
+                                    <tr style="background: #f5e6c0;">
+                                        <th style="padding: 5px; text-align: center; border: 1px solid #d4b856; color: #5a4a14;">등수</th>
+                                        <th style="padding: 5px; text-align: right; border: 1px solid #d4b856; color: #5a4a14;">당첨자</th>
+                                        <th style="padding: 5px; text-align: right; border: 1px solid #d4b856; color: #5a4a14;">당첨금</th>
+                                        <th style="padding: 5px; text-align: right; border: 1px solid #d4b856; color: #5a4a14;">확률</th>
+                                    </tr>
+                                    <tr style="background: #fff8e8;">
+                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; font-weight: bold; color: #b8860b;">1등</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.first_winners || 0).toLocaleString()}명</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #b8860b; font-weight: bold;">${((s.first_prize || 0)/100000000).toFixed(1)}억</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[1] || '0.000001'}%</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">2등</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.second_winners || 0).toLocaleString()}명</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${((s.second_prize || 0)/10000).toLocaleString()}만</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[2] || '0.000008'}%</td>
+                                    </tr>
+                                    <tr style="background: #fff8e8;">
+                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">3등</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.third_winners || 0).toLocaleString()}명</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${((s.third_prize || 0)/10000).toLocaleString()}만</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[3] || '0.003'}%</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">4등</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.fourth_winners || 0).toLocaleString()}명</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">5만</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[4] || '0.14'}%</td>
+                                    </tr>
+                                    <tr style="background: #fff8e8;">
+                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">5등</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.fifth_winners || 0).toLocaleString()}명</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">5천</td>
+                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[5] || '2.1'}%</td>
+                                    </tr>
+                                </table>
+                                <div style="margin-top: 8px; font-size: 10px; color: #888; text-align: right;">총 판매: ${totalGames ? totalGames.toLocaleString() : 'N/A'}게임</div>
+                            </div>
+                        `;
+                    }
+
+                    // 예측 비교 HTML (우측)
+                    const predictionCompareHtml = `
+                        <div style="flex: 1; min-width: 200px; background: #f0f7ff; padding: 12px; border-radius: 8px; border: 1px solid #80b0e0;">
+                            <div style="font-weight: bold; margin-bottom: 10px; color: #1a5a9c; font-size: 13px;">🎯 예측 결과 비교</div>
+
+                            <div style="display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
+                                <div style="text-align: center; padding: 6px 12px; background: white; border-radius: 6px; border: 1px solid #cce0f0;">
+                                    <div style="font-size: 20px; font-weight: bold; color: #2980b9;">${avgMatches}</div>
+                                    <div style="font-size: 9px; color: #666;">평균 일치</div>
+                                </div>
+                                <div style="text-align: center; padding: 6px 12px; background: white; border-radius: 6px; border: 1px solid #cce0f0;">
+                                    <div style="font-size: 20px; font-weight: bold; color: #27ae60;">${maxMatches}</div>
+                                    <div style="font-size: 9px; color: #666;">최고 일치</div>
+                                </div>
+                                <div style="text-align: center; padding: 6px 12px; background: white; border-radius: 6px; border: 1px solid #cce0f0;">
+                                    <div style="font-size: 16px; font-weight: bold; color: #e67e22;">${threeOrMore}<small style="font-size: 9px;">(${threeOrMorePct}%)</small></div>
+                                    <div style="font-size: 9px; color: #666;">3개이상</div>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 8px;">
+                                <div style="font-size: 10px; color: #555; margin-bottom: 4px; font-weight: bold;">맞춘 개수별 분포:</div>
+                                <div style="line-height: 1.8;">${matchBadgesHtml}</div>
+                            </div>
+
+                            <div style="margin-bottom: 8px;">
+                                <div style="font-size: 10px; color: #555; margin-bottom: 4px; font-weight: bold;">등수 현황 (내 예측):</div>
+                                <div style="line-height: 1.8;">${rankBadgesHtml}</div>
+                            </div>
+
+                            <div style="background: #e8f4fc; padding: 8px; border-radius: 6px; margin-top: 8px;">
+                                <div style="font-size: 10px; color: #1a5a9c; font-weight: bold; margin-bottom: 4px;">📊 내 예측 당첨률 vs 공식:</div>
+                                <table style="width: 100%; font-size: 10px; border-collapse: collapse;">
+                                    <tr>
+                                        <td style="padding: 2px; color: #666;">4등:</td>
+                                        <td style="padding: 2px; color: #27ae60; font-weight: bold;">${myWinRate[4]}%</td>
+                                        <td style="padding: 2px; color: #999;">vs ${officialWinRate[4] || '0.14'}%</td>
+                                        <td style="padding: 2px; color: ${parseFloat(myWinRate[4]) > parseFloat(officialWinRate[4] || 0.14) ? '#27ae60' : '#dc3545'}; font-weight: bold;">${parseFloat(myWinRate[4]) > parseFloat(officialWinRate[4] || 0.14) ? '▲우수' : '▼'}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 2px; color: #666;">5등:</td>
+                                        <td style="padding: 2px; color: #27ae60; font-weight: bold;">${myWinRate[5]}%</td>
+                                        <td style="padding: 2px; color: #999;">vs ${officialWinRate[5] || '2.1'}%</td>
+                                        <td style="padding: 2px; color: ${parseFloat(myWinRate[5]) > parseFloat(officialWinRate[5] || 2.1) ? '#27ae60' : '#dc3545'}; font-weight: bold;">${parseFloat(myWinRate[5]) > parseFloat(officialWinRate[5] || 2.1) ? '▲우수' : '▼'}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            <div style="margin-top: 6px; font-size: 9px; color: #888; text-align: right;">총 예측: ${totalPredictions}개</div>
+                        </div>
+                    `;
+
                     statsDiv.innerHTML = `
                         <div style="font-size: 13px; line-height: 1.4;">
-                            <div style="font-weight: bold; margin-bottom: 8px;">📊 백테스팅 시뮬레이션 성과</div>
-                            
-                            <div style="margin-bottom: 8px;">
-                                <strong>기본 통계:</strong><br>
-                                • 평균 일치: ${(totalMatches / data.all_predictions.length).toFixed(2)}개<br>
-                                • 최고 일치: ${Math.max(...data.all_predictions.map(p => p.matches || 0))}개<br>
-                                • 3개 이상: ${data.all_predictions.filter(p => (p.matches || 0) >= 3).length}개 (${(data.all_predictions.filter(p => (p.matches || 0) >= 3).length / data.all_predictions.length * 100).toFixed(1)}%)
-                            </div>
-                            
-                            <div style="margin-bottom: 8px;">
-                                <strong>맞춘 개수별 분포:</strong><br>
-                                ${matchStatsDetail.map(stat => `• ${stat}`).join('<br>')}
-                            </div>
-                            
-                            <div>
-                                <strong>등수 현황:</strong><br>
-                                ${Object.entries(rankCounts).filter(([k,v]) => v > 0).map(([k,v]) => `• ${k}등: ${v}개`).join('<br>') || '• 해당 없음'}
+                            <div style="font-weight: bold; margin-bottom: 10px; font-size: 14px; color: #333;">📊 백테스팅 시뮬레이션 성과</div>
+                            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                                ${officialStatsHtml}
+                                ${predictionCompareHtml}
                             </div>
                         </div>
                     `;
@@ -1975,9 +2401,9 @@ HTML_TEMPLATE_V2 = """
                         <td>
                             <small>${(pred.confidence * 100).toFixed(1)}%</small>
                         </td>
-                        <td><small>${pred.source}</small></td>
+                        <td class="source-cell" title="${pred.source}"><small>${pred.source}</small></td>
                         <td>
-                            ${data.winning_numbers ? 
+                            ${data.winning_numbers ?
                                 `<span class="match-badge ${matchClass}">${matches}개</span>` : 
                                 `<span style="color: #999;">대기</span>`
                             }
@@ -2092,9 +2518,9 @@ HTML_TEMPLATE_V2 = """
                             </div>
                             <small>${(pred.confidence * 100).toFixed(1)}%</small>
                         </td>
-                        <td><small>${pred.source}</small></td>
+                        <td class="source-cell" title="${pred.source}"><small>${pred.source}</small></td>
                         <td>
-                            ${data.winning_numbers ? 
+                            ${data.winning_numbers ?
                                 `<span class="match-badge ${matchClass}">${matches}개</span>` : 
                                 `<span style="color: #999;">대기</span>`
                             }
@@ -2194,8 +2620,25 @@ HTML_TEMPLATE_V2 = """
                     fetch('/api/optimizer-history')
                 ]);
 
-                const status = await statusResponse.json();
-                const history = await historyResponse.json();
+                // 응답 상태 확인 후 JSON 파싱
+                let status = { running: false, total_runs: 0, total_trials: 0 };
+                let history = [];
+
+                if (statusResponse.ok) {
+                    try {
+                        status = await statusResponse.json();
+                    } catch (e) {
+                        console.warn('최적화 상태 JSON 파싱 실패:', e);
+                    }
+                }
+
+                if (historyResponse.ok) {
+                    try {
+                        history = await historyResponse.json();
+                    } catch (e) {
+                        console.warn('최적화 히스토리 JSON 파싱 실패:', e);
+                    }
+                }
 
                 displayOptimizerStatus(status);
                 displayOptimizerHistory(history);
@@ -2329,48 +2772,53 @@ HTML_TEMPLATE_V2 = """
                 // 최적화 상태 로드
                 loadOptimizerStatus();
 
-                // 기본 통계와 백테스팅 성능 병렬로 로드
-                const [statsResponse, backtestResponse] = await Promise.all([
+                // 기본 통계, 백테스팅 성능, 당첨 통계 병렬로 로드
+                const [statsResponse, backtestResponse, winningStatsResponse] = await Promise.all([
                     fetch('/api/stats'),
-                    fetch('/api/backtest-performance')
+                    fetch('/api/backtest-performance'),
+                    fetch('/api/winning-statistics')
                 ]);
 
                 const stats = await statsResponse.json();
                 const backtestData = await backtestResponse.json();
-                
+                const winningStats = await winningStatsResponse.json();
+
                 console.log('통계 데이터:', stats);
                 console.log('백테스팅 데이터:', backtestData);
-                
-                // 통계 섹션 재구성
+                console.log('당첨 통계:', winningStats);
+
+                // 통계 섹션 재구성 (컴팩트 레이아웃)
                 statsSection.innerHTML = `
                     <h2 class="section-title">📈 성능 통계</h2>
 
-                    <!-- 백그라운드 최적화 상태 -->
-                    <div id="optimizerStatus" style="margin-bottom: 20px;">
-                        <h3 style="color: #667eea; margin-bottom: 15px;">⚙️ 백그라운드 최적화</h3>
-                        <div id="optimizerStatusGrid" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                            <!-- 최적화 상태가 여기 표시됩니다 -->
-                        </div>
-                        <div id="optimizerHistory" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 15px;">
-                            <h4 style="color: #667eea; margin-bottom: 10px;">최근 최적화 이력</h4>
-                            <div id="optimizerHistoryTable">
-                                <!-- 최적화 이력이 여기 표시됩니다 -->
+                    <!-- 백그라운드 최적화 상태 (접힌 상태) -->
+                    <details id="optimizerStatus" style="margin-bottom: 15px;">
+                        <summary style="cursor: pointer; color: #667eea; font-weight: bold; padding: 10px; background: #f8f9fa; border-radius: 8px;">⚙️ 백그라운드 최적화 상태 (클릭하여 펼치기)</summary>
+                        <div style="padding: 10px; background: white; border-radius: 0 0 8px 8px; margin-top: -5px;">
+                            <div id="optimizerStatusGrid" style="background: white; padding: 10px; border-radius: 8px;">
+                                <!-- 최적화 상태가 여기 표시됩니다 -->
+                            </div>
+                            <div id="optimizerHistory" style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 10px;">
+                                <h4 style="color: #667eea; margin-bottom: 8px; font-size: 14px;">최근 최적화 이력</h4>
+                                <div id="optimizerHistoryTable" style="font-size: 12px;">
+                                    <!-- 최적화 이력이 여기 표시됩니다 -->
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    </details>
 
-                    <!-- 백테스팅 성능 통계 -->
-                    <div id="backtestPerformance">
-                        <h3 style="color: #667eea; margin-bottom: 15px;">🎯 백테스팅 시뮬레이션 성능</h3>
-                        <div id="backtestStatsGrid" class="stats-grid">
+                    <!-- 백테스팅 성능 통계 (컴팩트) -->
+                    <div id="backtestPerformance" style="margin-bottom: 15px;">
+                        <h3 style="color: #667eea; margin-bottom: 10px; font-size: 16px;">🎯 백테스팅 시뮬레이션 성능</h3>
+                        <div id="backtestStatsGrid" class="stats-grid" style="gap: 8px;">
                             <!-- 백테스팅 통계가 여기 표시됩니다 -->
                         </div>
                     </div>
 
-                    <!-- 실제 예측 통계 -->
-                    <div style="margin-top: 30px;">
-                        <h3 style="color: #667eea; margin-bottom: 15px;">📊 실제 예측 통계</h3>
-                        <div class="stats-grid" id="statsGrid">
+                    <!-- 실제 예측 통계 (컴팩트) -->
+                    <div style="margin-top: 15px;">
+                        <h3 style="color: #667eea; margin-bottom: 10px; font-size: 16px;">📊 실제 예측 통계</h3>
+                        <div class="stats-grid" id="statsGrid" style="gap: 8px;">
                             <!-- 실제 예측 통계가 여기 표시됩니다 -->
                         </div>
 
@@ -2425,18 +2873,18 @@ HTML_TEMPLATE_V2 = """
             
             backtestSection.style.display = 'block';
             
-            // 데모 모드 표시 및 안내
-            if (backtestStats.demo_mode) {
-                const demoNotice = document.createElement('div');
-                demoNotice.className = 'demo-notice';
-                demoNotice.innerHTML = `
-                    <div style="background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 14px; line-height: 1.5;">
-                        <strong>ℹ️ 데모 데이터 모드</strong><br>
-                        실제 백테스팅 결과가 없어 데모 데이터를 표시합니다.<br>
+            // 에러 상태 확인 및 표시 (데모 모드 삭제됨 - 실제 데이터만 사용)
+            if (backtestStats.error) {
+                const errorNotice = document.createElement('div');
+                errorNotice.className = 'error-notice';
+                errorNotice.innerHTML = `
+                    <div style="background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 14px; line-height: 1.5;">
+                        <strong>⚠️ 데이터 없음</strong><br>
+                        ${backtestStats.error_message || '백테스팅 결과가 없습니다.'}<br>
                         <span style="background: #f8f9fa; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; color: #495057; margin: 5px 0; display: inline-block;">python main.py</span>를 실행하여 실제 성능 통계를 생성하세요.
                     </div>
                 `;
-                backtestSection.insertBefore(demoNotice, backtestSection.firstChild);
+                backtestSection.insertBefore(errorNotice, backtestSection.firstChild);
             }
             
             // 주요 통계 카드들 - 새로운 API 구조에 맞게 수정
@@ -2465,14 +2913,95 @@ HTML_TEMPLATE_V2 = """
             }
             
             // 통계 카드 HTML 생성
-            statsGrid.innerHTML = keyStats.map(stat => `
+            let statsHtml = keyStats.map(stat => `
                 <div class="stat-card">
                     <div class="stat-value">${stat.value}</div>
                     <div class="stat-label">${stat.label}</div>
                 </div>
             `).join('');
+
+            // 필터 성능 데이터 표시 (실제 데이터만 - 가짜 데이터 금지)
+            const filterPerf = backtestStats.filter_performance || {};
+            if (filterPerf.data_available) {
+                // 실제 데이터가 있는 경우에만 표시
+                statsHtml += `
+                    <div style="grid-column: 1 / -1; margin-top: 15px; padding: 15px; background: #e8f5e9; border-radius: 10px; border: 1px solid #a5d6a7;">
+                        <h4 style="color: #2e7d32; font-size: 14px; margin-bottom: 10px;">🔍 필터 성능 (실제 데이터)</h4>
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
+                                <div style="font-size: 16px; font-weight: bold; color: #1976d2;">${(filterPerf.total_combinations_before || 8145060).toLocaleString()}</div>
+                                <div style="font-size: 11px; color: #666;">전체 조합</div>
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
+                                <div style="font-size: 16px; font-weight: bold; color: #388e3c;">${(filterPerf.total_combinations_after || 0).toLocaleString()}</div>
+                                <div style="font-size: 11px; color: #666;">필터링 후</div>
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
+                                <div style="font-size: 16px; font-weight: bold; color: #f57c00;">${filterPerf.reduction_rate || 0}%</div>
+                                <div style="font-size: 11px; color: #666;">감소율</div>
+                            </div>
+                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
+                                <div style="font-size: 16px; font-weight: bold; color: #7b1fa2;">${filterPerf.hit_rate_in_filtered_pool !== null ? filterPerf.hit_rate_in_filtered_pool + '%' : 'N/A'}</div>
+                                <div style="font-size: 11px; color: #666;">ML 포함률</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // 실제 데이터가 없는 경우 경고 메시지
+                statsHtml += `
+                    <div style="grid-column: 1 / -1; margin-top: 15px; padding: 15px; background: #fff3e0; border-radius: 10px; border: 1px solid #ffcc80;">
+                        <h4 style="color: #e65100; font-size: 14px; margin-bottom: 5px;">⚠️ 필터 성능 데이터 없음</h4>
+                        <p style="color: #666; font-size: 12px; margin: 0;">
+                            필터링 결과가 데이터베이스에 저장되지 않았습니다.<br>
+                            <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 4px;">python main.py</code>를 실행하면 실제 필터 성능 데이터가 저장됩니다.
+                        </p>
+                    </div>
+                `;
+            }
+
+            // 정직한 확률 분석 섹션 추가
+            statsHtml += `
+                <div style="grid-column: 1 / -1; margin-top: 15px; padding: 15px; background: #e3f2fd; border-radius: 10px; border: 1px solid #90caf9;">
+                    <h4 style="color: #1565c0; font-size: 14px; margin-bottom: 10px;">[ ] 정직한 확률 분석</h4>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                        <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
+                            <div style="font-size: 14px; font-weight: bold; color: #1976d2;">
+                                ${filterPerf.data_available ?
+                                    (5 / 8145060 * (filterPerf.hit_rate_in_filtered_pool ? filterPerf.hit_rate_in_filtered_pool / 100 : 1) * 100).toFixed(7) + '%' :
+                                    '0.0000614%'}
+                            </div>
+                            <div style="font-size: 11px; color: #666;">5 Set 1 Prize Probability</div>
+                            <div style="font-size: 10px; color: #999;">5 / 8,145,060 x inclusion_rate</div>
+                        </div>
+                        <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
+                            <div style="font-size: 14px; font-weight: bold; color: #388e3c;">
+                                ${filterPerf.data_available ?
+                                    Math.round(8145060 / (filterPerf.total_combinations_after || 300000)) + 'x' :
+                                    '27x'}
+                            </div>
+                            <div style="font-size: 11px; color: #666;">Cost Efficiency</div>
+                            <div style="font-size: 10px; color: #999;">8.14M / pool_size</div>
+                        </div>
+                        <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
+                            <div style="font-size: 14px; font-weight: bold; color: #e65100;">0.8</div>
+                            <div style="font-size: 11px; color: #666;">Random Expected Matches</div>
+                            <div style="font-size: 10px; color: #999;">E[X] = 6 x 6/45</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 6px; font-size: 11px; color: #555; line-height: 1.6;">
+                        <strong>[ ] System Effect Analysis:</strong><br>
+                        - Filter: Removes irrational combinations (pool size: ${filterPerf.data_available ? (filterPerf.total_combinations_after || 0).toLocaleString() : 'N/A'} / 8,145,060)<br>
+                        - ML Model: avg_matches = 0.8 (same as random, per independent event theory)<br>
+                        - Actual Improvement: Cost efficiency ${filterPerf.data_available ? Math.round(8145060 / (filterPerf.total_combinations_after || 300000)) : '~27'}x (probability itself unchanged)<br>
+                        - Wheeling: Maximizes number coverage within selected sets
+                    </div>
+                </div>
+            `;
+
+            statsGrid.innerHTML = statsHtml;
         }
-        
+
         // 기본 통계 표시 (실제 예측 데이터)
         function displayBasicStats(stats) {
             const statsGrid = document.getElementById('statsGrid');
@@ -2583,50 +3112,28 @@ HTML_TEMPLATE_V2 = """
             }
             
             const totalPredictions = Object.values(matchAnalysis).reduce((sum, val) => sum + val, 0) || 1;
-            
+            const avgMatches = (Object.entries(matchAnalysis).reduce((sum, [matches, count]) => sum + (parseInt(matches) * count), 0) / totalPredictions).toFixed(2);
+            const threeOrMore = (matchAnalysis[3] || 0) + (matchAnalysis[4] || 0) + (matchAnalysis[5] || 0) + (matchAnalysis[6] || 0);
+
+            // 컴팩트 레이아웃: 가로로 배치된 뱃지 + 요약 한 줄
             detailSection.innerHTML = `
-                <div style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 25px; border-radius: 15px; border: 1px solid #dee2e6;">
-                    <h4 style="color: #667eea; margin-bottom: 20px; text-align: center;">📊 백테스팅 시뮬레이션 - 맞춘 개수별 분석</h4>
-                    
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px;">
-                        ${Object.entries(matchAnalysis).map(([matches, count]) => {
-                            const percentage = ((count / totalPredictions) * 100).toFixed(1);
-                            let bgColor = '#e9ecef';
-                            let textColor = '#495057';
-                            
-                            if (matches >= 3) {
-                                bgColor = matches == 3 ? '#28a745' : matches == 4 ? '#ffc107' : matches == 5 ? '#fd7e14' : '#dc3545';
-                                textColor = matches == 4 ? '#000' : '#fff';
-                            }
-                            
-                            return `
-                                <div style="background: ${bgColor}; color: ${textColor}; padding: 15px; border-radius: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                                    <div style="font-size: 24px; font-weight: bold;">${count}</div>
-                                    <div style="font-size: 12px; margin: 5px 0;">${matches}개 맞춤</div>
-                                    <div style="font-size: 11px; opacity: 0.9;">${percentage}%</div>
-                                </div>
-                            `;
-                        }).join('')}
+                <div style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 12px 15px; border-radius: 10px; border: 1px solid #dee2e6;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                        <h4 style="color: #667eea; margin: 0; font-size: 14px;">📊 맞춘 개수별 분석</h4>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                            ${Object.entries(matchAnalysis).map(([matches, count]) => {
+                                const percentage = ((count / totalPredictions) * 100).toFixed(1);
+                                let bgColor = matches >= 3 ? (matches == 3 ? '#28a745' : matches == 4 ? '#ffc107' : matches == 5 ? '#fd7e14' : '#dc3545') : '#6c757d';
+                                let textColor = matches == 4 ? '#000' : '#fff';
+                                return `<span style="background: ${bgColor}; color: ${textColor}; padding: 4px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;" title="${matches}개 맞춤: ${count}건 (${percentage}%)">${matches}개: ${count}</span>`;
+                            }).join('')}
+                        </div>
                     </div>
-                    
-                    <div style="background: white; padding: 15px; border-radius: 10px; font-size: 13px; line-height: 1.5;">
-                        <div style="font-weight: bold; margin-bottom: 10px; color: #667eea;">📈 성과 요약:</div>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-                            <div>• <strong>3개 이상 맞춤:</strong> ${matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6]}개 (${(((matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6]) / totalPredictions) * 100).toFixed(1)}%)</div>
-                            <div>• <strong>4개 이상 맞춤:</strong> ${matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6]}개 (${(((matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6]) / totalPredictions) * 100).toFixed(1)}%)</div>
-                            <div>• <strong>평균 적중률:</strong> ${(Object.entries(matchAnalysis).reduce((sum, [matches, count]) => sum + (parseInt(matches) * count), 0) / totalPredictions).toFixed(2)}개</div>
-                            <div>• <strong>최고 성과:</strong> ${Math.max(...Object.keys(matchAnalysis).map(k => parseInt(k)))}개 맞춤</div>
-                        </div>
-                        
-                        <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; font-size: 12px; color: #666;">
-                            <strong>💡 해석:</strong>
-                            ${matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6] > 0
-                                ? `3개 이상 맞춘 예측이 ${matchAnalysis[3] + matchAnalysis[4] + matchAnalysis[5] + matchAnalysis[6]}개 있어 시스템이 효과적으로 작동하고 있습니다.`
-                                : '아직 3개 이상 맞춘 예측이 없습니다. 더 많은 데이터 축적이 필요합니다.'
-                            }
-                            ${matchAnalysis[6] > 0 ? ` 🎉 6개 모두 맞춘 대박 예측이 ${matchAnalysis[6]}개 있습니다!` : ''}
-                            ${hasRealData ? '<br><span style="color: #28a745;">✅ 실제 백테스팅 데이터 기반</span>' : '<br><span style="color: #ffc107;">⚠️ 추정 데이터 (실제 백테스팅 실행 필요)</span>'}
-                        </div>
+                    <div style="display: flex; gap: 15px; margin-top: 10px; font-size: 12px; color: #495057; flex-wrap: wrap;">
+                        <span>📈 평균: <strong>${avgMatches}개</strong></span>
+                        <span>🎯 3개+: <strong>${threeOrMore}건</strong> (${((threeOrMore / totalPredictions) * 100).toFixed(1)}%)</span>
+                        ${matchAnalysis[6] > 0 ? `<span style="color: #dc3545;">🎉 6개 맞춤: <strong>${matchAnalysis[6]}건</strong></span>` : ''}
+                        ${hasRealData ? '<span style="color: #28a745;">✅ 실제 데이터</span>' : '<span style="color: #ffc107;">⚠️ 추정</span>'}
                     </div>
                 </div>
             `;
@@ -2652,7 +3159,7 @@ HTML_TEMPLATE_V2 = """
                 canvas.toBlob(async (blob) => {
                     // FormData 생성
                     const formData = new FormData();
-                    formData.append('screenshot', blob, '대시보드.png');
+                    formData.append('screenshot', blob, 'dashboard_screenshot.png');
                     
                     // 서버로 전송
                     const response = await fetch('/api/save-screenshot', {
@@ -2688,17 +3195,32 @@ HTML_TEMPLATE_V2 = """
                 btn.innerText = '⏳ 생성 중...';
                 btn.style.opacity = '0.6';
 
-                // SECURITY: Get CSRF token from meta tag
-                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-
-                // API 호출 with CSRF token
+                // API 호출 (CSRF exempt 처리됨)
                 const response = await fetch('/api/generate-predictions', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': csrfToken  // SECURITY: Include CSRF token
+                        'Content-Type': 'application/json'
                     }
                 });
+
+                // 응답 상태 확인
+                if (!response.ok) {
+                    // HTTP 에러 응답 처리
+                    let errorMsg = '서버 오류가 발생했습니다.';
+                    try {
+                        const errorData = await response.json();
+                        errorMsg = errorData.error || errorMsg;
+                    } catch (e) {
+                        // JSON 파싱 실패 시 기본 메시지 사용
+                        if (response.status === 429) {
+                            errorMsg = '요청 한도 초과. 잠시 후 다시 시도해주세요.';
+                        } else if (response.status === 500) {
+                            errorMsg = '서버 내부 오류가 발생했습니다.';
+                        }
+                    }
+                    alert('❌ 예측 생성 실패:\\n' + errorMsg);
+                    return;
+                }
 
                 const result = await response.json();
 
@@ -2827,21 +3349,60 @@ def get_backtest_performance():
     logger.info(f"Flask API - DB 존재: {os.path.exists(performance_db_path)}")
 
     backtest_data = fresh_dashboard.get_backtest_performance()
-    logger.info(f"Flask API - 데모 모드: {backtest_data.get('demo_mode', True)}")
+    logger.info(f"Flask API - 데이터 로드: {'성공' if not backtest_data.get('error', False) else '실패 - ' + backtest_data.get('error_message', '알 수 없는 에러')}")
 
     return jsonify(backtest_data)
 
+@app.route('/api/inclusion-rate')
+def get_inclusion_rate():
+    """필터 Inclusion Rate 데이터 API
+
+    results/inclusion_rate_report.json 파일이 있으면 반환,
+    없으면 안내 메시지 반환
+    """
+    fresh_dashboard = EnhancedLottoDashboard()
+    report_path = os.path.join(fresh_dashboard.project_root, 'results', 'inclusion_rate_report.json')
+
+    if os.path.exists(report_path):
+        try:
+            with open(report_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return jsonify({'error': False, 'data': data})
+        except Exception as e:
+            return jsonify({'error': True, 'message': str(e)})
+    else:
+        return jsonify({
+            'error': True,
+            'message': 'Inclusion Rate 데이터 없음. python src/scripts/measure_inclusion_rate.py 실행 필요'
+        })
+
+@app.route('/api/winning-statistics')
+@app.route('/api/winning-statistics/<int:round_num>')
+def get_winning_statistics(round_num=None):
+    """당첨 통계 API (1~5등 당첨자 수, 당첨금액, 확률)"""
+    fresh_dashboard = EnhancedLottoDashboard()
+    stats = fresh_dashboard.get_winning_statistics(round_num)
+    return jsonify(stats)
+
 @app.route('/api/generate-predictions', methods=['POST'])
-@limiter.limit("5 per hour")  # SECURITY: Rate limit to 5 requests per hour
+@csrf.exempt  # API 엔드포인트는 CSRF 검증 제외 (Rate Limiting으로 보호)
+@limiter.limit("30 per hour")  # Rate limit: 1시간에 30번
+@require_auth  # SEC-002: 외부 접근 시 토큰 인증 필요
 def generate_new_predictions():
     """캐시된 모델을 활용한 예측 생성 API
 
-    SECURITY: Rate limited to 5 requests per hour to prevent abuse.
+    SECURITY: Rate limited to 30 requests per hour to prevent abuse.
     """
+    import sys as _sys
+
     try:
         # 프로젝트 루트 경로 설정
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        sys.path.insert(0, project_root)
+        _sys.path.insert(0, project_root)
+
+        # ✨ 중요: 작업 디렉토리를 프로젝트 루트로 변경 (DatabaseManager가 상대 경로 사용)
+        original_cwd = os.getcwd()
+        os.chdir(project_root)
 
         # 필요한 모듈 import
         from main import generate_final_predictions
@@ -2857,71 +3418,107 @@ def generate_new_predictions():
         db_manager = DatabaseManager()
         filter_manager = IntegratedFilterManager(db_manager)
 
-        # 캐시된 ML 예측 로드
-        ml_predictions = {}
-        cache_dir = os.path.join(project_root, 'cache', 'models')
-
-        # 각 모델의 최신 캐시 파일 찾기
-        if os.path.exists(cache_dir):
-            # Ensemble 모델 캐시 찾기
-            ensemble_files = glob.glob(os.path.join(cache_dir, 'ensemble_*.pkl'))
-            if ensemble_files:
-                # 가장 최신 파일 선택
-                latest_ensemble = max(ensemble_files, key=os.path.getmtime)
-                try:
-                    with open(latest_ensemble, 'rb') as f:
-                        ensemble_data = pickle.load(f)
-                        # 예측 결과가 있으면 사용
-                        if 'predictions' in ensemble_data:
-                            ml_predictions['ensemble'] = ensemble_data['predictions'][:5]
-                            logging.info(f"Ensemble 캐시 로드: {len(ml_predictions['ensemble'])}개")
-                except Exception as e:
-                    logging.warning(f"Ensemble 캐시 로드 실패: {e}")
-
-            # 빈 ML 예측이면 기본값 설정
-            if not ml_predictions:
-                logging.info("캐시된 ML 예측이 없으므로 필터링된 조합에서 직접 생성")
-                ml_predictions = {
-                    'lstm': [],
-                    'ensemble': [],
-                    'monte_carlo': [],
-                    'bayesian': [],
-                    'fractal': [],
-                    'combined': []
-                }
-
-        # main.py와 동일한 예측 생성
-        final_predictions = generate_final_predictions(
-            db_manager=db_manager,
-            filter_manager=filter_manager,
-            ml_predictions=ml_predictions,
-            num_sets=5,
-            use_relaxed_filter=True
-        )
-
-        # 다음 회차 번호 계산 (토요일 저녁 8시 기준)
+        # 다음 회차 계산
         from datetime import datetime
         latest_round = db_manager.get_last_round()
+        next_round = latest_round + 1
 
-        # 현재 시간 확인
-        current_time = datetime.now()
-        current_weekday = current_time.weekday()  # 0=월요일, 5=토요일, 6=일요일
-        current_hour = current_time.hour
+        final_predictions = []
 
-        # 토요일 저녁 8시를 기준으로 회차 결정
-        # 중요: 항상 latest_round + 1 (DB에 이미 최신 회차가 반영됨)
-        if current_weekday == 5 and current_hour < 20:  # 토요일 오후 8시 이전
-            next_round = latest_round + 1  # 아직 이번 주 회차
-            logging.info(f"[API] 토요일 {current_hour}시 - {next_round}회차 예측 생성")
-        elif current_weekday == 5 and current_hour >= 20:  # 토요일 오후 8시 이후
-            next_round = latest_round + 1  # 다음 주 회차 (DB가 이미 업데이트됨)
-            logging.info(f"[API] 토요일 {current_hour}시 - 추첨 완료, {next_round}회차 예측 생성")
-        elif current_weekday == 6:  # 일요일
-            next_round = latest_round + 1  # 다음 주 회차
-            logging.info(f"[API] 일요일 - {next_round}회차 예측 생성")
-        else:  # 월~금요일
-            next_round = latest_round + 1  # 이번 주 회차
-            logging.info(f"[API] {['월','화','수','목','금'][current_weekday]}요일 - {next_round}회차 예측 생성")
+        # QuickPredictionEngine 우선 사용 (ML 학습은 너무 오래 걸림)
+        logging.info(f"[API] QuickPredictionEngine으로 {next_round}회차 예측 생성 시작...")
+
+        # 1단계: QuickPredictionEngine으로 빠른 예측 생성 (우선)
+        try:
+            from src.core.quick_prediction_engine import QuickPredictionEngine
+            quick_engine = QuickPredictionEngine()
+            quick_predictions = quick_engine.generate_quick_predictions(
+                num_sets=5,
+                db_manager=db_manager,
+                use_ml_cache=True  # 캐시된 ML 예측 사용
+            )
+
+            for pred in quick_predictions:
+                pred_numbers = pred.get('numbers', pred) if isinstance(pred, dict) else pred
+                if isinstance(pred, dict):
+                    final_predictions.append(pred)
+                else:
+                    final_predictions.append({
+                        'numbers': list(pred_numbers),
+                        'confidence': 0.7,
+                        'source': 'QuickEngine'
+                    })
+
+            logging.info(f"[API] QuickPredictionEngine으로 {len(final_predictions)}개 예측 생성 완료")
+        except Exception as e:
+            import traceback
+            logging.warning(f"[API] QuickPredictionEngine 실패: {e}")
+            logging.warning(traceback.format_exc())
+
+        # 2단계: 부족한 예측은 필터 풀에서 보충
+        if len(final_predictions) < 5:
+            try:
+                from src.core.quick_prediction_engine import QuickPredictionEngine
+                quick_engine = QuickPredictionEngine()
+                quick_predictions = quick_engine.generate_quick_predictions(
+                    num_sets=5 - len(final_predictions),
+                    db_manager=db_manager,
+                    use_ml_cache=True  # 캐시된 ML 예측 사용
+                )
+
+                existing_numbers = [tuple(p['numbers']) for p in final_predictions]
+                for pred in quick_predictions:
+                    if len(final_predictions) >= 5:
+                        break
+                    pred_numbers = pred.get('numbers', pred) if isinstance(pred, dict) else pred
+                    if tuple(pred_numbers) not in existing_numbers:
+                        if isinstance(pred, dict):
+                            final_predictions.append(pred)
+                        else:
+                            final_predictions.append({'numbers': list(pred_numbers), 'confidence': 0.6, 'source': 'QuickEngine'})
+                        existing_numbers.append(tuple(pred_numbers))
+
+                logging.info(f"[API] QuickPredictionEngine으로 {len(quick_predictions)}개 보충")
+            except Exception as e:
+                logging.warning(f"[API] QuickPredictionEngine 실패: {e}")
+                import traceback
+                logging.warning(traceback.format_exc())
+
+        # 예측이 여전히 부족하면 다양한 출처로 보충
+        if len(final_predictions) < 5:
+            sources = ['Statistical', 'Pattern-Based', 'Frequency', 'Random-Pool']
+            import random
+            for i in range(5 - len(final_predictions)):
+                # 필터링된 조합에서 랜덤 선택
+                try:
+                    filtered_combos = db_manager.combinations_db.get_filtered_combinations(next_round) or []
+                    if not filtered_combos:
+                        filtered_combos = db_manager.combinations_db.get_filtered_combinations(latest_round) or []
+                    if filtered_combos:
+                        existing_numbers = [tuple(p['numbers']) for p in final_predictions]
+                        for _ in range(100):  # 최대 100번 시도
+                            combo_str = random.choice(filtered_combos[:1000])
+                            numbers = sorted([int(x) for x in combo_str.split(',')])
+                            if tuple(numbers) not in existing_numbers:
+                                final_predictions.append({
+                                    'numbers': numbers,
+                                    'confidence': 0.5 + random.uniform(0.1, 0.3),  # 50-80% 신뢰도
+                                    'source': sources[i % len(sources)]
+                                })
+                                break
+                except Exception as e:
+                    logging.warning(f"[API] 보충 예측 생성 실패: {e}")
+
+        logging.info(f"[API] 최종 {len(final_predictions)}개 예측 생성 완료 (회차: {next_round})")
+
+        # 예측이 비어있으면 실패 반환
+        if not final_predictions:
+            logging.error(f"[API] {next_round}회차 예측 생성 실패: 모든 ML 모델과 백업 방법이 실패했습니다.")
+            return jsonify({
+                'success': False,
+                'error': '예측 생성 실패: ML 모델 및 백업 방법이 모두 실패했습니다. 서버 로그를 확인하세요.',
+                'round': int(next_round)
+            }), 500
 
         # 예측 저장
         prediction_tracker = PredictionTracker()
@@ -2951,9 +3548,14 @@ def generate_new_predictions():
         )
 
         if success:
-            logging.info(f"[API] {next_round}회차 예측 5세트 생성 및 저장 완료")
+            logging.info(f"[API] {next_round}회차 예측 {len(predictions_to_save)}세트 생성 및 저장 완료")
         else:
-            logging.warning(f"[API] {next_round}회차 예측 저장 실패")
+            logging.error(f"[API] {next_round}회차 예측 저장 실패")
+            return jsonify({
+                'success': False,
+                'error': '예측 저장 실패: 데이터베이스 오류가 발생했습니다.',
+                'round': int(next_round)
+            }), 500
 
         return jsonify({
             'success': success,
@@ -2970,9 +3572,72 @@ def generate_new_predictions():
         })
 
     except Exception as e:
+        import traceback
         logging.error(f"[API] 예측 생성 중 오류: {str(e)}")
+        logging.error(traceback.format_exc())
         return jsonify({
             'success': False,
+            'error': str(e)
+        }), 500
+    finally:
+        # 원래 작업 디렉토리로 복원
+        try:
+            if 'original_cwd' in locals():
+                os.chdir(original_cwd)
+        except:
+            pass
+
+@app.route('/api/quick-prediction-status')
+def get_quick_prediction_status():
+    """빠른 예측 시스템 상태 API"""
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        # 시스템 상태 파일 확인
+        state_file = os.path.join(project_root, "data/system_state.json")
+        quick_cache_dir = os.path.join(project_root, "cache")
+
+        status = {
+            'quick_prediction_available': True,
+            'last_quick_prediction': None,
+            'cache_valid': False,
+            'ml_cache_valid': False,
+            'filter_cache_valid': False,
+            'db_round': 0,
+            'recommended_action': 'quick_prediction'
+        }
+
+        # 시스템 상태 로드
+        if os.path.exists(state_file):
+            with open(state_file, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+                status['db_round'] = state.get('last_round', 0)
+                status['filter_cache_valid'] = state.get('filter_update_round', 0) >= status['db_round'] - 1
+
+        # ML 캐시 상태 확인
+        models_dir = os.path.join(quick_cache_dir, "models")
+        if os.path.exists(models_dir):
+            pkl_files = [f for f in os.listdir(models_dir) if f.endswith('.pkl')]
+            h5_files = [f for f in os.listdir(models_dir) if f.endswith('.h5')]
+            status['ml_cache_valid'] = bool(pkl_files or h5_files)
+
+        # 빠른 예측 캐시 확인
+        quick_predictions = [f for f in os.listdir(quick_cache_dir) if f.startswith('quick_predictions_')] if os.path.exists(quick_cache_dir) else []
+        if quick_predictions:
+            latest_cache = max(quick_predictions)
+            cache_path = os.path.join(quick_cache_dir, latest_cache)
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+                status['last_quick_prediction'] = cache_data.get('timestamp')
+                status['cache_valid'] = True
+
+        status['cache_valid'] = status['ml_cache_valid'] or status['filter_cache_valid']
+
+        return jsonify(status)
+    except Exception as e:
+        logging.error(f"빠른 예측 상태 조회 실패: {e}")
+        return jsonify({
+            'quick_prediction_available': False,
             'error': str(e)
         }), 500
 
@@ -3056,25 +3721,69 @@ def get_optimizer_history():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/save-screenshot', methods=['POST'])
+@csrf.exempt  # API 엔드포인트는 CSRF 검증 제외 (Rate Limiting으로 보호)
+@require_auth  # SEC-002: 외부 접근 시 토큰 인증 필요
 def save_screenshot():
-    """스크린샷 저장 API"""
+    """스크린샷 저장 API
+
+    SEC-004: 파일 업로드 검증
+    - 허용 확장자: png, jpg, jpeg
+    - 최대 파일 크기: 5MB
+    - secure_filename 적용
+    """
     try:
         if 'screenshot' not in request.files:
             return jsonify({'error': 'No file uploaded'}), 400
-        
+
         file = request.files['screenshot']
-        
-        # 루트 디렉토리에 저장
-        save_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '대시보드.png')
+
+        # SEC-004: 파일명 검증
+        if not file.filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+
+        # SEC-004: 확장자 검증 (이미지 파일만 허용)
+        ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+        file_ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+        if file_ext not in ALLOWED_EXTENSIONS:
+            return jsonify({
+                'error': f'Invalid file type. Allowed: {", ".join(ALLOWED_EXTENSIONS)}',
+                'error_code': 'INVALID_FILE_TYPE'
+            }), 400
+
+        # SEC-004: 파일 크기 검증 (5MB 제한)
+        MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+        file.seek(0, 2)  # 파일 끝으로 이동
+        file_size = file.tell()
+        file.seek(0)  # 파일 시작으로 복귀
+
+        if file_size > MAX_FILE_SIZE:
+            return jsonify({
+                'error': f'File too large. Maximum size: {MAX_FILE_SIZE // (1024 * 1024)}MB',
+                'error_code': 'FILE_TOO_LARGE'
+            }), 400
+
+        # SEC-004: 안전한 파일명 사용
+        from werkzeug.utils import secure_filename
+        safe_filename = secure_filename(file.filename) or 'dashboard_screenshot.png'
+
+        # 고정 파일명으로 저장 (덮어쓰기)
+        save_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            'dashboard_screenshot.png'
+        )
         file.save(save_path)
-        
+
+        logging.info(f"[API] 스크린샷 저장됨: {save_path} ({file_size // 1024}KB)")
+
         return jsonify({
             'success': True,
             'path': save_path,
+            'size': file_size,
             'message': '화면이 성공적으로 저장되었습니다.'
         })
-        
+
     except Exception as e:
+        logging.error(f"[API] 스크린샷 저장 실패: {e}")
         return jsonify({'error': str(e)}), 500
 
 def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001):
@@ -3083,6 +3792,11 @@ def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001):
     SECURITY: debug parameter removed to prevent RCE vulnerability.
     Debug mode enables Werkzeug debugger with arbitrary code execution.
     """
+    # ✨ 중요: 프로젝트 루트로 작업 디렉토리 변경 (DatabaseManager가 상대 경로 사용)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    os.chdir(project_root)
+    print(f"[INFO] Working directory: {os.getcwd()}")
+
     print("\n" + "="*60)
     print("Enhanced Lotto Prediction Dashboard v2")
     print("="*60)

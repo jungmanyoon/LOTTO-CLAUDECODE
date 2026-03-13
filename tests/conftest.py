@@ -73,6 +73,119 @@ def mock_filter_manager(db_manager):
     return FilterManager(db_manager)
 
 
+@pytest.fixture(scope="function", autouse=True)
+def reset_singletons():
+    """
+    테스트 격리를 위한 싱글톤 리셋 픽스처
+
+    모든 테스트 함수 전후로 자동 실행되어 싱글톤 상태를 초기화합니다.
+    이를 통해 테스트 간 상태 오염을 방지합니다.
+
+    Phase 1.2: Test Isolation Fix (CRITICAL)
+    """
+    # 테스트 실행 전: 싱글톤 인스턴스 저장
+    saved_instances = {}
+
+    # ThresholdManager 리셋
+    try:
+        from src.core.threshold_manager import ThresholdManager
+        if hasattr(ThresholdManager, '_instance'):
+            saved_instances['ThresholdManager'] = ThresholdManager._instance
+            ThresholdManager._instance = None
+    except ImportError:
+        pass
+
+    # DatabaseManager 리셋
+    try:
+        from src.core.db_manager import DatabaseManager
+        if hasattr(DatabaseManager, '_instance'):
+            saved_instances['DatabaseManager'] = DatabaseManager._instance
+            DatabaseManager._instance = None
+    except ImportError:
+        pass
+
+    # PerformanceStatsManager 리셋
+    try:
+        from src.core.performance_stats_manager import PerformanceStatsManager
+        if hasattr(PerformanceStatsManager, '_instance'):
+            saved_instances['PerformanceStatsManager'] = PerformanceStatsManager._instance
+            PerformanceStatsManager._instance = None
+    except ImportError:
+        pass
+
+    # ImprovedAutoImprovementManager 리셋
+    try:
+        from src.optimization.improved_auto_improvement_manager import ImprovedAutoImprovementManager
+        if hasattr(ImprovedAutoImprovementManager, '_instance'):
+            saved_instances['ImprovedAutoImprovementManager'] = ImprovedAutoImprovementManager._instance
+            ImprovedAutoImprovementManager._instance = None
+    except ImportError:
+        pass
+
+    # ConfigManager 리셋
+    try:
+        from src.utils.config_manager import ConfigManager
+        if hasattr(ConfigManager, '_instance'):
+            saved_instances['ConfigManager'] = ConfigManager._instance
+            ConfigManager._instance = None
+    except ImportError:
+        pass
+
+    yield  # 테스트 실행
+
+    # 테스트 실행 후: 싱글톤 정리 (새로 생성된 인스턴스 정리)
+    try:
+        from src.core.threshold_manager import ThresholdManager
+        if hasattr(ThresholdManager, '_instance') and ThresholdManager._instance is not None:
+            try:
+                # 리소스 정리가 필요한 경우
+                if hasattr(ThresholdManager._instance, 'cleanup'):
+                    ThresholdManager._instance.cleanup()
+            except:
+                pass
+            ThresholdManager._instance = None
+    except ImportError:
+        pass
+
+    try:
+        from src.core.db_manager import DatabaseManager
+        if hasattr(DatabaseManager, '_instance') and DatabaseManager._instance is not None:
+            try:
+                if hasattr(DatabaseManager._instance, 'close'):
+                    DatabaseManager._instance.close()
+            except:
+                pass
+            DatabaseManager._instance = None
+    except ImportError:
+        pass
+
+    try:
+        from src.core.performance_stats_manager import PerformanceStatsManager
+        if hasattr(PerformanceStatsManager, '_instance') and PerformanceStatsManager._instance is not None:
+            try:
+                if hasattr(PerformanceStatsManager._instance, 'close'):
+                    PerformanceStatsManager._instance.close()
+            except:
+                pass
+            PerformanceStatsManager._instance = None
+    except ImportError:
+        pass
+
+    try:
+        from src.optimization.improved_auto_improvement_manager import ImprovedAutoImprovementManager
+        if hasattr(ImprovedAutoImprovementManager, '_instance') and ImprovedAutoImprovementManager._instance is not None:
+            ImprovedAutoImprovementManager._instance = None
+    except ImportError:
+        pass
+
+    try:
+        from src.utils.config_manager import ConfigManager
+        if hasattr(ConfigManager, '_instance') and ConfigManager._instance is not None:
+            ConfigManager._instance = None
+    except ImportError:
+        pass
+
+
 @pytest.fixture(scope="function")
 def temp_cache_dir(tmp_path):
     """테스트용 임시 캐시 디렉토리"""

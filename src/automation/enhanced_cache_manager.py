@@ -16,6 +16,7 @@ import sqlite3
 import logging
 import threading
 import shutil
+import psutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union
@@ -46,13 +47,13 @@ class CacheEntry:
 
 class EnhancedCacheManager:
     """통합 지능형 캐시 관리자"""
-    
-    def __init__(self, 
+
+    def __init__(self,
                  config_manager,
                  db_manager,
                  cache_dir: str = "cache"):
         """초기화
-        
+
         Args:
             config_manager: ConfigManager 인스턴스
             db_manager: DatabaseManager 인스턴스
@@ -60,45 +61,64 @@ class EnhancedCacheManager:
         """
         self.config_manager = config_manager
         self.db_manager = db_manager
-        
+
         # 캐시 디렉토리 설정
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 서브 디렉토리들
         self.filters_cache_dir = self.cache_dir / "filters"
         self.models_cache_dir = self.cache_dir / "models"
         self.patterns_cache_dir = self.cache_dir / "patterns"
-        
+
         for subdir in [self.filters_cache_dir, self.models_cache_dir, self.patterns_cache_dir]:
             subdir.mkdir(parents=True, exist_ok=True)
-        
+
         # 캐시 메타데이터 DB
         self.metadata_db_path = self.cache_dir / "cache_metadata.db"
         self._init_metadata_db()
-        
+
+        # 설정 파일에서 캐시 설정 로드
+        cache_config = self._load_cache_config()
+
         # 메모리 캐시 (L1 캐시)
         self._memory_cache: Dict[str, Any] = {}
-        self._memory_cache_size = 200  # 최대 200개 항목
+        self._memory_cache_size = cache_config.get('max_memory_entries', 200)
         self._memory_cache_lock = threading.RLock()
-        
-        # 캐시 설정
-        self.cache_ttl = 3600 * 24 * 7  # 7일
-        self.max_disk_cache_size = 1024 * 1024 * 1024 * 2  # 2GB
-        
+
+        # 캐시 설정 (설정 파일에서 로드)
+        self.cache_ttl = 3600 * 24 * cache_config.get('ttl_days', 7)
+        self.max_disk_cache_size = cache_config.get('max_disk_cache_mb', 2048) * 1024 * 1024
+        self.memory_pressure_threshold = cache_config.get('memory_pressure_threshold', 80)
+        self.auto_cleanup_enabled = cache_config.get('auto_cleanup_enabled', True)
+        self.cleanup_target_percent = cache_config.get('cleanup_target_percent', 60)
+
         # 통계
         self.stats = {
             'memory_hits': 0,
             'disk_hits': 0,
             'misses': 0,
             'invalidations': 0,
-            'evictions': 0
+            'evictions': 0,
+            'memory_pressure_cleanups': 0
         }
-        
+
         # 현재 설정 해시 계산
         self._current_config_hash = self._calculate_config_hash()
-        
+
         logging.info(f"EnhancedCacheManager 초기화 완료: {self.cache_dir}")
+        logging.info(f"캐시 설정 - TTL: {cache_config.get('ttl_days', 7)}일, "
+                    f"최대 디스크: {cache_config.get('max_disk_cache_mb', 2048)}MB, "
+                    f"메모리 항목: {self._memory_cache_size}")
+
+    def _load_cache_config(self) -> Dict[str, Any]:
+        """설정 파일에서 캐시 설정 로드"""
+        try:
+            if hasattr(self.config_manager, 'config') and self.config_manager.config:
+                return self.config_manager.config.get('cache', {})
+        except Exception as e:
+            logging.warning(f"캐시 설정 로드 실패, 기본값 사용: {e}")
+        return {}
     
     def _init_metadata_db(self):
         """캐시 메타데이터 DB 초기화"""
@@ -387,47 +407,56 @@ class EnhancedCacheManager:
         threading.Thread(target=update_db, daemon=True).start()
     
     def _manage_cache_size(self):
-        """캐시 크기 관리"""
+        """캐시 크기 관리 (메모리 압박 감지 포함)"""
         try:
-            # 전체 디스크 사용량 계산
+            # 1. 메모리 압박 확인 및 정리
+            if self.auto_cleanup_enabled and self.check_memory_pressure():
+                self.cleanup_on_memory_pressure()
+
+            # 2. 전체 디스크 사용량 계산
             total_size = 0
             cache_files = []
-            
+
             for cache_file in self.cache_dir.rglob("*.pkl"):
                 if cache_file.exists():
                     size = cache_file.stat().st_size
                     mtime = cache_file.stat().st_mtime
                     cache_files.append((cache_file, size, mtime))
                     total_size += size
-            
-            # 크기 초과 시 정리
+
+            # 3. 디스크 크기 초과 시 정리
             if total_size > self.max_disk_cache_size:
                 logging.info(f"캐시 크기 초과: {total_size/1024/1024:.1f}MB, 정리 시작")
-                
-                # 접근 시간 기준 정렬 (오래된 것부터)
+
+                # 접근 시간 기준 정렬 (오래된 것부터 - LRU)
                 cache_files.sort(key=lambda x: x[2])
-                
+
+                target_size = self.max_disk_cache_size * self.cleanup_target_percent / 100
                 for cache_file, size, _ in cache_files:
-                    if total_size <= self.max_disk_cache_size * 0.8:  # 80%까지 줄임
+                    if total_size <= target_size:
                         break
-                    
+
                     # 파일 삭제
-                    cache_file.unlink()
+                    try:
+                        cache_file.unlink()
+                    except Exception:
+                        continue
+
                     total_size -= size
                     self.stats['evictions'] += 1
-                    
+
                     # DB에서도 제거
                     cache_key = cache_file.stem
                     with sqlite3.connect(self.metadata_db_path) as conn:
                         conn.execute("DELETE FROM cache_entries WHERE cache_key = ?", (cache_key,))
-                    
+
                     # 메모리 캐시에서도 제거
                     with self._memory_cache_lock:
                         if cache_key in self._memory_cache:
                             del self._memory_cache[cache_key]
-                
+
                 logging.info(f"캐시 정리 완료: {total_size/1024/1024:.1f}MB")
-                
+
         except Exception as e:
             logging.error(f"캐시 크기 관리 실패: {e}")
     
@@ -676,18 +705,18 @@ class EnhancedCacheManager:
         """만료된 캐시 정리"""
         cleaned_count = 0
         cutoff_time = datetime.now() - timedelta(seconds=self.cache_ttl)
-        
+
         try:
             with sqlite3.connect(self.metadata_db_path) as conn:
                 # 만료된 엔트리들 조회
                 cursor = conn.execute("""
-                    SELECT cache_key, file_path 
-                    FROM cache_entries 
+                    SELECT cache_key, file_path
+                    FROM cache_entries
                     WHERE created_at < ?
                 """, (cutoff_time.isoformat(),))
-                
+
                 expired_entries = cursor.fetchall()
-                
+
                 for cache_key, file_path in expired_entries:
                     # 파일 삭제
                     try:
@@ -695,21 +724,139 @@ class EnhancedCacheManager:
                             Path(file_path).unlink()
                     except Exception:
                         pass
-                    
+
                     # 메모리에서 제거
                     with self._memory_cache_lock:
                         if cache_key in self._memory_cache:
                             del self._memory_cache[cache_key]
-                    
+
                     cleaned_count += 1
-                
+
                 # DB에서 삭제
-                conn.execute("DELETE FROM cache_entries WHERE created_at < ?", 
+                conn.execute("DELETE FROM cache_entries WHERE created_at < ?",
                            (cutoff_time.isoformat(),))
-            
+
             logging.info(f"만료된 캐시 {cleaned_count}개 정리 완료")
-            
+
         except Exception as e:
             logging.error(f"만료된 캐시 정리 실패: {e}")
-        
+
         return cleaned_count
+
+    def check_memory_pressure(self) -> bool:
+        """메모리 압박 상태 확인
+
+        Returns:
+            True if memory usage exceeds threshold
+        """
+        try:
+            memory = psutil.virtual_memory()
+            return memory.percent >= self.memory_pressure_threshold
+        except Exception as e:
+            logging.warning(f"메모리 상태 확인 실패: {e}")
+            return False
+
+    def cleanup_on_memory_pressure(self) -> int:
+        """메모리 압박 시 캐시 자동 정리
+
+        시스템 메모리 사용률이 임계값을 초과하면 캐시를 정리합니다.
+        LRU 정책에 따라 오래 사용되지 않은 항목부터 삭제합니다.
+
+        Returns:
+            정리된 캐시 항목 수
+        """
+        if not self.auto_cleanup_enabled:
+            return 0
+
+        if not self.check_memory_pressure():
+            return 0
+
+        logging.warning(f"메모리 압박 감지 (사용률 >= {self.memory_pressure_threshold}%), 캐시 정리 시작")
+
+        cleaned_count = 0
+
+        try:
+            # 1. 메모리 캐시 50% 정리 (LRU 기반)
+            with self._memory_cache_lock:
+                if len(self._memory_cache) > 0:
+                    # 마지막 사용 시간 기준 정렬
+                    sorted_keys = sorted(
+                        self._memory_cache.keys(),
+                        key=lambda k: self._memory_cache[k].get('last_used', 0)
+                    )
+                    # 절반 삭제
+                    keys_to_remove = sorted_keys[:len(sorted_keys) // 2]
+                    for key in keys_to_remove:
+                        del self._memory_cache[key]
+                        cleaned_count += 1
+
+            # 2. 디스크 캐시 정리 (목표 사용률까지)
+            target_size = self.max_disk_cache_size * self.cleanup_target_percent / 100
+
+            with sqlite3.connect(self.metadata_db_path) as conn:
+                # 현재 디스크 사용량 계산
+                cursor = conn.execute("SELECT SUM(data_size) FROM cache_entries WHERE is_valid = 1")
+                current_size = cursor.fetchone()[0] or 0
+
+                if current_size > target_size:
+                    # LRU 순서로 삭제 대상 조회
+                    cursor = conn.execute("""
+                        SELECT cache_key, file_path, data_size
+                        FROM cache_entries
+                        WHERE is_valid = 1
+                        ORDER BY last_used ASC
+                    """)
+
+                    for cache_key, file_path, data_size in cursor.fetchall():
+                        if current_size <= target_size:
+                            break
+
+                        # 파일 삭제
+                        try:
+                            if file_path and Path(file_path).exists():
+                                Path(file_path).unlink()
+                        except Exception:
+                            pass
+
+                        # DB에서 삭제
+                        conn.execute("DELETE FROM cache_entries WHERE cache_key = ?", (cache_key,))
+
+                        current_size -= (data_size or 0)
+                        cleaned_count += 1
+                        self.stats['evictions'] += 1
+
+            self.stats['memory_pressure_cleanups'] += 1
+            logging.info(f"메모리 압박 정리 완료: {cleaned_count}개 항목 삭제")
+
+            # 메모리 상태 다시 확인
+            memory = psutil.virtual_memory()
+            logging.info(f"정리 후 메모리 사용률: {memory.percent}%")
+
+        except Exception as e:
+            logging.error(f"메모리 압박 정리 실패: {e}")
+
+        return cleaned_count
+
+    def update_ttl(self, ttl_days: int):
+        """TTL 동적 업데이트
+
+        Args:
+            ttl_days: 새로운 TTL (일)
+        """
+        old_ttl_days = self.cache_ttl // (3600 * 24)
+        self.cache_ttl = 3600 * 24 * ttl_days
+        logging.info(f"캐시 TTL 업데이트: {old_ttl_days}일 -> {ttl_days}일")
+
+    def update_max_size(self, max_mb: int):
+        """최대 디스크 캐시 크기 동적 업데이트
+
+        Args:
+            max_mb: 새로운 최대 크기 (MB)
+        """
+        old_max_mb = self.max_disk_cache_size // (1024 * 1024)
+        self.max_disk_cache_size = max_mb * 1024 * 1024
+        logging.info(f"캐시 최대 크기 업데이트: {old_max_mb}MB -> {max_mb}MB")
+
+        # 새 크기가 작으면 즉시 정리
+        if max_mb < old_max_mb:
+            self._manage_cache_size()

@@ -49,7 +49,7 @@ class ConsecutiveFilter(BaseFilter):
     def _process_chunk(combinations_chunk: List[str],
                       max_consecutive: int,
                       min_gap: int) -> List[str]:
-        """청크 단위 필터링 처리"""
+        """청크 단위 필터링 처리 (완전 벡터화)"""
         try:
             # 타입 체크 추가
             converted_chunks = []
@@ -58,38 +58,35 @@ class ConsecutiveFilter(BaseFilter):
                     converted_chunks.append(list(map(int, comb.split(','))))
                 else:
                     converted_chunks.append(comb)
-            
+
             chunk_arrays = np.array(converted_chunks, dtype=np.int8)
 
             # 정렬된 배열 생성
             sorted_arrays = np.sort(chunk_arrays, axis=1)
-            
-            # 연속된 번호 검사
+
+            # 연속된 번호 검사 - 완전 벡터화
             diffs = np.diff(sorted_arrays, axis=1)
-            max_consecutive_counts = np.zeros(len(chunk_arrays), dtype=np.int8)
-            
-            for i in range(len(chunk_arrays)):
-                consecutive = 1
-                max_consecutive_count = 1
-                
-                for diff in diffs[i]:
-                    if diff == 1:
-                        consecutive += 1
-                        max_consecutive_count = max(max_consecutive_count, consecutive)
-                    else:
-                        consecutive = 1
-                        
-                max_consecutive_counts[i] = max_consecutive_count
-            
-            # 최소 간격 검사
+
+            # 벡터화된 연속 카운트 계산 (컬럼 반복 = 5회만, 행 반복 아님)
+            n_rows = len(chunk_arrays)
+            max_consecutive_counts = np.ones(n_rows, dtype=np.int8)
+            current_consecutive = np.ones(n_rows, dtype=np.int8)
+
+            # 5개 컬럼만 반복 (수백만 행 반복 대신)
+            for col in range(diffs.shape[1]):
+                is_one = (diffs[:, col] == 1)
+                current_consecutive = np.where(is_one, current_consecutive + 1, 1)
+                max_consecutive_counts = np.maximum(max_consecutive_counts, current_consecutive)
+
+            # 최소 간격 검사 (이미 벡터화됨)
             min_gaps = np.min(diffs, axis=1)
-            
+
             # 조건을 만족하는 조합 선택
             valid_mask = (
                 (max_consecutive_counts < max_consecutive) &
                 (min_gaps >= min_gap)
             )
-            
+
             return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid_mask[i]]
 
         except Exception as e:

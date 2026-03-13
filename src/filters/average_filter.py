@@ -63,6 +63,14 @@ class AverageFilter(BaseFilter):
                 (averages <= max_average)
             )
             
+            # 디버깅: 대량 데이터 처리 시 로그 출력 (한 번만)
+            if len(combinations_chunk) > 10000 and not getattr(AverageFilter, '_main_debug_logged', False):
+                logging.info(f"[AverageFilter MAIN] Criteria: min={min_average}, max={max_average}")
+                logging.info(f"[AverageFilter MAIN] Chunk size: {len(combinations_chunk)}")
+                logging.info(f"[AverageFilter MAIN] Sample averages: {averages[:10]}")
+                logging.info(f"[AverageFilter MAIN] Valid count: {np.sum(valid_mask)}/{len(averages)}")
+                AverageFilter._main_debug_logged = True
+            
             return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid_mask[i]]
 
         except Exception as e:

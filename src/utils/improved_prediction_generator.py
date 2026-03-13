@@ -220,7 +220,7 @@ def _generate_legacy_predictions(db_manager, filter_manager, ml_predictions, num
 
                 final_predictions.append({
                     'numbers': sorted(numbers),
-                    'confidence': 0.5,  # 기본 신뢰도
+                    'confidence': 0.4,  # 필터 통과 풀 기반 고정 신뢰도 (ML 예측보다 낮음)
                     'source': 'FilterPool',
                     'filter_status': 'passed',
                     'in_pool': True
@@ -266,8 +266,8 @@ def _process_ml_predictions(ml_predictions):
     # 신뢰도 순 정렬
     all_predictions.sort(key=lambda x: x.get('confidence', 0), reverse=True)
 
-    # 80% 이상 신뢰도만 선택 (최소 5개 보장)
-    high_confidence = [p for p in all_predictions if p.get('confidence', 0) >= 0.80]
+    # 50% 이상 신뢰도만 선택 (최소 5개 보장)
+    high_confidence = [p for p in all_predictions if p.get('confidence', 0) >= 0.50]
     if len(high_confidence) < 5:
         # 80% 미만이지만 상위 예측 추가
         remaining = all_predictions[len(high_confidence):5]

@@ -13,7 +13,19 @@ from src.utils.validators import LottoValidator
 
 class LottoNumbersDB(BaseDatabase):
     """당첨 번호 데이터베이스"""
-    
+
+    # 인메모리 캐시 (클래스 레벨)
+    _winning_numbers_cache = None
+    _winning_numbers_with_bonus_cache = None
+    _cache_round = None  # 캐시 시점의 최신 회차
+
+    @classmethod
+    def invalidate_cache(cls):
+        """캐시 무효화 (새 회차 추가 시 호출)"""
+        cls._winning_numbers_cache = None
+        cls._winning_numbers_with_bonus_cache = None
+        cls._cache_round = None
+
     def _initialize_database(self):
         with self._create_connection() as conn:
             cursor = conn.cursor()
@@ -28,13 +40,35 @@ class LottoNumbersDB(BaseDatabase):
             ''')
             conn.commit()
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_numbers_round ON lotto_numbers(round)')
-            
+
             # bonus_number 컬럼이 없으면 추가
             cursor.execute("PRAGMA table_info(lotto_numbers)")
             columns = [col[1] for col in cursor.fetchall()]
             if 'bonus_number' not in columns:
                 cursor.execute('ALTER TABLE lotto_numbers ADD COLUMN bonus_number INTEGER')
                 conn.commit()
+
+            # 당첨 통계 테이블 생성 (1~5등 당첨자 수, 당첨금액 등)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS lotto_statistics (
+                    round INTEGER PRIMARY KEY,
+                    first_winners INTEGER DEFAULT 0,
+                    first_prize BIGINT DEFAULT 0,
+                    second_winners INTEGER DEFAULT 0,
+                    second_prize BIGINT DEFAULT 0,
+                    third_winners INTEGER DEFAULT 0,
+                    third_prize BIGINT DEFAULT 0,
+                    fourth_winners INTEGER DEFAULT 0,
+                    fourth_prize BIGINT DEFAULT 0,
+                    fifth_winners INTEGER DEFAULT 0,
+                    fifth_prize BIGINT DEFAULT 0,
+                    total_sales BIGINT DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_statistics_round ON lotto_statistics(round)')
+            conn.commit()
 
     def get_last_round(self) -> int:
         """마지막으로 저장된 회차 번호 조회"""
@@ -58,11 +92,12 @@ class LottoNumbersDB(BaseDatabase):
                     VALUES (?, ?, ?)
                 ''', (round_num, ','.join(map(str, numbers)), draw_date))
                 conn.commit()
+                LottoNumbersDB.invalidate_cache()
                 return True
         except Exception as e:
             logging.error(f"데이터 삽입 중 오류 발생: {str(e)}")
             return False
-    
+
     def insert_numbers_with_bonus(self, round_num: int, numbers: List[int], bonus: int, draw_date: str) -> bool:
         """로또 번호와 보너스 번호 데이터 삽입"""
         try:
@@ -73,6 +108,7 @@ class LottoNumbersDB(BaseDatabase):
                     VALUES (?, ?, ?, ?)
                 ''', (round_num, ','.join(map(str, numbers)), draw_date, bonus))
                 conn.commit()
+                LottoNumbersDB.invalidate_cache()
                 return True
         except Exception as e:
             logging.error(f"데이터 삽입 중 오류 발생: {str(e)}")
@@ -105,12 +141,18 @@ class LottoNumbersDB(BaseDatabase):
             return None
 
     def get_all_winning_numbers(self) -> List[str]:
-        """모든 당첨 번호 목록 조회"""
+        """모든 당첨 번호 목록 조회 (인메모리 캐시 활용)"""
+        # 캐시 히트 시 DB 조회 생략
+        if LottoNumbersDB._winning_numbers_cache is not None:
+            return list(LottoNumbersDB._winning_numbers_cache)
         try:
             with self._create_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT numbers FROM lotto_numbers ORDER BY round")
-                return [row[0] for row in cursor.fetchall()]
+                result = [row[0] for row in cursor.fetchall()]
+                # 캐시 저장
+                LottoNumbersDB._winning_numbers_cache = result
+                return list(result)
         except Exception as e:
             logging.error(f"당첨 번호 조회 중 오류 발생: {str(e)}")
             return []
@@ -262,6 +304,248 @@ class LottoNumbersDB(BaseDatabase):
         except Exception as e:
             logging.error(f"보너스 포함 당첨번호 조회 중 오류: {e}")
             return []
+
+    # ============ 당첨 통계 관련 메서드 ============
+
+    def insert_statistics(self, round_num: int, statistics: Dict[str, Any]) -> bool:
+        """당첨 통계 데이터 삽입
+
+        Args:
+            round_num: 회차 번호
+            statistics: 통계 데이터 딕셔너리
+                - first_winners, first_prize: 1등 당첨자 수, 당첨금
+                - second_winners, second_prize: 2등 당첨자 수, 당첨금
+                - third_winners, third_prize: 3등 당첨자 수, 당첨금
+                - fourth_winners, fourth_prize: 4등 당첨자 수, 당첨금
+                - fifth_winners, fifth_prize: 5등 당첨자 수, 당첨금
+                - total_sales: 총 판매액
+
+        Returns:
+            bool: 삽입 성공 여부
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO lotto_statistics
+                    (round, first_winners, first_prize, second_winners, second_prize,
+                     third_winners, third_prize, fourth_winners, fourth_prize,
+                     fifth_winners, fifth_prize, total_sales, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (
+                    round_num,
+                    statistics.get('first_winners', 0),
+                    statistics.get('first_prize', 0),
+                    statistics.get('second_winners', 0),
+                    statistics.get('second_prize', 0),
+                    statistics.get('third_winners', 0),
+                    statistics.get('third_prize', 0),
+                    statistics.get('fourth_winners', 0),
+                    statistics.get('fourth_prize', 0),
+                    statistics.get('fifth_winners', 0),
+                    statistics.get('fifth_prize', 0),
+                    statistics.get('total_sales', 0)
+                ))
+                conn.commit()
+                logging.info(f"회차 {round_num} 당첨 통계 저장 완료")
+                return True
+        except Exception as e:
+            logging.error(f"회차 {round_num} 통계 삽입 중 오류: {e}")
+            return False
+
+    def get_statistics(self, round_num: int) -> Optional[Dict[str, Any]]:
+        """특정 회차의 당첨 통계 조회
+
+        Args:
+            round_num: 회차 번호
+
+        Returns:
+            Optional[Dict]: 통계 데이터 또는 None
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT round, first_winners, first_prize, second_winners, second_prize,
+                           third_winners, third_prize, fourth_winners, fourth_prize,
+                           fifth_winners, fifth_prize, total_sales, created_at, updated_at
+                    FROM lotto_statistics
+                    WHERE round = ?
+                """, (round_num,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'round': row[0],
+                        'first_winners': row[1],
+                        'first_prize': row[2],
+                        'second_winners': row[3],
+                        'second_prize': row[4],
+                        'third_winners': row[5],
+                        'third_prize': row[6],
+                        'fourth_winners': row[7],
+                        'fourth_prize': row[8],
+                        'fifth_winners': row[9],
+                        'fifth_prize': row[10],
+                        'total_sales': row[11],
+                        'created_at': row[12],
+                        'updated_at': row[13]
+                    }
+                return None
+        except Exception as e:
+            logging.error(f"회차 {round_num} 통계 조회 중 오류: {e}")
+            return None
+
+    def get_recent_statistics(self, count: int = 10) -> List[Dict[str, Any]]:
+        """최근 N회차의 당첨 통계 조회
+
+        Args:
+            count: 조회할 회차 수 (기본값: 10)
+
+        Returns:
+            List[Dict]: 통계 데이터 리스트
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT round, first_winners, first_prize, second_winners, second_prize,
+                           third_winners, third_prize, fourth_winners, fourth_prize,
+                           fifth_winners, fifth_prize, total_sales
+                    FROM lotto_statistics
+                    ORDER BY round DESC
+                    LIMIT ?
+                """, (count,))
+                results = []
+                for row in cursor.fetchall():
+                    results.append({
+                        'round': row[0],
+                        'first_winners': row[1],
+                        'first_prize': row[2],
+                        'second_winners': row[3],
+                        'second_prize': row[4],
+                        'third_winners': row[5],
+                        'third_prize': row[6],
+                        'fourth_winners': row[7],
+                        'fourth_prize': row[8],
+                        'fifth_winners': row[9],
+                        'fifth_prize': row[10],
+                        'total_sales': row[11]
+                    })
+                return results
+        except Exception as e:
+            logging.error(f"최근 {count}회 통계 조회 중 오류: {e}")
+            return []
+
+    def get_missing_statistics_rounds(self) -> List[int]:
+        """통계가 누락된 회차 목록 조회
+
+        당첨번호는 있지만 통계가 없는 회차를 찾습니다.
+
+        Returns:
+            List[int]: 통계가 누락된 회차 번호 리스트
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT ln.round
+                    FROM lotto_numbers ln
+                    LEFT JOIN lotto_statistics ls ON ln.round = ls.round
+                    WHERE ls.round IS NULL
+                    ORDER BY ln.round DESC
+                """)
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"통계 누락 회차 조회 중 오류: {e}")
+            return []
+
+    def get_statistics_summary(self) -> Dict[str, Any]:
+        """전체 통계 요약 정보 조회
+
+        Returns:
+            Dict: 평균 당첨자 수, 평균 당첨금 등 요약 정보
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_rounds,
+                        AVG(first_winners) as avg_first_winners,
+                        AVG(first_prize) as avg_first_prize,
+                        AVG(second_winners) as avg_second_winners,
+                        AVG(third_winners) as avg_third_winners,
+                        AVG(fourth_winners) as avg_fourth_winners,
+                        AVG(fifth_winners) as avg_fifth_winners,
+                        SUM(first_winners + second_winners + third_winners +
+                            fourth_winners + fifth_winners) as total_winners,
+                        AVG(total_sales) as avg_sales
+                    FROM lotto_statistics
+                """)
+                row = cursor.fetchone()
+                if row and row[0] > 0:
+                    return {
+                        'total_rounds': row[0],
+                        'avg_first_winners': round(row[1], 2) if row[1] else 0,
+                        'avg_first_prize': int(row[2]) if row[2] else 0,
+                        'avg_second_winners': round(row[3], 2) if row[3] else 0,
+                        'avg_third_winners': round(row[4], 2) if row[4] else 0,
+                        'avg_fourth_winners': round(row[5], 2) if row[5] else 0,
+                        'avg_fifth_winners': round(row[6], 2) if row[6] else 0,
+                        'total_winners': int(row[7]) if row[7] else 0,
+                        'avg_sales': int(row[8]) if row[8] else 0
+                    }
+                return {'total_rounds': 0}
+        except Exception as e:
+            logging.error(f"통계 요약 조회 중 오류: {e}")
+            return {'total_rounds': 0}
+
+    def calculate_winning_probabilities(self) -> Dict[str, float]:
+        """등수별 당첨 확률 계산 (실제 당첨자 수 기반)
+
+        Returns:
+            Dict: 각 등수별 당첨 확률 (%)
+        """
+        try:
+            with self._create_connection() as conn:
+                cursor = conn.cursor()
+                # 최근 100회차 데이터 기준으로 계산
+                cursor.execute("""
+                    SELECT
+                        SUM(first_winners) as total_first,
+                        SUM(second_winners) as total_second,
+                        SUM(third_winners) as total_third,
+                        SUM(fourth_winners) as total_fourth,
+                        SUM(fifth_winners) as total_fifth,
+                        SUM(total_sales) as total_sales_sum
+                    FROM (
+                        SELECT * FROM lotto_statistics
+                        ORDER BY round DESC LIMIT 100
+                    )
+                """)
+                row = cursor.fetchone()
+                if row and row[5]:
+                    # 1게임당 1000원 가정하여 총 게임 수 추정
+                    total_games = row[5] // 1000
+                    if total_games > 0:
+                        return {
+                            'first': round((row[0] / total_games) * 100, 8) if row[0] else 0,
+                            'second': round((row[1] / total_games) * 100, 6) if row[1] else 0,
+                            'third': round((row[2] / total_games) * 100, 4) if row[2] else 0,
+                            'fourth': round((row[3] / total_games) * 100, 4) if row[3] else 0,
+                            'fifth': round((row[4] / total_games) * 100, 2) if row[4] else 0
+                        }
+                return {
+                    'first': 0.0, 'second': 0.0, 'third': 0.0,
+                    'fourth': 0.0, 'fifth': 0.0
+                }
+        except Exception as e:
+            logging.error(f"당첨 확률 계산 중 오류: {e}")
+            return {
+                'first': 0.0, 'second': 0.0, 'third': 0.0,
+                'fourth': 0.0, 'fifth': 0.0
+            }
+
 
 class CombinationsDB(BaseDatabase):
     """조합 데이터베이스"""
@@ -948,8 +1232,8 @@ class CombinationsDB(BaseDatabase):
                 if deleted_count > 0:
                     logging.debug(f"[CombinationsDB] 기존 데이터 삭제: {deleted_count}개")
 
-                # 배치 크기 설정 (대용량 데이터 처리를 위해)
-                batch_size = 10000
+                # 배치 크기 설정 (Phase 1.8: 10000 → 50000 최적화)
+                batch_size = 50000
                 total_batches = (len(combinations) + batch_size - 1) // batch_size
                 inserted_count = 0
 
@@ -1158,19 +1442,31 @@ class PatternsDB(BaseDatabase):
                 cursor = conn.cursor()
                 columns = list(self.PATTERN_COLUMNS.keys())
                 column_str = ', '.join(columns)
-                
+
                 cursor.execute(f"""
                     SELECT {column_str}
                     FROM pattern_analysis
                     WHERE round = ?
                 """, (round_num,))
-                
+
                 result = cursor.fetchone()
                 if not result:
                     return {}
-                    
+
+                # FIX: 컬럼명 → 패턴명 역매핑 (save_pattern_analysis와 일치)
+                column_to_pattern_mapping = {
+                    'number_match_patterns': 'match',
+                    'multiple_patterns': 'multiple_patterns',
+                    # 나머지는 기본 규칙 적용 (_patterns 제거)
+                }
+
+                def get_pattern_name(col_name: str) -> str:
+                    if col_name in column_to_pattern_mapping:
+                        return column_to_pattern_mapping[col_name]
+                    return col_name.replace('_patterns', '')
+
                 return {
-                    col_name.replace('_patterns', ''): json.loads(value or '{}')
+                    get_pattern_name(col_name): json.loads(value or '{}')
                     for col_name, value in zip(columns, result)
                 }
                 
@@ -1260,11 +1556,21 @@ class PatternsDB(BaseDatabase):
     def get_pattern_statistics(self, round_num: int, pattern_type: str) -> Optional[Dict[str, Any]]:
         """특정 패턴의 통계 조회"""
         try:
-            pattern_column = f"{pattern_type}_patterns"
+            # FIX: 패턴명 → 컬럼명 매핑 (save_pattern_analysis와 일치)
+            pattern_column_mapping = {
+                'match': 'number_match_patterns',
+                'multiple_patterns': 'multiple_patterns',
+            }
+
+            if pattern_type in pattern_column_mapping:
+                pattern_column = pattern_column_mapping[pattern_type]
+            else:
+                pattern_column = f"{pattern_type}_patterns"
+
             if pattern_column not in self.PATTERN_COLUMNS:
                 logging.error(f"잘못된 패턴 유형: {pattern_type}")
                 return None
-                
+
             with self._create_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(f"""
@@ -1519,8 +1825,8 @@ class FilterDB(BaseDatabase):
                 # 트랜잭션 시작
                 connection.execute("BEGIN TRANSACTION")
                 
-                # 배치 크기 설정
-                batch_size = 1000
+                # 배치 크기 설정 (Phase 1.8: 1000 → 10000 최적화)
+                batch_size = 10000
                 total_batches = math.ceil(len(filtered_combinations) / batch_size)
                 
                 # 배치 단위로 저장
@@ -1579,8 +1885,8 @@ class FilterDB(BaseDatabase):
                 # 트랜잭션 시작
                 connection.execute("BEGIN TRANSACTION")
                 
-                # 배치 크기 설정
-                batch_size = 1000
+                # 배치 크기 설정 (Phase 1.8: 1000 → 10000 최적화)
+                batch_size = 10000
                 total_batches = math.ceil(len(excluded_combinations) / batch_size)
                 
                 # 배치 단위로 저장

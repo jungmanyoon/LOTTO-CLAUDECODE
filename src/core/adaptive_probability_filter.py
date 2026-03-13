@@ -32,7 +32,7 @@ class AdaptiveProbabilityFilter:
     _lock = threading.Lock()  # 스레드 안전성을 위한 락
     _initialized = False
 
-    def __new__(cls, db_manager=None, probability_threshold=1.0, **kwargs):
+    def __new__(cls, db_manager=None, probability_threshold=0.1, **kwargs):
         """싱글톤 패턴: 인스턴스 생성 제어"""
         if cls._instance is None:
             with cls._lock:
@@ -42,11 +42,11 @@ class AdaptiveProbabilityFilter:
                     logging.debug("[AdaptiveProbabilityFilter] 새 인스턴스 생성")
         return cls._instance
 
-    def __init__(self, db_manager, probability_threshold: float = 1.0, **kwargs):
+    def __init__(self, db_manager, probability_threshold: float = 0.1, **kwargs):
         """
         Args:
             db_manager: 데이터베이스 매니저
-            probability_threshold: 제외할 최대 확률 (%) - 기본값 1%
+            probability_threshold: 제외할 최대 확률 (%) - 기본값 0.1%
         """
         # 중복 초기화 방지
         if AdaptiveProbabilityFilter._initialized:
@@ -114,10 +114,10 @@ class AdaptiveProbabilityFilter:
         """
         임계값 변경 시 패턴 재로드 (Optuna 최적화용)
 
-        ⚠️ DEPRECATED: 패턴 재분석은 불필요 (임계값만 변경하면 됨)
+        DEPRECATED: 패턴 재분석은 불필요 (임계값만 변경하면 됨)
         패턴 자체는 변하지 않으며, 임계값만 변경되면 필터링 기준이 달라짐
         """
-        logging.warning("[패턴 재로드] DEPRECATED - 패턴 재분석 불필요 (임계값만 변경됨)")
+        logging.debug("[패턴 재로드] DEPRECATED - 패턴 재분석 불필요 (임계값만 변경됨)")
         # 패턴 재분석하지 않음 - 기존 패턴 유지
 
     def analyze_patterns(self, winning_numbers: List[str]) -> Dict[str, Dict]:
@@ -204,54 +204,60 @@ class AdaptiveProbabilityFilter:
         """
         확률 임계값 기반으로 각 필터의 동적 기준 생성
 
-        ✅ FIX: YAML의 dynamic_criteria를 우선 로드하고, 없으면 재계산
+        CRITICAL FIX (2024-12-06):
+        - global_probability_threshold 기반으로 항상 재계산
+        - YAML 저장값은 확률 기반 계산이 불가능한 필터에만 폴백으로 사용
+        - 모든 확률 기반 필터는 threshold에 따라 동적으로 결정됨
 
         Returns:
             필터별 동적 기준값
         """
-        # ✅ FIX: YAML 파일에서 저장된 dynamic_criteria 로드
+        # YAML에서 폴백용 설정 로드 (확률 계산 불가능한 필터용)
+        yaml_fallback = {}
         try:
             import yaml
             config_path = 'configs/adaptive_filter_config.yaml'
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
-
-            saved_criteria = config.get('dynamic_criteria', {})
-
-            if saved_criteria:
-                logging.info(f"[적응형 필터] YAML에서 저장된 dynamic_criteria 로드 완료 ({len(saved_criteria)}개 필터)")
-                logging.debug(f"[적응형 필터] 로드된 criteria: {list(saved_criteria.keys())}")
-
-                # ✅ FIX: 저장된 criteria를 그대로 반환 (FilterAutoAdjuster가 저장한 값 사용)
-                return saved_criteria
-
+            yaml_fallback = config.get('dynamic_criteria', {})
         except Exception as e:
-            logging.warning(f"[적응형 필터] YAML dynamic_criteria 로드 실패: {e}, 재계산 진행")
+            logging.warning(f"[적응형 필터] YAML 폴백 로드 실패: {e}")
 
-        # ✅ YAML에 저장된 값이 없으면 재계산 (첫 실행 시)
-        logging.info("[적응형 필터] YAML에 저장된 criteria 없음 → 재계산 시작")
+        # 🔥 CRITICAL: 항상 probability_threshold 기반으로 재계산
+        logging.info(f"[적응형 필터] probability_threshold={self.probability_threshold}% 기반 dynamic_criteria 계산 시작")
         criteria = {}
-        
+
+        # ★ 핵심 수정: pattern_statistics가 초기화되지 않은 경우 YAML 폴백 사용
+        required_keys = ['odd_even', 'consecutive', 'sum_range', 'multiple', 'average', 'match', 'max_gap', 'ten_section']
+        if not self.pattern_statistics or not all(key in self.pattern_statistics for key in required_keys):
+            logging.info(f"[적응형 필터] pattern_statistics 미초기화 - YAML 폴백 사용")
+            return yaml_fallback
+
         # 1. 홀짝 필터 - 1% 이하만 제외
         odd_even_excluded = []
-        for count, rate in self.pattern_statistics['odd_even']['odd_distribution'].items():
-            if rate < self.probability_threshold:
-                odd_even_excluded.append(count)
-        for count, rate in self.pattern_statistics['odd_even']['even_distribution'].items():
-            if rate < self.probability_threshold and count not in odd_even_excluded:
-                odd_even_excluded.append(count)
-        
-        criteria['odd_even'] = {
-            'excluded_counts': odd_even_excluded,
-            'reason': f"{self.probability_threshold}% 미만 출현 패턴"
-        }
-        
+        odd_even_stats = self.pattern_statistics.get('odd_even', {})
+        if odd_even_stats and 'odd_distribution' in odd_even_stats:
+            for count, rate in odd_even_stats.get('odd_distribution', {}).items():
+                if rate < self.probability_threshold:
+                    odd_even_excluded.append(count)
+            for count, rate in odd_even_stats.get('even_distribution', {}).items():
+                if rate < self.probability_threshold and count not in odd_even_excluded:
+                    odd_even_excluded.append(count)
+            criteria['odd_even'] = {
+                'excluded_counts': odd_even_excluded,
+                'reason': f"{self.probability_threshold}% 미만 출현 패턴"
+            }
+        else:
+            criteria['odd_even'] = yaml_fallback.get('odd_even', {'excluded_counts': [0, 6]})
+
         # 2. 연속번호 필터 - 1% 이하만 제외
         max_consecutive = 6
-        for length, rate in self.pattern_statistics['consecutive'].items():
-            if rate < self.probability_threshold:
-                max_consecutive = min(max_consecutive, length)
-                break
+        consecutive_stats = self.pattern_statistics.get('consecutive', {})
+        if consecutive_stats:
+            for length, rate in consecutive_stats.items():
+                if rate < self.probability_threshold:
+                    max_consecutive = min(max_consecutive, length)
+                    break
         
         criteria['consecutive'] = {
             'max_consecutive': max_consecutive,
@@ -511,31 +517,32 @@ class AdaptiveProbabilityFilter:
             'reason': f"상하위 각 {self.probability_threshold/2}% 제외"
         }
         
-        # 15. 분산도 필터 - 상하위 0.5%씩 제외
+        # 15. 분산도 필터 - 번호 자체의 표준편차 기준 (DispersionFilter와 동일)
         dispersion_dist = self.pattern_statistics.get('dispersion', {})
+        # dispersion_dist의 키는 std_dev * 10 정수값 (번호 자체 표준편차)
         cumulative = 0
-        min_variance = 0
+        min_std_dev = 5.0  # 기본 최소값
         for disp_val, rate in sorted(dispersion_dist.items()):
             cumulative += rate
             if cumulative > self.probability_threshold / 2:
-                min_variance = (disp_val / 10) ** 2 * 10  # 표준편차를 분산으로 변환
+                min_std_dev = disp_val / 10.0  # 원래 표준편차로 복원
                 break
-        
+
         cumulative = 0
-        max_variance = 500
+        max_std_dev = 20.0  # 기본 최대값
         for disp_val, rate in sorted(dispersion_dist.items(), reverse=True):
             cumulative += rate
             if cumulative > self.probability_threshold / 2:
-                max_variance = (disp_val / 10) ** 2 * 10
+                max_std_dev = disp_val / 10.0  # 원래 표준편차로 복원
                 break
-        
+
         criteria['dispersion'] = {
-            'min_variance': min_variance,
-            'max_variance': max_variance,
-            'min_std_dev': min_variance ** 0.5,  # ✓ 수정: 순수 sqrt 변환
-            'max_std_dev': max_variance ** 0.5,  # ✓ 수정: 순수 sqrt 변환
+            'min_std_dev': min_std_dev,
+            'max_std_dev': max_std_dev,
+            'min_variance': min_std_dev ** 2,  # 표준편차로부터 분산 계산
+            'max_variance': max_std_dev ** 2,
             'distribution': dispersion_dist,
-            'reason': f"상하위 각 {self.probability_threshold/2}% 제외"
+            'reason': f"상하위 각 {self.probability_threshold/2}% 제외 (번호 자체 표준편차)"
         }
 
         # 16. 이상치 탐지 필터 (OutlierDetection) - 1% 이하 패턴 제외
@@ -574,6 +581,21 @@ class AdaptiveProbabilityFilter:
             'distribution': quadrant_dist,
             'reason': f"{self.probability_threshold}% 이하 사분면 몰림 패턴 제외"
         }
+
+        # 🔥 YAML 폴백: 확률 계산이 불가능한 필터에 대해 YAML 값 사용
+        # (예: ac_value, fixed_step 등 패턴 통계가 없는 필터)
+        fallback_filters = ['ac_value', 'fixed_step']
+        for filter_name in fallback_filters:
+            if filter_name not in criteria and filter_name in yaml_fallback:
+                criteria[filter_name] = yaml_fallback[filter_name]
+                logging.info(f"[적응형 필터] {filter_name}: YAML 폴백 값 사용")
+
+        # 🔥 요약 로그: 계산된 주요 기준값
+        logging.info(f"[적응형 필터] === probability_threshold={self.probability_threshold}% 기반 계산 완료 ===")
+        logging.info(f"  - match: max_match={criteria.get('match', {}).get('max_match', 'N/A')}")
+        logging.info(f"  - consecutive: max_consecutive={criteria.get('consecutive', {}).get('max_consecutive', 'N/A')}")
+        logging.info(f"  - sum_range: {criteria.get('sum_range', {}).get('min_sum', 'N/A')}~{criteria.get('sum_range', {}).get('max_sum', 'N/A')}")
+        logging.info(f"  - section: max_numbers_per_section={criteria.get('section', {}).get('max_numbers_per_section', 'N/A')}")
 
         return criteria
     
@@ -788,36 +810,32 @@ class AdaptiveProbabilityFilter:
         return avg_percentage
     
     def _analyze_match(self, winning_numbers: List[str]) -> Dict:
-        """매치 패턴 분석 - 과거 당첨번호와 일치 개수 분포 계산"""
-        import itertools
-        
-        # 일치 개수별 분포 초기화
+        """매치 패턴 분석 - 랜덤 조합 vs 과거 당첨번호 시뮬레이션 (MatchFilter와 동일 방식)"""
+        import random
+
+        # 과거 당첨번호를 set 리스트로 변환
+        winning_sets = [set(map(int, nums_str.split(','))) for nums_str in winning_numbers]
+
+        if not winning_sets:
+            return {i: 0.0 for i in range(7)}
+
+        # 랜덤 조합 1000개를 생성하여 과거 당첨번호와 최대 일치 수 시뮬레이션
+        num_simulations = 1000
         match_distribution = {i: 0 for i in range(7)}  # 0개~6개 일치
-        total_comparisons = 0
-        
-        # 모든 당첨번호 쌍을 비교
-        for i, nums1_str in enumerate(winning_numbers):
-            nums1 = set(map(int, nums1_str.split(',')))
-            
-            for j in range(i + 1, len(winning_numbers)):
-                nums2_str = winning_numbers[j]
-                nums2 = set(map(int, nums2_str.split(',')))
-                
-                # 일치하는 번호 개수 계산
-                match_count = len(nums1.intersection(nums2))
-                match_distribution[match_count] += 1
-                total_comparisons += 1
-        
+
+        for _ in range(num_simulations):
+            sample = set(random.sample(range(1, 46), 6))
+            # 모든 과거 당첨번호와 비교하여 최대 일치 수 산출
+            max_match = max(len(sample & win_set) for win_set in winning_sets)
+            match_distribution[max_match] = match_distribution.get(max_match, 0) + 1
+
         # 백분율로 변환
-        match_percentage = {}
-        if total_comparisons > 0:
-            for match_count, freq in match_distribution.items():
-                match_percentage[match_count] = (freq / total_comparisons) * 100
-        
-        logging.info(f"[매치 패턴 분석] 총 {total_comparisons}개 비교 완료")
-        for match_count, percentage in match_percentage.items():
-            logging.info(f"  {match_count}개 일치: {percentage:.2f}%")
-        
+        match_percentage = {k: (v / num_simulations) * 100 for k, v in match_distribution.items()}
+
+        logging.info(f"[매치 패턴 분석] 랜덤 {num_simulations}개 vs 당첨번호 {len(winning_sets)}개 시뮬레이션")
+        for match_count, percentage in sorted(match_percentage.items()):
+            logging.info(f"  최대 {match_count}개 일치: {percentage:.2f}%")
+
         return match_percentage
     
     def _analyze_prime_composite(self, winning_numbers: List[str]) -> Dict:
@@ -948,37 +966,33 @@ class AdaptiveProbabilityFilter:
         return digit_sum_percentage
     
     def _analyze_dispersion(self, winning_numbers: List[str]) -> Dict:
-        """분산도 패턴 분석 - 번호간 간격의 표준편차"""
+        """분산도 패턴 분석 - 번호 자체의 표준편차 (DispersionFilter와 동일)"""
         std_dev_dist = {}
         total = len(winning_numbers)
-        
+
         for numbers_str in winning_numbers:
-            numbers = sorted(map(int, numbers_str.split(',')))
-            # 번호 간 간격 계산
-            gaps = [numbers[i] - numbers[i-1] for i in range(1, len(numbers))]
-            
-            # 표준편차 계산
-            if gaps:
-                mean = sum(gaps) / len(gaps)
-                variance = sum((g - mean) ** 2 for g in gaps) / len(gaps)
-                std_dev = variance ** 0.5
-                std_dev_int = round(std_dev * 10)  # 소수점 1자리까지 고려
-                std_dev_dist[std_dev_int] = std_dev_dist.get(std_dev_int, 0) + 1
-        
+            numbers = list(map(int, numbers_str.split(',')))
+            # 번호 자체의 표준편차 계산 (DispersionFilter의 np.std와 동일)
+            mean = sum(numbers) / len(numbers)
+            variance = sum((n - mean) ** 2 for n in numbers) / len(numbers)
+            std_dev = variance ** 0.5
+            std_dev_int = round(std_dev * 10)  # 소수점 1자리까지 고려
+            std_dev_dist[std_dev_int] = std_dev_dist.get(std_dev_int, 0) + 1
+
         # 백분율로 변환
         dispersion_percentage = {k: (v/total)*100 for k, v in sorted(std_dev_dist.items())}
-        
-        logging.info("[분산도 패턴 분석]")
+
+        logging.info("[분산도 패턴 분석 - 번호 자체 표준편차]")
         # 범위별 집계
         range_dist = {}
         for std_val, pct in dispersion_percentage.items():
             std_float = std_val / 10
             range_key = f"{int(std_float)}-{int(std_float)+1}"
             range_dist[range_key] = range_dist.get(range_key, 0) + pct
-        
+
         for range_key, pct in sorted(range_dist.items()):
             logging.info(f"  표준편차 {range_key}: {pct:.2f}%")
-        
+
         return dispersion_percentage
 
     
@@ -1086,52 +1100,56 @@ class AdaptiveProbabilityFilter:
     
     def get_filtered_count(self, latest_round: int) -> int:
         """
-        필터링 후 남은 조합 개수 반환
-        
+        필터링 후 남은 조합 개수 반환 (실제 DB 조회 우선)
+
         Args:
             latest_round: 최신 회차
-            
+
         Returns:
             필터링 후 남은 조합 개수
         """
         try:
-            # 실제 데이터베이스에서 필터링된 조합 수 계산
             total_combinations = 8145060  # 45C6 = 8,145,060
-            
-            # 임계값에 따른 대략적인 필터링 비율 계산
-            # 0.5%: ~30-40% 제외, 1.0%: ~60-70% 제외, 2.0%: ~80-85% 제외
-            if self.probability_threshold <= 0.5:
-                # 매우 보수적: 약 30-40% 제외
-                filtered_ratio = 0.65  # 65% 남음
-            elif self.probability_threshold <= 1.0:
-                # 표준: 약 60-70% 제외
-                filtered_ratio = 0.35  # 35% 남음
-            elif self.probability_threshold <= 2.0:
-                # 공격적: 약 80-85% 제외
-                filtered_ratio = 0.18  # 18% 남음
-            else:
-                # 매우 공격적: 약 90-95% 제외
-                filtered_ratio = 0.08  # 8% 남음
-            
-            # 예상 필터링 후 조합 수
-            estimated_count = int(total_combinations * filtered_ratio)
-            
-            # 더 정확한 계산을 위해 실제 DB 확인 시도
-            if hasattr(self.db_manager, 'combinations_db') and hasattr(self.db_manager.combinations_db, 'get_filtered_count'):
+
+            # 1. 실제 DB에서 필터링된 조합 수 조회 시도
+            if hasattr(self.db_manager, 'combinations_db'):
                 try:
-                    actual_count = self.db_manager.combinations_db.get_filtered_count(latest_round)
-                    if actual_count > 0:
-                        return actual_count
-                except (AttributeError, sqlite3.Error) as e:
-                    logging.debug(f"필터 카운트 조회 실패 (무시): {e}")
-            
-            logging.info(f"[적응형 필터] 예상 필터링 결과: {total_combinations:,}개 → {estimated_count:,}개 (임계값 {self.probability_threshold}%)")
-            return estimated_count
-            
+                    # get_filtered_count 메서드 시도
+                    if hasattr(self.db_manager.combinations_db, 'get_filtered_count'):
+                        actual_count = self.db_manager.combinations_db.get_filtered_count(latest_round)
+                        if actual_count > 0:
+                            logging.info(f"[적응형 필터] 실제 필터링 결과: {total_combinations:,}개 → {actual_count:,}개")
+                            return actual_count
+
+                    # get_filtered_combinations 메서드 시도 (개수만)
+                    if hasattr(self.db_manager.combinations_db, 'get_filtered_combinations'):
+                        filtered = self.db_manager.combinations_db.get_filtered_combinations(latest_round)
+                        if filtered:
+                            actual_count = len(filtered)
+                            logging.info(f"[적응형 필터] 실제 필터링 결과: {total_combinations:,}개 → {actual_count:,}개")
+                            return actual_count
+                except Exception as e:
+                    logging.debug(f"DB 필터 카운트 조회 실패: {e}")
+
+            # 2. 마지막 필터링 결과 캐시에서 조회
+            if hasattr(self, '_last_filtered_count') and self._last_filtered_count > 0:
+                logging.info(f"[적응형 필터] 캐시된 필터링 결과: {self._last_filtered_count:,}개")
+                return self._last_filtered_count
+
+            # 3. 실제 제외 개수가 기록되어 있으면 계산
+            if hasattr(self, '_last_excluded_count'):
+                actual_count = total_combinations - self._last_excluded_count
+                if actual_count > 0:
+                    logging.info(f"[적응형 필터] 계산된 필터링 결과: {total_combinations:,}개 → {actual_count:,}개")
+                    return actual_count
+
+            # 4. 기본값: 전체 조합 (필터링 실패 시)
+            logging.warning(f"[적응형 필터] 실제 필터링 결과를 찾을 수 없음 - 전체 조합 반환: {total_combinations:,}개")
+            return total_combinations
+
         except Exception as e:
             logging.error(f"필터링 카운트 계산 실패: {e}")
-            # 기본값 반환
-            return 200000
+            return 8145060  # 전체 조합 반환
     
     def get_exclusion_summary(self) -> str:
         """제외 기준 요약"""

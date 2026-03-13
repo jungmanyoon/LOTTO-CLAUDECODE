@@ -66,10 +66,8 @@ class AutoAdjustmentSystemV2:
             logging.info(f"  [알림] YAML 설정 우선 적용: {self.state['current_threshold']}% → {yaml_threshold}%")
             self.state['current_threshold'] = yaml_threshold
         
-        logging.info("\n[자동 조정 시스템 V2] 초기화 완료")
-        logging.info(f"  - 현재 임계값: {self.state['current_threshold']}%")
-        logging.info("  - 조정 전략: 백테스팅 성능 기반 자동 조정")
-        logging.info("  - 단일 파라미터 제어: global_probability_threshold")
+        # debug 레벨: main.py에서 동일 메시지를 info로 출력하므로 중복 방지
+        logging.debug("[자동 조정 시스템 V2] __init__ 완료 (임계값: %s%%)", self.state['current_threshold'])
     
     def _get_current_threshold(self) -> float:
         """현재 설정된 임계값 읽기 (ThresholdManager 사용)"""

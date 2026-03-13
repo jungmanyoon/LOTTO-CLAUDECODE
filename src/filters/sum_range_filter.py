@@ -51,7 +51,8 @@ class SumRangeFilter(BaseFilter):
                 else:
                     converted_chunks.append(comb)
             
-            chunk_arrays = np.array(converted_chunks, dtype=np.int8)
+            # int8(-128~127)은 로또 합계(최대 255)에서 오버플로우 발생 -> int16 사용
+            chunk_arrays = np.array(converted_chunks, dtype=np.int16)
 
             # 합계 계산
             sums = np.sum(chunk_arrays, axis=1)

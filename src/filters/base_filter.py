@@ -157,19 +157,82 @@ class BaseFilter(ABC):
     
     def check_combination(self, combination: str, round_num: int) -> bool:
         """단일 조합이 필터 조건을 만족하는지 확인
-        
+
         필터별로 재정의하여 단일 조합 검사 로직 구현
-        
+
         Args:
             combination: 검사할 조합
             round_num: 회차 번호
-            
+
         Returns:
             bool: 조건 만족 여부
         """
         # 기본 구현은 apply 메서드를 호출
         return combination in self.apply([combination], round_num)
-    
+
+    def score_combination(self, combination: str, round_num: int = None) -> float:
+        """단일 조합의 점수 계산 (0-100)
+
+        이진 필터링 대신 점수 기반 평가를 위한 메서드.
+        기본 구현은 check_combination의 결과를 0/100으로 변환.
+        더 세분화된 점수화가 필요한 필터는 이 메서드를 오버라이드.
+
+        Args:
+            combination: 평가할 조합 (예: "1,2,3,4,5,6")
+            round_num: 회차 번호 (선택)
+
+        Returns:
+            float: 0-100 범위의 점수
+                - 100: 조건 완벽 충족
+                - 70-99: 조건 대부분 충족
+                - 30-69: 경계선 (주의 필요)
+                - 0-29: 조건 미충족
+        """
+        # 기본 구현: 이진 체크를 0/100으로 변환
+        try:
+            passed = self.check_combination(combination, round_num)
+            return 100.0 if passed else 0.0
+        except Exception as e:
+            logging.warning(f"[{self.get_filter_name()}] 점수 계산 오류: {e}")
+            return 50.0  # 오류 시 중간값 반환
+
+    def score_combination_detailed(self, combination: str, round_num: int = None) -> Dict[str, Any]:
+        """상세 점수 정보 반환
+
+        점수화 시스템 통합을 위한 상세 정보 제공.
+
+        Args:
+            combination: 평가할 조합
+            round_num: 회차 번호
+
+        Returns:
+            Dict with keys:
+                - score: 0-100 점수
+                - passed: 이진 통과 여부
+                - quality_tier: 품질 등급 (excellent/good/acceptable/poor)
+                - details: 추가 정보 (필터별 상이)
+        """
+        score = self.score_combination(combination, round_num)
+        passed = score >= 50.0  # 50점 이상이면 통과로 간주
+
+        # 품질 등급 결정
+        if score >= 90:
+            quality_tier = 'excellent'
+        elif score >= 70:
+            quality_tier = 'good'
+        elif score >= 50:
+            quality_tier = 'acceptable'
+        else:
+            quality_tier = 'poor'
+
+        return {
+            'score': score,
+            'passed': passed,
+            'quality_tier': quality_tier,
+            'filter_name': self.get_filter_name(),
+            'details': {}
+        }
+
     def apply_parallel(self, combinations: List[str], num_workers: int = 4, round_num: int = None) -> List[str]:
         """병렬 처리를 사용하여 필터 적용
         

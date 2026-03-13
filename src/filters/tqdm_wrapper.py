@@ -101,7 +101,19 @@ class FilterProgress:
         """추가 정보 설정"""
         if self.pbar is not None:
             self.pbar.set_postfix(**kwargs)
-    
+
+    def reset(self, total: Optional[int] = None):
+        """진행률 초기화 (pickle 에러 시 직렬 처리 전환용)"""
+        if total is not None:
+            self.total = total
+        self.current = 0
+        self._last_logged_percent = 0
+        if self.pbar is not None:
+            try:
+                self.pbar.reset(total=total)
+            except (AttributeError, TypeError):
+                pass  # tqdm 버전에 따라 reset이 없을 수 있음
+
     def _log_progress(self):
         """간단한 진행률 로그"""
         if not self.use_simple_log or not self.total:

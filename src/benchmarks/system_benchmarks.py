@@ -28,6 +28,7 @@ from src.core.db_manager import DatabaseManager
 from src.core.filter_manager import FilterManager
 from src.core.adaptive_probability_filter import AdaptiveProbabilityFilter
 from src.utils.config_manager import ConfigManager
+from src.utils.constants import SystemConstants  # Phase 2.10: 시스템 상수 임포트
 
 
 @dataclass
@@ -375,7 +376,7 @@ class SystemBenchmark:
                 self.logger.info("  - Monte Carlo 시뮬레이션...")
 
                 with PerformanceTimer("ml_monte_carlo") as timer:
-                    mc = MonteCarloSimulator(n_simulations=6000)
+                    mc = MonteCarloSimulator(n_simulations=SystemConstants.MONTE_CARLO_SIMULATIONS)
                     mc.run_simulations([tuple(nums[:6]) for _, nums in training_data])
 
                 result = BenchmarkResult(
@@ -386,10 +387,10 @@ class SystemBenchmark:
                     cpu_percent=timer.avg_cpu_percent,
                     status="success",
                     metrics={
-                        "n_simulations": 6000,
-                        "batch_size": 750,
-                        "parallel_workers": 8,
-                        "simulations_per_second": 6000 / timer.elapsed_time if timer.elapsed_time > 0 else 0
+                        "n_simulations": SystemConstants.MONTE_CARLO_SIMULATIONS,
+                        "batch_size": SystemConstants.MONTE_CARLO_BATCH,
+                        "parallel_workers": SystemConstants.MONTE_CARLO_WORKERS,
+                        "simulations_per_second": SystemConstants.MONTE_CARLO_SIMULATIONS / timer.elapsed_time if timer.elapsed_time > 0 else 0
                     },
                     timestamp=datetime.now().isoformat()
                 )

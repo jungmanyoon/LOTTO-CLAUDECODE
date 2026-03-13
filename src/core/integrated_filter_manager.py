@@ -17,11 +17,11 @@ class IntegratedFilterManager:
     - 동적 필터 관리
     """
     
-    def __init__(self, db_manager, probability_threshold: float = 1.0):
+    def __init__(self, db_manager, probability_threshold: float = 0.1):
         """
         Args:
             db_manager: 데이터베이스 매니저
-            probability_threshold: 확률 임계값 (%)
+            probability_threshold: 확률 임계값 (%) - 기본값 0.1%로 완화
         """
         self.db_manager = db_manager
         self.probability_threshold = probability_threshold
@@ -47,12 +47,45 @@ class IntegratedFilterManager:
         # 필터 성능 추적
         self.filter_performance = {}
 
+        # ThresholdManager Observer 등록 (임계값 변경 시 자동 업데이트)
+        from src.core.threshold_manager import get_threshold_manager
+        self.threshold_manager = get_threshold_manager()
+        self.threshold_manager.register_observer(self._on_threshold_change)
+        logging.debug("[통합 필터] ThresholdManager Observer 등록 완료")
+
         logging.info(f"[통합 필터] 초기화 완료 (임계값: {probability_threshold}%)")
 
     @property
     def filters(self):
         """FilterValidator 호환성을 위한 filters 속성 (내부 filter_manager.filters 반환)"""
         return self.filter_manager.filters
+
+    def _on_threshold_change(self, param: str, old_value, new_value):
+        """
+        ThresholdManager에서 설정 변경 시 자동 호출되는 Observer 콜백
+
+        Args:
+            param: 변경된 파라미터 이름
+            old_value: 이전 값
+            new_value: 새 값
+        """
+        if param in ("threshold", "global_probability_threshold"):
+            logging.info(f"[통합 필터] 임계값 변경 감지: {float(old_value):.2f}% → {float(new_value):.2f}%")
+
+            # 1. 내부 임계값 업데이트
+            self.probability_threshold = float(new_value)
+
+            # 2. AdaptiveProbabilityFilter 임계값 업데이트
+            self.adaptive_filter.probability_threshold = float(new_value)
+
+            # 3. 패턴 재분석 및 dynamic_criteria 재계산
+            self.adaptive_filter._reload_patterns()
+
+            # 4. 새 dynamic_criteria로 개별 필터 업데이트
+            dynamic_criteria = self.adaptive_filter.generate_dynamic_criteria()
+            self._update_individual_filters(dynamic_criteria)
+
+            logging.info(f"[통합 필터] 임계값 변경에 따른 필터 기준 재계산 완료")
 
     def update_config(self, probability_threshold=None, ml_bypass_filters=None, ml_weight=None):
         """
@@ -70,6 +103,9 @@ class IntegratedFilterManager:
             self.adaptive_filter.probability_threshold = probability_threshold
             # 패턴 재분석 (임계값 변경 반영)
             self.adaptive_filter._reload_patterns()
+            # 🔥 FIX: dynamic_criteria 재계산 및 개별 필터 업데이트
+            dynamic_criteria = self.adaptive_filter.generate_dynamic_criteria()
+            self._update_individual_filters(dynamic_criteria)
             updated.append(f"threshold={probability_threshold}")
             logging.info(f"[설정 업데이트] 확률 임계값: {probability_threshold}%")
 
@@ -212,8 +248,10 @@ class IntegratedFilterManager:
         if consecutive in low_prob_patterns.get('consecutive', []):
             checks += 1
 
-        # 1개 이상 패턴 매치시 제거 (더 공격적인 필터링)
-        return checks >= 1
+        # 3개 이상 패턴 매치시 제거 (완화된 필터링)
+        # 기존: checks >= 1 (너무 엄격)
+        # 변경: checks >= 3 (여러 악조건이 겹칠 때만 제거)
+        return checks >= 3
 
     def update_filters_weekly(self, new_round: int = None) -> Dict[str, Any]:
         """

@@ -4,6 +4,7 @@
 과거 데이터를 사용하여 예측 성능을 검증
 """
 import logging
+import sys
 from typing import Dict, List, Tuple, Any
 import numpy as np
 from datetime import datetime
@@ -87,7 +88,9 @@ class BacktestingFramework:
         }
         
         # 백테스팅 수행
-        for test_round in tqdm(range(start_round, end_round + 1), desc="백테스팅 진행"):
+        import threading as _threading
+        _tqdm_disable = _threading.current_thread() is not _threading.main_thread()
+        for test_round in tqdm(range(start_round, end_round + 1), desc="백테스팅 진행", file=sys.stdout, disable=_tqdm_disable):
             # 학습 데이터 범위
             train_start = max(1, test_round - window_size)
             train_end = test_round - 1

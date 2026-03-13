@@ -91,31 +91,63 @@ class FilterAutoAdjuster:
         
         # 각 필터별로 조정이 필요한지 확인
         logging.info("\n📊 필터별 통과율 분석:")
+
+        # 필터 통과율 정렬 (낮은 순서대로)
+        filter_pass_rates = []
         for filter_name, filter_result in validation_results.get('filter_results', {}).items():
             pass_rate = filter_result['pass_rate']
             status_icon = "✅" if pass_rate >= 90 else "⚠️" if pass_rate >= 85 else "🚨"
             logging.info(f"   {status_icon} {filter_name}: {pass_rate:.1f}%")
+            filter_pass_rates.append((filter_name, pass_rate))
 
-            # 통과율이 낮은 필터만 조정 (< 85%)
+        # 통과율 기준 오름차순 정렬 (가장 낮은 통과율 먼저)
+        filter_pass_rates.sort(key=lambda x: x[1])
+
+        # 전체 통과율 확인
+        overall_pass_rate = validation_results.get('overall_pass_rate', 100)
+
+        # 🔥 FIX: 전체 통과율이 85% 미만이면 개별 통과율 85% 이상이라도 가장 낮은 3개 필터 조정
+        filters_to_adjust = []
+
+        for filter_name, pass_rate in filter_pass_rates:
+            # 개별 필터 통과율 < 85%이면 무조건 조정
             if pass_rate < 85:
-                # FIX: Removed \n prefix and changed details to INFO level
-                logging.warning(f"🔧 [{filter_name}] 필터 조정 시작")
-                logging.info(f"     현재 통과율: {pass_rate:.2f}%")
-                logging.info(f"     목표 통과율: 95.0%")
-                logging.info(f"     조정 필요도: {95.0 - pass_rate:.1f}%p 향상 필요")
+                filters_to_adjust.append((filter_name, pass_rate))
+            # 전체 통과율 < 85%이고, 개별 필터 통과율 < 96%이면 조정 대상 추가
+            elif overall_pass_rate < 85 and pass_rate < 96:
+                filters_to_adjust.append((filter_name, pass_rate))
 
-                # 필터별 조정 적용
-                if self._adjust_filter(filter_name, pass_rate, optimized_criteria.get(filter_name, {})):
-                    applied_count += 1
-                    adjustments.append({
-                        'filter': filter_name,
-                        'old_pass_rate': pass_rate,
-                        'target_pass_rate': 95,
-                        'timestamp': datetime.now().isoformat()
-                    })
-                    logging.info(f"     ✅ {filter_name} 필터 조정 완료")
-                else:
-                    logging.error(f"     ❌ {filter_name} 필터 조정 실패")
+        # 최소 3개 필터 조정 보장 (전체 통과율이 85% 미만일 때)
+        if overall_pass_rate < 85 and len(filters_to_adjust) < 3:
+            for filter_name, pass_rate in filter_pass_rates:
+                if (filter_name, pass_rate) not in filters_to_adjust:
+                    filters_to_adjust.append((filter_name, pass_rate))
+                    if len(filters_to_adjust) >= 3:
+                        break
+
+        if filters_to_adjust:
+            logging.info(f"\n🎯 조정 대상 필터 ({len(filters_to_adjust)}개):")
+            for filter_name, pass_rate in filters_to_adjust:
+                logging.info(f"   - {filter_name}: {pass_rate:.1f}%")
+
+        for filter_name, pass_rate in filters_to_adjust:
+            logging.warning(f"🔧 [{filter_name}] 필터 조정 시작")
+            logging.info(f"     현재 통과율: {pass_rate:.2f}%")
+            logging.info(f"     목표 통과율: 95.0%")
+            logging.info(f"     조정 필요도: {95.0 - pass_rate:.1f}%p 향상 필요")
+
+            # 필터별 조정 적용
+            if self._adjust_filter(filter_name, pass_rate, optimized_criteria.get(filter_name, {})):
+                applied_count += 1
+                adjustments.append({
+                    'filter': filter_name,
+                    'old_pass_rate': pass_rate,
+                    'target_pass_rate': 95,
+                    'timestamp': datetime.now().isoformat()
+                })
+                logging.info(f"     ✅ {filter_name} 필터 조정 완료")
+            else:
+                logging.error(f"     ❌ {filter_name} 필터 조정 실패")
         
         # 조정 이력 저장
         if adjustments:
@@ -124,6 +156,14 @@ class FilterAutoAdjuster:
 
             # 설정 파일 저장
             self._save_configs()
+
+            # ✅ FIX: 싱글톤 FilterManager 초기화하여 다음 사이클에서 새 설정 적용
+            try:
+                from .filter_manager import FilterManager
+                FilterManager.reset_instance()
+                logging.info("✅ FilterManager 싱글톤 초기화 완료 - 다음 사이클에서 새 설정이 적용됩니다.")
+            except Exception as e:
+                logging.warning(f"FilterManager 초기화 실패: {e}")
 
             # ✅ NEW: 필터 조건 스냅샷 저장 (롤백 지원)
             if self.performance_tracker:
@@ -271,16 +311,20 @@ class FilterAutoAdjuster:
                         logging.info(f"    prime_composite: [{old_min}, {old_max}] → [{new_min}, {new_max}]")
             
             elif filter_name == 'fixed_step':
-                # fixed_step 필터 조정
-                if 'filters' in config and 'criteria' in config['filters']:
-                    if 'fixed_step' in config['filters']['criteria']:
-                        # required_matches 완화
-                        for step_type in ['all_steps', 'four_steps', 'partial_steps', 'three_steps']:
-                            if step_type in config['filters']['criteria']['fixed_step']:
-                                old_req = config['filters']['criteria']['fixed_step'][step_type].get('required_matches', 4)
-                                new_req = max(2, old_req - 1)  # 최소 2
-                                config['filters']['criteria']['fixed_step'][step_type]['required_matches'] = new_req
-                                logging.info(f"    fixed_step.{step_type}.required_matches: {old_req} → {new_req}")
+                # fixed_step 필터 조정 - adaptive_config.yaml 사용 (FIXED: 올바른 경로로 수정)
+                if 'dynamic_criteria' in adaptive_config and 'fixed_step' in adaptive_config['dynamic_criteria']:
+                    fixed_step_config = adaptive_config['dynamic_criteria']['fixed_step']
+                    adjusted = False
+                    for step_type in ['all_steps', 'partial_steps', 'four_steps', 'three_steps']:
+                        if step_type in fixed_step_config:
+                            old_req = fixed_step_config[step_type].get('required_matches', 4)
+                            new_req = max(2, old_req - 1)  # 최소 2
+                            if new_req != old_req:
+                                fixed_step_config[step_type]['required_matches'] = new_req
+                                logging.info(f"       📝 adaptive_config.yaml - fixed_step.{step_type}.required_matches: {old_req} → {new_req}")
+                                adjusted = True
+                    if not adjusted:
+                        logging.info(f"       ✅ fixed_step 필터: 이미 최소 매칭 수에 도달 (required_matches=2)")
 
             elif filter_name == 'ten_section':
                 # ten_section 필터 조정 (excluded list에서 값 제거로 통과율 향상)
@@ -335,9 +379,145 @@ class FilterAutoAdjuster:
                     adaptive_config['dynamic_criteria']['average']['max_average'] = new_max
                     logging.info(f"       📝 adaptive_config.yaml - average: [{old_min}, {old_max}] → [{new_min}, {new_max}]")
 
+            elif filter_name == 'ac_value':
+                # ac_value 필터 조정 - min_ac를 낮춰서 더 많은 조합 허용
+                if 'dynamic_criteria' in adaptive_config and 'ac_value' in adaptive_config['dynamic_criteria']:
+                    old_min_ac = adaptive_config['dynamic_criteria']['ac_value'].get('min_ac', 7)
+                    # min_ac를 1 낮춤 (최소 4까지, 너무 낮으면 의미 없음)
+                    new_min_ac = max(4, old_min_ac - 1)
+                    adaptive_config['dynamic_criteria']['ac_value']['min_ac'] = new_min_ac
+                    logging.info(f"       📝 adaptive_config.yaml - ac_value.min_ac: {old_min_ac} → {new_min_ac}")
+                else:
+                    # dynamic_criteria에 ac_value가 없으면 추가
+                    if 'dynamic_criteria' not in adaptive_config:
+                        adaptive_config['dynamic_criteria'] = {}
+                    adaptive_config['dynamic_criteria']['ac_value'] = {'min_ac': 6, 'max_ac': 10}
+                    logging.info(f"       📝 adaptive_config.yaml - ac_value 설정 추가: min_ac=6, max_ac=10")
+
+            elif filter_name == 'balanced_quadrant':
+                # balanced_quadrant 필터 조정 - max_per_quadrant 높이기
+                if 'dynamic_criteria' in adaptive_config and 'balanced_quadrant' in adaptive_config['dynamic_criteria']:
+                    old_max = adaptive_config['dynamic_criteria']['balanced_quadrant'].get('max_per_quadrant', 3)
+                    new_max = min(old_max + 1, 5)  # 최대 5까지 허용
+                    adaptive_config['dynamic_criteria']['balanced_quadrant']['max_per_quadrant'] = new_max
+                    logging.info(f"       📝 adaptive_config.yaml - balanced_quadrant.max_per_quadrant: {old_max} → {new_max}")
+                else:
+                    if 'dynamic_criteria' not in adaptive_config:
+                        adaptive_config['dynamic_criteria'] = {}
+                    adaptive_config['dynamic_criteria']['balanced_quadrant'] = {'max_per_quadrant': 4}
+                    logging.info(f"       📝 adaptive_config.yaml - balanced_quadrant 설정 추가: max_per_quadrant=4")
+
+            elif filter_name == 'dispersion':
+                # dispersion 필터 조정 - 범위 확장
+                if 'dynamic_criteria' in adaptive_config and 'dispersion' in adaptive_config['dynamic_criteria']:
+                    old_min = adaptive_config['dynamic_criteria']['dispersion'].get('min_std_dev', 10.0)
+                    old_max = adaptive_config['dynamic_criteria']['dispersion'].get('max_std_dev', 15.0)
+                    new_min = max(5.0, old_min - 2.0)
+                    new_max = min(20.0, old_max + 2.0)
+                    adaptive_config['dynamic_criteria']['dispersion']['min_std_dev'] = new_min
+                    adaptive_config['dynamic_criteria']['dispersion']['max_std_dev'] = new_max
+                    logging.info(f"       📝 adaptive_config.yaml - dispersion: [{old_min}, {old_max}] → [{new_min}, {new_max}]")
+                else:
+                    if 'dynamic_criteria' not in adaptive_config:
+                        adaptive_config['dynamic_criteria'] = {}
+                    adaptive_config['dynamic_criteria']['dispersion'] = {'min_std_dev': 8.0, 'max_std_dev': 17.0}
+                    logging.info(f"       📝 adaptive_config.yaml - dispersion 설정 추가")
+
+            elif filter_name == 'digit_sum':
+                # digit_sum 필터 조정 - 범위 확장
+                if 'dynamic_criteria' in adaptive_config and 'digit_sum' in adaptive_config['dynamic_criteria']:
+                    digit_sum_config = adaptive_config['dynamic_criteria']['digit_sum']
+
+                    # min/max_digit_sum 조정
+                    old_min = digit_sum_config.get('min_digit_sum', 10)
+                    old_max = digit_sum_config.get('max_digit_sum', 40)
+                    margin = int(3 * adjustment_ratio)
+                    new_min = max(5, old_min - margin)
+                    new_max = min(55, old_max + margin)
+                    digit_sum_config['min_digit_sum'] = new_min
+                    digit_sum_config['max_digit_sum'] = new_max
+                    logging.info(f"       📝 adaptive_config.yaml - digit_sum: [{old_min}, {old_max}] → [{new_min}, {new_max}]")
+
+                    # min/max_digit_sum_range 조정 (더 넓은 범위 허용)
+                    old_range_min = digit_sum_config.get('min_digit_sum_range', 0)
+                    old_range_max = digit_sum_config.get('max_digit_sum_range', 12)
+                    new_range_min = max(0, old_range_min - 1)
+                    new_range_max = min(18, old_range_max + 2)  # 최대 18까지 확장
+                    digit_sum_config['min_digit_sum_range'] = new_range_min
+                    digit_sum_config['max_digit_sum_range'] = new_range_max
+                    logging.info(f"       📝 adaptive_config.yaml - digit_sum_range: [{old_range_min}, {old_range_max}] → [{new_range_min}, {new_range_max}]")
+                else:
+                    if 'dynamic_criteria' not in adaptive_config:
+                        adaptive_config['dynamic_criteria'] = {}
+                    adaptive_config['dynamic_criteria']['digit_sum'] = {
+                        'min_digit_sum': 8,
+                        'max_digit_sum': 45,
+                        'min_digit_sum_range': 0,
+                        'max_digit_sum_range': 12
+                    }
+                    logging.info(f"       📝 adaptive_config.yaml - digit_sum 설정 추가 (range 포함)")
+
+            elif filter_name == 'outlier_detection':
+                # outlier_detection 필터 조정 - 허용 이상치 수 증가
+                if 'dynamic_criteria' in adaptive_config and 'outlier_detection' in adaptive_config['dynamic_criteria']:
+                    old_max_outliers = adaptive_config['dynamic_criteria']['outlier_detection'].get('max_outliers', 1)
+                    old_iqr = adaptive_config['dynamic_criteria']['outlier_detection'].get('iqr_multiplier', 1.0)
+                    new_max_outliers = min(old_max_outliers + 1, 3)  # 최대 3까지 허용
+                    new_iqr = min(old_iqr + 0.5, 2.5)  # IQR 배수 완화
+                    adaptive_config['dynamic_criteria']['outlier_detection']['max_outliers'] = new_max_outliers
+                    adaptive_config['dynamic_criteria']['outlier_detection']['iqr_multiplier'] = new_iqr
+                    logging.info(f"       📝 adaptive_config.yaml - outlier_detection: max_outliers {old_max_outliers} → {new_max_outliers}, iqr {old_iqr} → {new_iqr}")
+                else:
+                    if 'dynamic_criteria' not in adaptive_config:
+                        adaptive_config['dynamic_criteria'] = {}
+                    adaptive_config['dynamic_criteria']['outlier_detection'] = {'max_outliers': 2, 'iqr_multiplier': 1.5}
+                    logging.info(f"       📝 adaptive_config.yaml - outlier_detection 설정 추가")
+
+            elif filter_name == 'last_digit':
+                # last_digit 필터 조정 - 동일 끝자리 허용 수 증가
+                if 'dynamic_criteria' in adaptive_config and 'last_digit' in adaptive_config['dynamic_criteria']:
+                    old_min = adaptive_config['dynamic_criteria']['last_digit'].get('min_same_last_digits', 5)
+                    new_min = min(old_min + 1, 6)  # 최대 6까지 허용
+                    adaptive_config['dynamic_criteria']['last_digit']['min_same_last_digits'] = new_min
+                    logging.info(f"       📝 adaptive_config.yaml - last_digit.min_same_last_digits: {old_min} → {new_min}")
+
+            elif filter_name in ['arithmetic', 'arithmetic_sequence']:
+                # arithmetic 필터 조정 - 제외 길이 완화
+                if 'dynamic_criteria' in adaptive_config and 'arithmetic' in adaptive_config['dynamic_criteria']:
+                    old_exclude = adaptive_config['dynamic_criteria']['arithmetic'].get('exclude_lengths', [5, 6])
+                    # 제외 길이에서 하나 제거 (6만 제외하도록)
+                    if 5 in old_exclude:
+                        new_exclude = [l for l in old_exclude if l != 5]
+                        adaptive_config['dynamic_criteria']['arithmetic']['exclude_lengths'] = new_exclude
+                        logging.info(f"       📝 adaptive_config.yaml - arithmetic.exclude_lengths: {old_exclude} → {new_exclude}")
+                    else:
+                        logging.info(f"       ✅ arithmetic 필터: 이미 최적 상태 (exclude_lengths: {old_exclude})")
+
+            elif filter_name in ['geometric', 'geometric_sequence']:
+                # geometric 필터 조정 - 제외 길이 완화
+                if 'dynamic_criteria' in adaptive_config and 'geometric' in adaptive_config['dynamic_criteria']:
+                    old_exclude = adaptive_config['dynamic_criteria']['geometric'].get('exclude_lengths', [4, 5, 6])
+                    # 제외 길이에서 하나 제거
+                    if 4 in old_exclude:
+                        new_exclude = [l for l in old_exclude if l != 4]
+                        adaptive_config['dynamic_criteria']['geometric']['exclude_lengths'] = new_exclude
+                        logging.info(f"       📝 adaptive_config.yaml - geometric.exclude_lengths: {old_exclude} → {new_exclude}")
+                    elif 5 in old_exclude:
+                        new_exclude = [l for l in old_exclude if l != 5]
+                        adaptive_config['dynamic_criteria']['geometric']['exclude_lengths'] = new_exclude
+                        logging.info(f"       📝 adaptive_config.yaml - geometric.exclude_lengths: {old_exclude} → {new_exclude}")
+                    else:
+                        logging.info(f"       ✅ geometric 필터: 이미 최적 상태 (exclude_lengths: {old_exclude})")
+
             else:
-                # 기타 필터는 일반적인 조정
-                logging.info(f"       ⚠️ {filter_name} 필터에 대한 구체적인 조정 로직이 없습니다. 기본 완화 적용")
+                # 기타 필터는 기본 완화 적용 (필터 비활성화로 통과율 향상)
+                logging.info(f"       ⚠️ {filter_name} 필터에 대한 구체적인 조정 로직이 없습니다.")
+                logging.info(f"       💡 해당 필터를 일시적으로 비활성화하여 통과율 향상을 시도합니다.")
+                # 필터 비활성화 (filters 섹션에서 false로 설정)
+                if 'filters' in adaptive_config:
+                    if filter_name in adaptive_config['filters']:
+                        adaptive_config['filters'][filter_name] = False
+                        logging.info(f"       📝 adaptive_config.yaml - filters.{filter_name}: true → false")
 
             # 임시 config 저장
             self._temp_config = config

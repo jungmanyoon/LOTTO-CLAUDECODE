@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+env:
+  PYTHONDONTWRITEBYTECODE: 1
+  PYTHONUNBUFFERED: 1
+
 jobs:
   test:
     runs-on: windows-latest
@@ -14,59 +18,210 @@ jobs:
         python-version: ["3.8", "3.9", "3.10", "3.11"]
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov Flask-WTF Flask-Limiter
+        pip install pytest pytest-cov pytest-html pytest-xdist Flask-WTF Flask-Limiter
 
     - name: Run unit tests
       run: |
-        pytest tests/ -m "unit" -v --cov=src --cov-report=xml
+        pytest tests/ -m "unit" -v --cov=src --cov-report=xml --cov-report=html --junitxml=test-results-unit.xml
 
     - name: Run integration tests
       run: |
-        pytest tests/ -m "integration" -v --cov=src --cov-append --cov-report=xml
+        pytest tests/ -m "integration" -v --cov=src --cov-append --cov-report=xml --cov-report=html --junitxml=test-results-integration.xml
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          test-results-*.xml
+          htmlcov/
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         file: ./coverage.xml
         fail_ci_if_error: true
-        flags: unittests
-        name: codecov-umbrella
+        flags: unittests-py${{ matrix.python-version }}
+        name: codecov-py${{ matrix.python-version }}
+        token: ${{ secrets.CODECOV_TOKEN }}
 
   lint:
     runs-on: windows-latest
+    continue-on-error: false
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: "3.11"
+        cache: 'pip'
 
     - name: Install linting dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install flake8 pylint black
+        pip install flake8 pylint black isort
 
     - name: Run Black code formatter check
       run: |
-        black --check src/ tests/ --line-length 120 || true
+        black --check src/ tests/ --line-length 120
+
+    - name: Run isort import order check
+      run: |
+        isort --check-only src/ tests/ --line-length 120 --profile black
 
     - name: Run Flake8
       run: |
-        flake8 src/ tests/ --max-line-length=120 --ignore=E501,W503,E203 --count --statistics || true
+        flake8 src/ tests/ --max-line-length=120 --ignore=E501,W503,E203 --count --statistics --output-file=flake8-report.txt
+
+    - name: Upload Flake8 report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: flake8-report
+        path: flake8-report.txt
 
     - name: Run Pylint
       run: |
-        pylint src/ --max-line-length=120 --disable=C0111,C0103,R0913,R0914,W0703 || true
+        pylint src/ --max-line-length=120 --disable=C0111,C0103,R0913,R0914,W0703 --output-format=json:pylint-report.json,colorized
+
+    - name: Upload Pylint report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pylint-report
+        path: pylint-report.json
+
+  benchmark:
+    runs-on: windows-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-benchmark
+
+    - name: Run performance benchmarks
+      run: |
+        pytest tests/benchmarks/ -v --benchmark-only --benchmark-json=benchmark-results.json
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark-results.json
+
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        tool: 'pytest'
+        output-file-path: benchmark-results.json
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        auto-push: true
+        alert-threshold: '150%'
+        comment-on-alert: true
+        fail-on-alert: true
+
+  coverage-report:
+    runs-on: windows-latest
+    needs: test
+    if: always()
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download all coverage artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: test-results-*
+        merge-multiple: true
+
+    - name: Generate coverage summary
+      run: |
+        echo "## Coverage Summary" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "Coverage reports have been generated for all Python versions." >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "View detailed reports in the artifacts section." >> $env:GITHUB_STEP_SUMMARY
+
+  security:
+    runs-on: windows-latest
+    continue-on-error: true
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install security tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit
+
+    - name: Run safety check (dependency vulnerabilities)
+      run: |
+        pip install -r requirements.txt
+        safety check --full-report --output json > safety-report.json || true
+
+    - name: Upload safety report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: safety-report
+        path: safety-report.json
+
+    - name: Run bandit security scan
+      run: |
+        bandit -r src/ -f json -o bandit-report.json || true
+
+    - name: Upload bandit report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: bandit-report
+        path: bandit-report.json
+
+  test-summary:
+    runs-on: windows-latest
+    needs: [test, lint, security]
+    if: always()
+
+    steps:
+    - name: Generate test summary
+      run: |
+        echo "## Test Results Summary" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "| Job | Status |" >> $env:GITHUB_STEP_SUMMARY
+        echo "|-----|--------|" >> $env:GITHUB_STEP_SUMMARY
+        echo "| Tests | ${{ needs.test.result }} |" >> $env:GITHUB_STEP_SUMMARY
+        echo "| Lint | ${{ needs.lint.result }} |" >> $env:GITHUB_STEP_SUMMARY
+        echo "| Security | ${{ needs.security.result }} |" >> $env:GITHUB_STEP_SUMMARY

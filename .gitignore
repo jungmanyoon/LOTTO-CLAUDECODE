@@ -31,6 +31,8 @@ logs/
 # Config files with sensitive data
 config_local.yaml
 secrets.yaml
+.secret_key
+.api_tokens
 
 # IDE
 .vscode/
