@@ -51,6 +51,12 @@ Thumbs.db
 *.bak
 *.backup
 *.cache
+
+# 자동 생성 YAML 백업 파일 (configs/ 하위)
+# 패턴 1: adaptive_filter_config.yaml.backup_YYYYMMDD_HHMMSS
+configs/*.backup_*
+# 패턴 2: adaptive_filter_config_backup_YYYYMMDD_HHMMSS.yaml
+configs/*_backup_*.yaml
 *_old.py
 *_fixed.py
 cleanup_archive/
@@ -122,10 +128,12 @@ LPT8
 LPT9
 debug_output.txt
 # 임시 파일 자동 제외 (cleanup_temp_files.py)
-test_*.py
-check_*.py
-verify_*.py
-run_*.py
+# [FIX 2026-05-31] 루트(/) 앵커 추가: CLAUDE.md "NO TEST FILES in root" 정책은 루트 한정.
+# 앵커 없으면 tests/ 하위 정식 테스트까지 제외돼 회귀테스트가 버전관리 누락됨.
+/test_*.py
+/check_*.py
+/verify_*.py
+/run_*.py
 *_FIX*.md
 *_QUICK_REF.md
 temp_*.txt
