@@ -2556,16 +2556,21 @@ def main():
         args.realtime_learning = True
         args.hyperparameter_tuning = True
         logging.info("[O] 실시간 학습 시스템이 기본적으로 활성화되었습니다.")
-        args.skip_backtest = False  # 백테스팅도 자동 활성화
-        args.skip_ml = False  # ML/AI 분석도 활성화
-        args.ml_only = False  # 전체 프로세스 실행 (ML만 하지 않음)
-        # 모든 ML 모델 활성화
-        args.lstm = True
-        args.ensemble = True
-        args.monte_carlo = True
-        args.bayesian = True
-        args.fractal = True
-        logging.info("자동 개선 모드 활성화: 모든 최적화 기능이 켜집니다.")
+        # [FIX 2026-05-31] 사용자가 명시적으로 끈 플래그(--skip-ml/--skip-backtest/--predict-only)는
+        # 존중한다. 기존엔 무조건 skip_ml=False/모든모델=True로 덮어써 --skip-ml이 무력화됐음
+        # (predict-only인데도 ensemble이 7.9M 학습 생성 → 병목). 명시 비활성 시 강제 활성 금지.
+        if not args.skip_ml and not args.predict_only:
+            args.skip_backtest = False  # 백테스팅도 자동 활성화
+            args.ml_only = False  # 전체 프로세스 실행 (ML만 하지 않음)
+            # 모든 ML 모델 활성화
+            args.lstm = True
+            args.ensemble = True
+            args.monte_carlo = True
+            args.bayesian = True
+            args.fractal = True
+            logging.info("자동 개선 모드 활성화: 모든 최적화 기능이 켜집니다.")
+        else:
+            logging.info("[실시간 학습] --skip-ml/--predict-only 존중: ML 모델 강제 활성화 안 함")
     
     # 시작 시간 기록
     start_time = time.time()
@@ -3302,16 +3307,18 @@ def main():
                 filter_manager.apply_filters(latest_round, 'incremental', force=force_required)
                 log_memory("증분 필터링 완료")
         
-        # 성능 측정 결과 출력
+        # 성능 측정 결과 출력 (predict-only는 필터링을 건너뛰므로 보고서 불필요)
         filter_elapsed_time = time.time() - filter_start_time
-        logging.info(f"\n[성능 보고서] 필터링 완료")
-        logging.info(f"  - 모드: {update_mode.upper()}")
-        logging.info(f"  - 실행 시간: {filter_elapsed_time:.1f}초")
-        
-        if update_mode == 'incremental':
-            estimated_full_time = filter_elapsed_time * 4  # 증분 모드는 대략 1/4 시간 소요
-            time_saved = estimated_full_time - filter_elapsed_time
-            logging.info(f"  - 절약된 시간: 약 {time_saved:.0f}초 (전체 모드 대비 {(time_saved/estimated_full_time)*100:.0f}% 향상)")
+        if not args.predict_only:
+            logging.info(f"\n[성능 보고서] 필터링 완료")
+            logging.info(f"  - 모드: {update_mode.upper()}")
+            logging.info(f"  - 실행 시간: {filter_elapsed_time:.1f}초")
+
+            # [FIX] estimated_full_time=0 시 ZeroDivisionError 방어 (필터링 스킵/즉시완료 케이스)
+            if update_mode == 'incremental' and filter_elapsed_time > 0:
+                estimated_full_time = filter_elapsed_time * 4  # 증분 모드는 대략 1/4 시간 소요
+                time_saved = estimated_full_time - filter_elapsed_time
+                logging.info(f"  - 절약된 시간: 약 {time_saved:.0f}초 (전체 모드 대비 {(time_saved/estimated_full_time)*100:.0f}% 향상)")
         
         # 동적 필터 모니터링 중지 및 보고서 저장
         if enhanced_filter_manager:
@@ -3557,9 +3564,10 @@ def main():
             # 백테스팅 실행 (ML/AI 직후가 논리적)
             # 주의: 자동 조정 시스템에서도 백테스팅이 실행되므로 중복 방지
         else:
-            # 데이터가 부족한 경우
-            logging.warning("ML/AI 분석을 위한 충분한 데이터가 없습니다. (최소 50개 필요)")
-            logging.warning(f"  - 현재 데이터: {len(winning_numbers) if winning_numbers else 0}개")
+            # ML/AI 분석 건너뜀 (--skip-ml). 신 예측 경로(극단성 풀)는 ML 없이도 동작하므로 정상.
+            # [FIX 2026-05-31] winning_numbers는 ML 블록 내부에서만 정의되므로 여기서 참조하지 않음
+            # (--skip-ml이 실제로 동작하게 된 뒤 드러난 UnboundLocalError 수정).
+            logging.info("[ML/AI] 건너뜀 (--skip-ml): 극단성 풀 경로가 ML 없이 5세트 생성")
 
         # ML만 수행 모드
         if args.ml_only:
