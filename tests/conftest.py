@@ -87,11 +87,19 @@ def reset_singletons():
     saved_instances = {}
 
     # ThresholdManager 리셋
+    # [CRITICAL 2026-05-31] _instance만 None으로 두면 안 된다.
+    # ThresholdManager는 _instance와 _initialized를 '둘 다' 클래스 변수로 가진다.
+    # _instance=None만 리셋하면 다음 ThresholdManager() 호출 시 __new__는 새 빈 객체를
+    # 만들지만 __init__이 `if _initialized: return`으로 즉시 빠져나가 _thresholds/_observers가
+    # 없는 빈 객체가 생성된다 → 이후 get_threshold() 등에서 AttributeError.
+    # 이것이 풀스위트 순서의존 실패(단독 PASS, 풀스위트 FAIL)의 근본 원인이었다.
+    # 따라서 _initialized도 함께 False로 리셋해 다음 생성이 실제 초기화를 수행하도록 한다.
     try:
         from src.core.threshold_manager import ThresholdManager
         if hasattr(ThresholdManager, '_instance'):
             saved_instances['ThresholdManager'] = ThresholdManager._instance
             ThresholdManager._instance = None
+            ThresholdManager._initialized = False
     except ImportError:
         pass
 
@@ -114,11 +122,15 @@ def reset_singletons():
         pass
 
     # ImprovedAutoImprovementManager 리셋
+    # [CRITICAL 2026-05-31] 이 클래스의 진짜 싱글톤은 클래스 변수 _instance가 아니라
+    # 모듈 전역 변수 _manager_instance다 (improved_auto_improvement_manager.py:567,
+    # get_improved_manager()가 사용). 기존 코드는 존재하지 않는 ._instance를 리셋해 무효였다.
+    # 모듈 전역 _manager_instance를 직접 None으로 리셋해야 실제 격리가 된다.
     try:
-        from src.optimization.improved_auto_improvement_manager import ImprovedAutoImprovementManager
-        if hasattr(ImprovedAutoImprovementManager, '_instance'):
-            saved_instances['ImprovedAutoImprovementManager'] = ImprovedAutoImprovementManager._instance
-            ImprovedAutoImprovementManager._instance = None
+        import src.optimization.improved_auto_improvement_manager as _iaim
+        if hasattr(_iaim, '_manager_instance'):
+            saved_instances['ImprovedAutoImprovementManager'] = _iaim._manager_instance
+            _iaim._manager_instance = None
     except ImportError:
         pass
 
@@ -128,6 +140,22 @@ def reset_singletons():
         if hasattr(ConfigManager, '_instance'):
             saved_instances['ConfigManager'] = ConfigManager._instance
             ConfigManager._instance = None
+    except ImportError:
+        pass
+
+    # SingletonMeta 기반 싱글톤 전체 리셋 (CRITICAL 2026-05-31)
+    # OptimizedBacktestingFramework, AutomationCoordinator가 metaclass=SingletonMeta다.
+    # 이들 인스턴스는 SingletonMeta._instances(클래스->인스턴스 dict)에 캐시되며,
+    # __init__이 `if hasattr(self,'_initialized'): return`으로 가드되어 한 번 만들어지면
+    # 이후 다른 db_manager로 호출해도 기존(오염된) 인스턴스를 그대로 반환한다.
+    # 앞선 테스트가 Mock db_manager로 OptimizedBacktestingFramework를 생성하면 그 Mock이
+    # 캐시에 남아, 이후 실제 db를 쓰는 테스트에서 run_backtest가 'Mock' object is not
+    # iterable로 죽는다(test_backtesting_with_filtered_pool). _instances를 비워 매 테스트가
+    # 깨끗한 인스턴스를 새로 만들도록 한다.
+    try:
+        from src.utils.singleton import SingletonMeta
+        saved_instances['__SingletonMeta__'] = dict(SingletonMeta._instances)
+        SingletonMeta._instances.clear()
     except ImportError:
         pass
 
@@ -144,6 +172,9 @@ def reset_singletons():
             except:
                 pass
             ThresholdManager._instance = None
+        # _instance 유무와 무관하게 _initialized를 반드시 False로 되돌린다.
+        # (setup 주석 참고: 빈 객체 생성 방지. 다음 테스트의 setup에서 한 번 더 보장)
+        ThresholdManager._initialized = False
     except ImportError:
         pass
 
@@ -172,9 +203,9 @@ def reset_singletons():
         pass
 
     try:
-        from src.optimization.improved_auto_improvement_manager import ImprovedAutoImprovementManager
-        if hasattr(ImprovedAutoImprovementManager, '_instance') and ImprovedAutoImprovementManager._instance is not None:
-            ImprovedAutoImprovementManager._instance = None
+        import src.optimization.improved_auto_improvement_manager as _iaim
+        if getattr(_iaim, '_manager_instance', None) is not None:
+            _iaim._manager_instance = None
     except ImportError:
         pass
 
@@ -182,6 +213,13 @@ def reset_singletons():
         from src.utils.config_manager import ConfigManager
         if hasattr(ConfigManager, '_instance') and ConfigManager._instance is not None:
             ConfigManager._instance = None
+    except ImportError:
+        pass
+
+    # SingletonMeta 기반 싱글톤 정리 (setup 주석 참고)
+    try:
+        from src.utils.singleton import SingletonMeta
+        SingletonMeta._instances.clear()
     except ImportError:
         pass
 
@@ -235,3 +273,85 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "integration" not in item.keywords and "slow" not in item.keywords:
             item.add_marker(pytest.mark.unit)
+import importlib
+import sys
+
+import pytest
+
+
+_ORDER_SENSITIVE_TEST_IMPORTS = {
+    "ContinuousImprovementEngine": "src.core.continuous_improvement_engine",
+    "FilteredPoolLSTMPredictor": "src.ml.filtered_pool_lstm_predictor",
+    "MLFilterIntegrationManager": "src.core.ml_filter_integration_manager",
+    "OptimizedBacktestingFramework": "src.backtesting.optimized_backtesting_framework",
+}
+
+
+def _clear_all_singleton_meta_instances():
+    """Clear SingletonMeta caches even when a prior test left stale reloaded classes behind."""
+    seen = set()
+
+    for module in list(sys.modules.values()):
+        module_dict = getattr(module, "__dict__", None)
+        if not module_dict:
+            continue
+
+        for obj in list(module_dict.values()):
+            candidates = []
+            if isinstance(obj, type):
+                candidates.append(type(obj))
+                if getattr(obj, "__name__", None) == "SingletonMeta":
+                    candidates.append(obj)
+
+            for candidate in candidates:
+                marker = id(candidate)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+
+                if getattr(candidate, "__name__", None) != "SingletonMeta":
+                    continue
+
+                instances = getattr(candidate, "_instances", None)
+                if isinstance(instances, dict):
+                    instances.clear()
+
+
+def _reset_order_sensitive_module_state():
+    _clear_all_singleton_meta_instances()
+
+    for module in list(sys.modules.values()):
+        module_name = getattr(module, "__name__", "")
+        if module_name.endswith("improved_auto_improvement_manager") and hasattr(module, "_manager_instance"):
+            module._manager_instance = None
+
+        module_dict = getattr(module, "__dict__", None)
+        if not module_dict:
+            continue
+
+        for obj in list(module_dict.values()):
+            if isinstance(obj, type) and getattr(obj, "__name__", None) == "ThresholdManager":
+                if hasattr(obj, "_initialized"):
+                    obj._initialized = False
+
+
+def _refresh_order_sensitive_test_aliases(test_module):
+    module_dict = getattr(test_module, "__dict__", None)
+    if not module_dict:
+        return
+
+    for name, module_name in _ORDER_SENSITIVE_TEST_IMPORTS.items():
+        if name not in module_dict:
+            continue
+
+        canonical_module = importlib.import_module(module_name)
+        module_dict[name] = getattr(canonical_module, name)
+
+
+@pytest.fixture(autouse=True)
+def isolate_order_sensitive_singletons_and_import_aliases(request):
+    _reset_order_sensitive_module_state()
+    _refresh_order_sensitive_test_aliases(request.module)
+    yield
+    _reset_order_sensitive_module_state()
+    _refresh_order_sensitive_test_aliases(request.module)

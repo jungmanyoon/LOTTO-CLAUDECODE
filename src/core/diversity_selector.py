@@ -106,6 +106,30 @@ class FrequencyAnalyzer:
         weights = (1.0 - spread) + 2.0 * spread * s  # mean ~1.0, range [1-spread,1+spread]
         return weights.astype(np.float32)
 
+    def get_pair_frequencies(self, until_round: Optional[int] = None,
+                             normalize: bool = True) -> np.ndarray:
+        """번호 쌍(i,j) 동시출현 빈도 행렬 (45,45) 반환 (0-based 인덱스, 대칭).
+
+        triple-cover 선택기(DiversitySelector.select_triple_cover)의 triple 가중치
+        (쌍빈도 합)에 사용. normalize=True면 양수 쌍 평균 1.0 근처로 정규화하여 단일빈도
+        가중과 스케일을 맞춘다. 역사적으로 자주 함께 나온 쌍에 높은 값.
+        """
+        rows = self._winning_arrays(until_round)
+        M = np.zeros((45, 45), dtype=np.float64)
+        for _r, nums in rows:
+            idx = [n - 1 for n in nums]
+            for a in range(len(idx)):
+                for b in range(a + 1, len(idx)):
+                    i, j = idx[a], idx[b]
+                    M[i, j] += 1
+                    M[j, i] += 1
+        if normalize:
+            pos = M[M > 0]
+            mean = pos.mean() if pos.size else 1.0
+            if mean > 0:
+                M = M / mean
+        return M.astype(np.float32)
+
 
 class DiversitySelector:
     """필터링된 풀에서 5장을 번호 커버리지 극대화로 선택."""
