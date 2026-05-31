@@ -195,7 +195,7 @@ authenticator = TokenAuthenticator()
 def _mask_ip(ip: str) -> str:
     """IP 주소 마스킹 (SEC-005: 민감 정보 보호)
 
-    예: 192.168.1.100 → 192.168.*.***
+    예: 192.168.1.100 -> 192.168.*.***
     """
     if not ip:
         return 'unknown'
@@ -986,7 +986,7 @@ class EnhancedLottoDashboard:
             
             # 경고 메시지 생성
             if not validation_result['passed']:
-                validation_result['warning_message'] = f"🚨 경고: {round_num}회차 당첨번호가 {len(validation_result['failed_filters'])}개 필터에 의해 제외되었습니다!"
+                validation_result['warning_message'] = f"[ALERT] 경고: {round_num}회차 당첨번호가 {len(validation_result['failed_filters'])}개 필터에 의해 제외되었습니다!"
                 self.logger.warning(validation_result['warning_message'])
             
             # 결과 저장
@@ -1063,13 +1063,13 @@ class EnhancedLottoDashboard:
                         validation_result['filter_bypass_applied'] = True
                         validation_result['passed'] = True
                         validation_result['recommendation'] = 'accept_with_warning'
-                        validation_result['warning_message'] = f"⚠️ ML 예측 완화 적용: {', '.join(validation_result['failed_filters'])}"
+                        validation_result['warning_message'] = f"[WARN] ML 예측 완화 적용: {', '.join(validation_result['failed_filters'])}"
                     else:
                         validation_result['recommendation'] = 'reject'
-                        validation_result['warning_message'] = f"❌ 중요 필터 실패: {', '.join(critical_failures)}"
+                        validation_result['warning_message'] = f"[X] 중요 필터 실패: {', '.join(critical_failures)}"
                 else:
                     validation_result['recommendation'] = 'reject'
-                    validation_result['warning_message'] = f"❌ 필터 실패: {', '.join(validation_result['failed_filters'])}"
+                    validation_result['warning_message'] = f"[X] 필터 실패: {', '.join(validation_result['failed_filters'])}"
 
             # 필터링된 풀 확인 (실제 DB 확인은 성능상 생략, 데모 데이터 사용)
             validation_result['in_filtered_pool'] = validation_result['passed']  # 간단한 근사치
@@ -1198,577 +1198,709 @@ HTML_TEMPLATE_V2 = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="csrf-token" content="{{ csrf_token() }}"><!-- SECURITY: CSRF token -->
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>로또 예측 분석 대시보드 v2</title>
-    <!-- html2canvas 라이브러리 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Noto Sans KR', 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-        }
-        
-        /* 헤더 스타일 */
-        header {
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        
-        h1 {
-            color: #667eea;
-            font-size: 2em;
-            margin-bottom: 15px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .controls {
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-        
-        select, button {
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: 2px solid #667eea;
-            font-size: 14px;
-            cursor: pointer;
-            transition: all 0.3s;
-            background: white;
-        }
-        
-        button:hover {
-            background: #667eea;
-            color: white;
-        }
-        
-        .save-button {
-            background: #28a745;
-            border-color: #28a745;
-            color: white;
-        }
-        
-        .save-button:hover {
-            background: #218838;
-        }
+      :root {
+        /* Toss Design Tokens */
+        --bg:          #F2F4F6;
+        --surface:     #E8EAED;
+        --card:        #FFFFFF;
+        --border:      #E5E8EB;
+        --border-hover:#C9CDD2;
 
-        /* 예측 생성 버튼 스타일 */
-        button[onclick*="generateNewPredictions"] {
-            background: #28a745 !important;
-            color: white !important;
-            font-weight: bold;
-            padding: 10px 20px !important;
-            border-radius: 8px;
-            transition: all 0.3s;
-            border: 2px solid #28a745 !important;
-        }
+        /* Brand: Toss Blue */
+        --blue:        #3182F6;
+        --blue-dim:    #1B6EE4;
+        --blue-light:  #EBF3FE;
+        --blue-mid:    #A0CCFA;
 
-        button[onclick*="generateNewPredictions"]:hover {
-            background: #218838 !important;
-            transform: scale(1.05);
-            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
-        }
+        /* Semantic */
+        --green:       #00C7AE;
+        --green-light: #E5FAF7;
+        --red:         #FF3B30;
+        --red-light:   #FFF0EF;
+        --orange:      #FF9500;
+        --orange-light:#FFF4E5;
 
-        button[onclick*="generateNewPredictions"]:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: scale(1);
-        }
+        /* Text */
+        --text:        #191F28;
+        --text-2:      #333D4B;
+        --text-3:      #4E5968;
+        --muted:       #8B95A1;
+        --muted-2:     #B0B8C1;
 
-        /* 예측 카드 하이라이트 애니메이션 */
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.02); }
-            100% { transform: scale(1); }
-        }
+        /* Shadows */
+        --shadow-sm:   0 1px 4px rgba(0,0,0,.06);
+        --shadow-card: 0 2px 12px rgba(0,0,0,.08);
+        --shadow-hover:0 4px 20px rgba(0,0,0,.12);
+        --shadow-blue: 0 4px 16px rgba(49,130,246,.25);
 
-        /* 당첨번호 섹션 */
-        .winning-section {
-            background: linear-gradient(135deg, #ffd89b 0%, #19547b 100%);
-            border-radius: 15px;
-            padding: 25px;
-            margin-bottom: 20px;
-            color: white;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        }
-        
-        .winning-title {
-            font-size: 1.5em;
-            margin-bottom: 15px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        .winning-info {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 20px;
-        }
-        
-        .winning-numbers-display {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        
-        .number-ball {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            font-weight: bold;
-            font-size: 18px;
-            background: white;
-            color: #333;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.3);
-        }
-        
-        .bonus-ball {
-            background: #ffd700;
-            color: #333;
-            position: relative;
-        }
-        
-        .bonus-ball::after {
-            content: '+';
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            font-size: 12px;
-        }
-        
-        .winning-stats {
-            background: rgba(255,255,255,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            backdrop-filter: blur(10px);
-        }
-        
-        /* 예측 테이블 스타일 */
-        .predictions-section {
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        
-        /* 스크롤 가능한 예측 컨테이너 */
-        #predictionsContent {
-            max-height: 500px;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding-right: 10px;
-        }
-        
-        #predictionsContent::-webkit-scrollbar {
-            width: 8px;
-        }
-        
-        #predictionsContent::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 10px;
-        }
-        
-        #predictionsContent::-webkit-scrollbar-thumb {
-            background: #667eea;
-            border-radius: 10px;
-        }
-        
-        #predictionsContent::-webkit-scrollbar-thumb:hover {
-            background: #5568d3;
-        }
-        
-        /* 날짜별 그룹 스타일 */
-        .date-group {
-            margin-bottom: 20px;
-            border-left: 3px solid #667eea;
-            padding-left: 15px;
-        }
-        
-        .date-header {
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 10px;
-            font-size: 1.1em;
-        }
-        
-        /* 필터 경고 스타일 */
-        .filter-warning {
-            background: linear-gradient(135deg, #ff6b6b, #ff8787);
-            color: white;
-            padding: 20px;
-            border-radius: 15px;
-            margin-bottom: 20px;
-            box-shadow: 0 5px 15px rgba(255, 107, 107, 0.3);
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.02); }
-            100% { transform: scale(1); }
-        }
-        
-        .warning-content {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            font-size: 1.1em;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
-        
-        .warning-icon {
-            font-size: 1.5em;
-            animation: shake 0.5s infinite;
-        }
-        
-        @keyframes shake {
-            0%, 100% { transform: translateX(0); }
-            25% { transform: translateX(-5px); }
-            75% { transform: translateX(5px); }
-        }
-        
-        .failed-filters {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid rgba(255, 255, 255, 0.3);
-            font-size: 0.95em;
-        }
-        
-        .failed-filter-item {
-            padding: 5px 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .failed-filter-item::before {
-            content: '❌';
-            font-size: 0.9em;
-        }
-        
-        .section-title {
-            color: #667eea;
-            font-size: 1.3em;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #eee;
-        }
-        
-        .predictions-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-        }
-        
-        .predictions-table th {
-            background: #667eea;
-            color: white;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-        }
-        
-        .predictions-table td {
-            padding: 10px 12px;
-            border-bottom: 1px solid #eee;
-        }
+        /* Radius */
+        --radius-sm:   8px;
+        --radius-md:   12px;
+        --radius-lg:   16px;
+        --radius-xl:   20px;
+        --radius-pill: 100px;
 
-        .predictions-table td.source-cell {
-            white-space: nowrap;
-            max-width: 120px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+        /* 로또 공 공식 색상 */
+        --b1: #f6c700;  /* 1-10 노랑 */
+        --b2: #69c8f2;  /* 11-20 파랑 */
+        --b3: #ff7272;  /* 21-30 빨강 */
+        --b4: #aaaaaa;  /* 31-40 회색 */
+        --b5: #b0d840;  /* 41-45 초록 */
+      }
 
-        .predictions-table tr:hover {
-            background: #f8f9fa;
-        }
-        
-        .number-cell {
-            display: flex;
-            gap: 5px;
-            align-items: center;
-        }
-        
-        .small-ball {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            font-size: 12px;
-            font-weight: bold;
-            background: #e9ecef;
-            color: #495057;
-        }
-        
-        /* 일치 개수별 색상 */
-        .match-0 { background: #e9ecef; }
-        .match-1 { background: #cfe2ff; }
-        .match-2 { background: #a6e3a1; }
-        .match-3 { background: #ffd700; }
-        .match-4 { background: #ffa500; }
-        .match-5 { background: #ff6b6b; }
-        .match-6 { background: #ff0000; color: white; }
-        
-        .confidence-bar {
-            width: 100px;
-            height: 20px;
-            background: #e9ecef;
-            border-radius: 10px;
-            overflow: hidden;
-            position: relative;
-        }
-        
-        .confidence-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea, #764ba2);
-            transition: width 0.3s;
-        }
-        
-        .match-badge {
-            display: inline-block;
-            padding: 4px 8px;
-            border-radius: 5px;
-            font-size: 12px;
-            font-weight: bold;
-            min-width: 60px;
-            text-align: center;
-        }
-        
-        .rank-badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 5px;
-            font-size: 11px;
-            font-weight: bold;
-            color: white;
-        }
-        
-        .rank-1 { background: #ff0000; }
-        .rank-2 { background: #ff6b6b; }
-        .rank-3 { background: #ffa500; }
-        .rank-4 { background: #28a745; }
-        .rank-5 { background: #17a2b8; }
-        
-        /* 통계 섹션 */
-        .stats-section {
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
-        }
-        
-        .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-        }
-        
-        .stat-value {
-            font-size: 32px;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-        
-        .stat-label {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-        
-        /* 일치 분포 차트 */
-        .distribution-chart {
-            margin-top: 20px;
-        }
-        
-        .bar-chart {
-            display: flex;
-            gap: 10px;
-            align-items: flex-end;
-            height: 150px;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 10px;
-        }
-        
-        .bar {
-            flex: 1;
-            background: linear-gradient(180deg, #667eea, #764ba2);
-            border-radius: 5px 5px 0 0;
-            position: relative;
-            min-height: 20px;
-            display: flex;
-            align-items: flex-end;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-            font-size: 12px;
-            padding-bottom: 5px;
-        }
-        
-        .bar-label {
-            position: absolute;
-            bottom: -20px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 11px;
-            color: #666;
-        }
-        
-        /* 로딩 상태 */
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-        
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        /* 반응형 디자인 */
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
-            }
-            
-            .predictions-table {
-                font-size: 12px;
-            }
-            
-            .small-ball {
-                width: 25px;
-                height: 25px;
-                font-size: 10px;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-        
-        /* 저장 중 오버레이 */
-        .save-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.7);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
-        
-        .save-message {
-            background: white;
-            padding: 30px;
-            border-radius: 15px;
-            text-align: center;
-        }
-        
-        .save-overlay.active {
-            display: flex;
-        }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: 'Pretendard Variable', 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+        background: var(--bg);
+        min-height: 100vh;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ━━ TOP NAV ━━ */
+      .top-nav {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: rgba(255,255,255,0.92);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+        padding: 0 24px;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .nav-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+      .nav-logo-icon {
+        width: 32px; height: 32px;
+        background: var(--blue);
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 16px;
+        color: white;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: -1px;
+      }
+      .nav-logo-text {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -0.3px;
+      }
+      .nav-logo-badge {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--blue);
+        background: var(--blue-light);
+        padding: 2px 7px;
+        border-radius: var(--radius-pill);
+        letter-spacing: 0;
+      }
+
+      .nav-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: nowrap;
+      }
+
+      select {
+        height: 36px;
+        padding: 0 32px 0 12px;
+        border: 1.5px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-size: 13px;
+        font-family: inherit;
+        color: var(--text-2);
+        background: var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238B95A1'/%3E%3C/svg%3E") no-repeat right 10px center;
+        -webkit-appearance: none;
+        appearance: none;
+        cursor: pointer;
+        outline: none;
+        transition: border-color .15s;
+        font-weight: 500;
+      }
+      select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-light); }
+
+      button {
+        height: 36px;
+        padding: 0 14px;
+        border-radius: var(--radius-sm);
+        border: 1.5px solid var(--border);
+        font-size: 13px;
+        font-family: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all .15s;
+        background: var(--card);
+        color: var(--text-2);
+        white-space: nowrap;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--border-hover);
+        background: var(--surface);
+      }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+
+      button[onclick*="generateNewPredictions"],
+      .btn-generate {
+        background: var(--blue) !important;
+        border-color: var(--blue) !important;
+        color: white !important;
+        font-weight: 700 !important;
+        height: 40px !important;
+        padding: 0 20px !important;
+        font-size: 14px !important;
+        border-radius: var(--radius-sm) !important;
+        box-shadow: var(--shadow-blue) !important;
+      }
+      button[onclick*="generateNewPredictions"]:hover:not(:disabled),
+      .btn-generate:hover:not(:disabled) {
+        background: var(--blue-dim) !important;
+        border-color: var(--blue-dim) !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 6px 20px rgba(49,130,246,.35) !important;
+      }
+      button[onclick*="generateNewPredictions"]:disabled { transform: none !important; box-shadow: none !important; }
+
+      .save-button {
+        background: var(--surface) !important;
+        border-color: var(--border) !important;
+        color: var(--text-3) !important;
+      }
+      .save-button:hover:not(:disabled) {
+        background: var(--bg) !important;
+        border-color: var(--border-hover) !important;
+        color: var(--text-2) !important;
+      }
+
+      /* ━━ MAIN LAYOUT ━━ */
+      .container {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 24px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      /* ━━ SECTION TITLES ━━ */
+      .section-title,
+      h2.section-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0 !important;
+        color: var(--muted) !important;
+        text-transform: uppercase !important;
+        letter-spacing: .06em !important;
+        margin-bottom: 12px !important;
+        padding-bottom: 0 !important;
+        border-bottom: none !important;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* JS-injected headings override */
+      #statsSection h3,
+      #statsSection h4,
+      #optimizerStatus summary,
+      #backtestPerformance h3,
+      #matchDistributionDetail h4 {
+        color: var(--blue) !important;
+        font-family: inherit !important;
+      }
+
+      /* ━━ CARD ━━ */
+      .card-panel,
+      .predictions-section,
+      .stats-section {
+        background: var(--card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-xl) !important;
+        padding: 20px 24px !important;
+        box-shadow: var(--shadow-card) !important;
+        overflow: hidden !important;
+      }
+      .card-panel::before,
+      .predictions-section::before,
+      .stats-section::before { display: none; }
+
+      /* ━━ WINNING SECTION ━━ */
+      .winning-section {
+        background: linear-gradient(135deg, var(--blue) 0%, #1558C0 100%);
+        border-radius: var(--radius-xl);
+        padding: 24px 28px;
+        color: white;
+        box-shadow: var(--shadow-blue);
+      }
+      .winning-title {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        opacity: .75;
+        margin-bottom: 14px;
+      }
+      .winning-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+      .winning-numbers-display {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .number-ball {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        font-weight: 700;
+        font-size: 15px;
+        background: rgba(255,255,255,0.95);
+        color: #191F28;
+        box-shadow: 0 2px 8px rgba(0,0,0,.2);
+        font-family: 'JetBrains Mono', monospace;
+        transition: transform .15s;
+      }
+      .number-ball:hover { transform: scale(1.08); }
+      .bonus-ball {
+        background: rgba(255,255,255,.8);
+        color: #1558C0;
+        border: 2px solid rgba(255,255,255,.5);
+        position: relative;
+      }
+      .bonus-ball::after {
+        content: 'B';
+        position: absolute;
+        top: -6px; right: -6px;
+        font-size: 9px;
+        font-weight: 700;
+        color: white;
+        background: #1558C0;
+        width: 16px; height: 16px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        border: 1.5px solid white;
+      }
+      .winning-stats {
+        background: rgba(255,255,255,.15);
+        padding: 14px 18px;
+        border-radius: var(--radius-md);
+        backdrop-filter: blur(8px);
+        font-size: 13px;
+        min-width: 150px;
+      }
+
+      /* ━━ FILTER WARNING ━━ */
+      .filter-warning {
+        background: var(--red-light);
+        border: 1px solid rgba(255,59,48,.25);
+        color: var(--red);
+        padding: 14px 18px;
+        border-radius: var(--radius-lg);
+        box-shadow: none;
+      }
+      .warning-content {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 700;
+        margin-bottom: 6px;
+        color: var(--red);
+      }
+      .warning-icon { animation: shake .5s infinite; }
+      @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-3px); }
+        75% { transform: translateX(3px); }
+      }
+      .failed-filters {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(255,59,48,.2);
+        font-size: 12px;
+        color: var(--red);
+      }
+      .failed-filter-item {
+        padding: 3px 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .failed-filter-item::before {
+        content: '[X]';
+        font-size: .8em;
+        font-family: 'JetBrains Mono', monospace;
+        opacity: .7;
+      }
+
+      /* ━━ PREDICTIONS SECTION ━━ */
+      #predictionsContent {
+        max-height: 520px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 4px;
+      }
+      #predictionsContent::-webkit-scrollbar { width: 4px; }
+      #predictionsContent::-webkit-scrollbar-track { background: transparent; }
+      #predictionsContent::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-pill); }
+      #predictionsContent::-webkit-scrollbar-thumb:hover { background: var(--blue); }
+
+      /* ━━ DATE GROUP ━━ */
+      .date-group {
+        margin-bottom: 16px;
+        border-left: 2px solid var(--blue);
+        padding-left: 14px;
+      }
+      .date-header {
+        font-weight: 700;
+        color: var(--blue);
+        margin-bottom: 8px;
+        font-size: .875em;
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: .02em;
+      }
+
+      /* ━━ PREDICTIONS TABLE ━━ */
+      .predictions-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+        font-size: 13px;
+      }
+      .predictions-table th {
+        background: var(--bg);
+        color: var(--muted);
+        padding: 8px 12px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 11px;
+        letter-spacing: .05em;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--border);
+      }
+      .predictions-table th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+      .predictions-table th:last-child  { border-radius: 0 var(--radius-sm) 0 0; }
+      .predictions-table td {
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--border);
+        color: var(--text-3);
+        vertical-align: middle;
+      }
+      .predictions-table td.source-cell {
+        white-space: nowrap;
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .predictions-table tr:last-child td { border-bottom: none; }
+      .predictions-table tbody tr:hover td { background: var(--blue-light); }
+
+      /* ━━ NUMBER BALLS ━━ */
+      .number-cell {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .small-ball {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        font-size: 11px;
+        font-weight: 700;
+        background: var(--surface);
+        color: var(--text-2);
+        font-family: 'JetBrains Mono', monospace;
+        transition: transform .1s;
+      }
+      .small-ball:hover { transform: scale(1.1); }
+
+      /* 일치 개수별 */
+      .match-0 { background: var(--surface); color: var(--muted-2); }
+      .match-1 { background: #EBF3FE; color: #1558C0; }
+      .match-2 { background: #E5FAF7; color: #00A08C; }
+      .match-3 { background: #FFF4E5; color: #D97D00; }
+      .match-4 { background: #FFF0EF; color: #D42E24; }
+      .match-5 { background: #FF3B30; color: white; }
+      .match-6 { background: #D42E24; color: white; }
+
+      /* ━━ BADGES ━━ */
+      .confidence-bar {
+        width: 80px;
+        height: 4px;
+        background: var(--border);
+        border-radius: var(--radius-pill);
+        overflow: hidden;
+      }
+      .confidence-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--blue), var(--blue-mid));
+        transition: width .3s;
+      }
+      .match-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: var(--radius-pill);
+        font-size: 11px;
+        font-weight: 700;
+        min-width: 48px;
+        text-align: center;
+        font-family: 'JetBrains Mono', monospace;
+        background: var(--surface);
+        color: var(--muted);
+      }
+      .rank-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: var(--radius-pill);
+        font-size: 11px;
+        font-weight: 700;
+        color: white;
+        font-family: 'JetBrains Mono', monospace;
+      }
+      .rank-1 { background: #D42E24; }
+      .rank-2 { background: #FF6B35; }
+      .rank-3 { background: #FF9500; }
+      .rank-4 { background: #00C7AE; }
+      .rank-5 { background: #3182F6; }
+
+      /* ━━ STATS GRID (JS-injected override) ━━ */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .stat-card {
+        background: var(--bg) !important;
+        color: var(--text) !important;
+        padding: 18px 16px !important;
+        border-radius: var(--radius-lg) !important;
+        text-align: center !important;
+        box-shadow: none !important;
+        border: 1px solid var(--border) !important;
+        transition: box-shadow .15s, transform .15s !important;
+      }
+      .stat-card:hover {
+        box-shadow: var(--shadow-card) !important;
+        transform: translateY(-2px) !important;
+      }
+      .stat-card .stat-value,
+      .stat-card > .stat-value {
+        font-size: 28px !important;
+        font-weight: 700 !important;
+        margin-bottom: 4px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        color: var(--blue) !important;
+        letter-spacing: -1px !important;
+      }
+      .stat-card .stat-label,
+      .stat-card > .stat-label {
+        font-size: 11px !important;
+        color: var(--muted) !important;
+        font-weight: 600 !important;
+        letter-spacing: .03em !important;
+      }
+
+      /* Distribution chart */
+      .distribution-chart { margin-top: 18px; }
+      .bar-chart {
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+        height: 130px;
+        padding: 12px 8px 8px;
+        background: var(--bg);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border);
+      }
+      .bar {
+        flex: 1;
+        background: linear-gradient(180deg, var(--blue) 0%, var(--blue-mid) 100%);
+        border-radius: 4px 4px 0 0;
+        position: relative;
+        min-height: 12px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        font-size: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        padding-bottom: 3px;
+        transition: opacity .15s;
+      }
+      .bar:hover { opacity: .8; }
+      .bar-label {
+        position: absolute;
+        bottom: -18px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        color: var(--muted);
+        font-family: 'JetBrains Mono', monospace;
+        white-space: nowrap;
+      }
+
+      /* Optimizer panels */
+      #optimizerStatusGrid {
+        background: var(--bg) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+        box-shadow: none !important;
+      }
+      #optimizerHistory {
+        background: var(--bg) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+        box-shadow: none !important;
+      }
+      #optimizerStatus summary {
+        background: var(--bg) !important;
+        border-radius: var(--radius-md) !important;
+        color: var(--blue) !important;
+        font-weight: 600 !important;
+      }
+      #optimizerStatus[open] summary {
+        border-radius: var(--radius-md) var(--radius-md) 0 0 !important;
+      }
+
+      /* ━━ LOADING ━━ */
+      .loading {
+        text-align: center;
+        padding: 40px;
+        color: var(--muted);
+      }
+      .spinner {
+        border: 3px solid var(--border);
+        border-top: 3px solid var(--blue);
+        border-radius: 50%;
+        width: 32px; height: 32px;
+        animation: spin 0.9s linear infinite;
+        margin: 0 auto 12px;
+      }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .65; } }
+
+      /* ━━ SAVE OVERLAY ━━ */
+      .save-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(25,31,40,.55);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+      }
+      .save-overlay.active { display: flex; }
+      .save-message {
+        background: var(--card);
+        padding: 28px 36px;
+        border-radius: var(--radius-xl);
+        text-align: center;
+        box-shadow: 0 16px 48px rgba(0,0,0,.2);
+        color: var(--text);
+      }
+
+      /* ━━ RESPONSIVE ━━ */
+      @media (max-width: 768px) {
+        .container { padding: 16px 12px; }
+        .top-nav { padding: 0 16px; }
+        .nav-controls { gap: 6px; }
+        .predictions-table { font-size: 11px; }
+        .small-ball { width: 24px; height: 24px; font-size: 10px; }
+        .stats-grid { grid-template-columns: 1fr 1fr; }
+        .winning-section { padding: 18px 20px; }
+        .number-ball { width: 38px; height: 38px; font-size: 13px; }
+      }
     </style>
 </head>
 <body>
+    <!-- 저장 오버레이 -->
     <div class="save-overlay" id="saveOverlay">
         <div class="save-message">
             <div class="spinner"></div>
-            <p>화면을 저장 중입니다...</p>
+            <p style="font-size:14px; color:var(--text-2); margin-top:4px;">화면을 저장 중입니다...</p>
         </div>
     </div>
-    
+
+    <!-- 상단 네비게이션 -->
+    <nav class="top-nav">
+        <div class="nav-brand">
+            <div class="nav-logo-icon">L</div>
+            <span class="nav-logo-text">로또 오라클</span>
+            <span class="nav-logo-badge">AI v2</span>
+        </div>
+        <div class="nav-controls">
+            <select id="roundSelect">
+                <option value="">회차 선택...</option>
+            </select>
+            <button onclick="loadRoundData()">조회</button>
+            <button onclick="loadLatestRound()">최신</button>
+            <button onclick="generateNewPredictions()" class="btn-generate">새 예측 생성 (5세트)</button>
+            <button class="save-button" onclick="saveScreenshot()">저장</button>
+        </div>
+    </nav>
+
+    <!-- 메인 컨텐츠 -->
     <div class="container" id="dashboardContainer">
-        <header>
-            <h1>
-                <span>🎯 로또 예측 분석 대시보드 v2</span>
-                <button class="save-button" onclick="saveScreenshot()">📸 화면 저장</button>
-            </h1>
-            <div class="controls">
-                <select id="roundSelect">
-                    <option value="">회차 선택...</option>
-                </select>
-                <button onclick="loadRoundData()">조회</button>
-                <button onclick="generateNewPredictions()" style="background: #28a745; color: white; font-weight: bold; padding: 10px 20px;">
-                    🎯 새 예측 생성 (5세트)
-                </button>
-                <button onclick="loadLatestRound()">최신 회차</button>
-            </div>
-        </header>
-        
+
         <!-- 필터 검증 경고 -->
         <div id="filterWarning" class="filter-warning" style="display: none;">
             <div class="warning-content">
-                <span class="warning-icon">🚨</span>
+                <span class="warning-icon">[!]</span>
                 <span id="warningMessage"></span>
             </div>
             <div id="failedFiltersList" class="failed-filters"></div>
         </div>
 
-        <!-- 빠른 예측 상태 표시 섹션 -->
-        <div id="quickPredictionStatus" class="quick-prediction-section" style="display: none; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); border-radius: 15px; padding: 20px; margin-bottom: 20px; color: white; box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+        <!-- 빠른 예측 상태 -->
+        <div id="quickPredictionStatus" style="display: none; background: var(--green-light); border: 1px solid rgba(0,199,174,.25); border-radius: var(--radius-xl); padding: 18px 22px; color: var(--green);">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
                 <div>
-                    <h3 style="margin: 0 0 10px 0; font-size: 1.3em;">
-                        <span id="quickStatusIcon">⚡</span> 빠른 예측 시스템
-                    </h3>
-                    <p style="margin: 0; opacity: 0.9;" id="quickStatusMessage">시스템 상태를 확인 중...</p>
+                    <div style="font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; opacity:.75; margin-bottom:6px;">빠른 예측 시스템</div>
+                    <div style="font-size:15px; font-weight:700; color:var(--green);">
+                        <span id="quickStatusIcon">--</span>&nbsp;<span id="quickStatusMessage">시스템 상태를 확인 중...</span>
+                    </div>
                 </div>
-                <div id="quickStatusDetails" style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 10px; backdrop-filter: blur(10px);">
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 14px;">
-                        <div><strong>DB 회차:</strong> <span id="quickDbRound">-</span></div>
-                        <div><strong>ML 캐시:</strong> <span id="quickMlCache">-</span></div>
-                        <div><strong>필터 캐시:</strong> <span id="quickFilterCache">-</span></div>
-                        <div><strong>예상 시간:</strong> <span id="quickEstTime">-</span></div>
+                <div id="quickStatusDetails" style="background: rgba(0,199,174,.1); padding: 12px 16px; border-radius: var(--radius-md);">
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 20px; font-size: 13px; color: var(--text-2);">
+                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">DB 회차</span><br><strong id="quickDbRound">-</strong></div>
+                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">ML 캐시</span><br><strong id="quickMlCache">-</strong></div>
+                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">필터 캐시</span><br><strong id="quickFilterCache">-</strong></div>
+                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">예상 시간</span><br><strong id="quickEstTime">-</strong></div>
                     </div>
                 </div>
             </div>
@@ -1776,64 +1908,40 @@ HTML_TEMPLATE_V2 = """
 
         <!-- 당첨번호 섹션 -->
         <div class="winning-section" id="winningSection" style="display: none;">
-            <div class="winning-title">🏆 당첨번호 (제<span id="winningRound"></span>회)</div>
+            <div class="winning-title">제 <span id="winningRound"></span>회 당첨번호</div>
             <div class="winning-info">
-                <div class="winning-numbers-display" id="winningNumbersDisplay">
-                    <!-- 당첨번호가 여기 표시됩니다 -->
-                </div>
-                <div class="winning-stats" id="winningStats">
-                    <!-- 당첨 통계가 여기 표시됩니다 -->
-                </div>
+                <div class="winning-numbers-display" id="winningNumbersDisplay"></div>
+                <div class="winning-stats" id="winningStats"></div>
             </div>
         </div>
-        
-        <!-- 예측 번호 테이블 -->
+
+        <!-- 예측 번호 섹션 -->
         <div class="predictions-section" id="predictionsSection" style="display: none;">
-            <h2 class="section-title">📊 예측 번호 분석 (해당 회차 예측 기간)</h2>
-            <div style="margin-bottom: 10px; font-size: 14px; color: #666;">
+            <h2 class="section-title">예측 번호 분석</h2>
+            <div style="margin-bottom: 10px; font-size: 13px; color: var(--muted); font-weight: 500;">
                 <span id="predictionsSummary"></span>
             </div>
-            <div id="predictionsContent">
-                <!-- 예측 테이블이 여기 표시됩니다 -->
-            </div>
+            <div id="predictionsContent"></div>
         </div>
-        
-        <!-- 통계 섹션 -->
+
+        <!-- 성능 통계 섹션 -->
         <div class="stats-section" id="statsSection" style="display: none;">
-            <h2 class="section-title">📈 성능 통계</h2>
-            
-            <!-- 백그라운드 최적화 상태 (새로 추가) -->
-            <div id="optimizerStatus" style="margin-bottom: 20px;">
-                <h3 style="color: #667eea; margin-bottom: 15px;">⚙️ 백그라운드 최적화</h3>
-                <div id="optimizerStatusGrid" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                    <!-- 최적화 상태가 여기 표시됩니다 -->
-                </div>
-                <div id="optimizerHistory" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 15px;">
-                    <h4 style="color: #667eea; margin-bottom: 10px;">최근 최적화 이력</h4>
-                    <div id="optimizerHistoryTable">
-                        <!-- 최적화 이력이 여기 표시됩니다 -->
-                    </div>
+            <h2 class="section-title">성능 통계</h2>
+            <div id="optimizerStatus" style="margin-bottom: 16px;">
+                <div id="optimizerStatusGrid"></div>
+                <div id="optimizerHistory" style="margin-top: 10px;">
+                    <div id="optimizerHistoryTable" style="font-size: 12px;"></div>
                 </div>
             </div>
-
-            <!-- 백테스팅 성능 통계 (새로 추가) -->
-            <div id="backtestPerformance" style="display: none;">
-                <h3 style="color: #667eea; margin-bottom: 15px;">🎯 백테스팅 성능</h3>
-                <div id="backtestStatsGrid">
-                    <!-- 백테스팅 통계가 여기 표시됩니다 -->
-                </div>
+            <div id="backtestPerformance" style="display: none; margin-bottom: 16px;">
+                <div id="backtestStatsGrid" class="stats-grid"></div>
             </div>
-
-            <!-- 기존 예측 통계 -->
-            <div class="stats-grid" id="statsGrid">
-                <!-- 통계가 여기 표시됩니다 -->
-            </div>
-            <div class="distribution-chart" id="distributionChart">
-                <!-- 분포 차트가 여기 표시됩니다 -->
-            </div>
+            <div class="stats-grid" id="statsGrid"></div>
+            <div class="distribution-chart" id="distributionChart"></div>
+            <div id="matchDistributionDetail" style="margin-top: 16px;"></div>
         </div>
+
     </div>
-    
     <script>
         let currentRound = null;
         let allRounds = [];
@@ -1863,7 +1971,7 @@ HTML_TEMPLATE_V2 = """
 
             // 2. 합계 범위 필터 (서버와 동일: 60~230)
             const sum = numbers.reduce((a, b) => a + b, 0);
-            // 🔥 FIX: 서버와 동기화 (sum_range: 60~230)
+            // [HOT] FIX: 서버와 동기화 (sum_range: 60~230)
             if (sum < 60 || sum > 230) {
                 validation.failedFilters.push('합계');
             }
@@ -1880,7 +1988,7 @@ HTML_TEMPLATE_V2 = """
                     consecutiveCount = 0;
                 }
             }
-            // 🔥 FIX: 서버와 동기화 (max_consecutive >= 4)
+            // [HOT] FIX: 서버와 동기화 (max_consecutive >= 4)
             if (maxConsecutive >= 4) {
                 validation.failedFilters.push('연속');
             }
@@ -1890,7 +1998,7 @@ HTML_TEMPLATE_V2 = """
             for (let i = 0; i < sorted.length - 1; i++) {
                 maxGap = Math.max(maxGap, sorted[i + 1] - sorted[i]);
             }
-            // 🔥 FIX: 서버와 동기화 (max_gap > 35)
+            // [HOT] FIX: 서버와 동기화 (max_gap > 35)
             if (maxGap > 35) {
                 validation.failedFilters.push('간격');
             }
@@ -1957,27 +2065,31 @@ HTML_TEMPLATE_V2 = """
                 // 상태에 따라 표시 업데이트
                 if (data.quick_prediction_available) {
                     statusSection.style.display = 'block';
-                    statusSection.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
-                    statusIcon.textContent = '⚡';
+                    statusSection.style.background = 'var(--green-light)';
+                    statusSection.style.border = '1px solid rgba(0,199,174,.25)';
+                    statusSection.style.color = 'var(--green)';
+                    statusIcon.textContent = '[ON]';
 
                     if (data.cache_valid) {
-                        statusMessage.textContent = '빠른 예측 준비 완료! 캐시된 데이터로 즉시 예측 가능합니다.';
+                        statusMessage.textContent = '빠른 예측 준비 완료 — 캐시된 데이터로 즉시 예측 가능합니다.';
                     } else {
                         statusMessage.textContent = '빠른 예측 시스템 활성화됨. 통계 기반 예측을 사용합니다.';
                     }
 
                     dbRound.textContent = data.db_round + '회차';
                     mlCache.innerHTML = data.ml_cache_valid
-                        ? '<span style="color: #90EE90;">✓ 유효</span>'
-                        : '<span style="color: #FFB6C1;">✗ 재생성 필요</span>';
+                        ? '<span style="color: #00C7AE; font-weight:700;">[O] 유효</span>'
+                        : '<span style="color: #FF9500; font-weight:700;">[!] 재생성</span>';
                     filterCache.innerHTML = data.filter_cache_valid
-                        ? '<span style="color: #90EE90;">✓ 유효</span>'
-                        : '<span style="color: #FFB6C1;">✗ 재생성 필요</span>';
+                        ? '<span style="color: #00C7AE; font-weight:700;">[O] 유효</span>'
+                        : '<span style="color: #FF9500; font-weight:700;">[!] 재생성</span>';
                     estTime.textContent = data.cache_valid ? '5-10초' : '10-15초';
                 } else {
                     statusSection.style.display = 'block';
-                    statusSection.style.background = 'linear-gradient(135deg, #6c757d 0%, #495057 100%)';
-                    statusIcon.textContent = '⏳';
+                    statusSection.style.background = '#F8F9FA';
+                    statusSection.style.border = '1px solid #E5E8EB';
+                    statusSection.style.color = '#8B95A1';
+                    statusIcon.textContent = '[--]';
                     statusMessage.textContent = '빠른 예측 시스템 초기화 중...';
                     dbRound.textContent = '-';
                     mlCache.textContent = '-';
@@ -2551,7 +2663,7 @@ HTML_TEMPLATE_V2 = """
             // 일치 분포 차트
             html += `
                 <div style="margin-top: 30px;">
-                    <h3 style="color: #667eea; margin-bottom: 15px;">일치 개수 분포</h3>
+                    <h3 style="color: #c8890e; margin-bottom: 15px;">일치 개수 분포</h3>
                     <div class="bar-chart">
             `;
             
@@ -2687,7 +2799,7 @@ HTML_TEMPLATE_V2 = """
                 </div>
                 ${status.best_params ? `
                     <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                        <h5 style="color: #667eea; margin-bottom: 10px;">현재 최적 파라미터</h5>
+                        <h5 style="color: #c8890e; margin-bottom: 10px;">현재 최적 파라미터</h5>
                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; font-size: 14px;">
                             <div>
                                 <strong>Threshold:</strong> ${status.best_params.threshold?.toFixed(2) || 'N/A'}
@@ -2793,13 +2905,13 @@ HTML_TEMPLATE_V2 = """
 
                     <!-- 백그라운드 최적화 상태 (접힌 상태) -->
                     <details id="optimizerStatus" style="margin-bottom: 15px;">
-                        <summary style="cursor: pointer; color: #667eea; font-weight: bold; padding: 10px; background: #f8f9fa; border-radius: 8px;">⚙️ 백그라운드 최적화 상태 (클릭하여 펼치기)</summary>
+                        <summary style="cursor: pointer; color: #c8890e; font-weight: bold; padding: 10px; background: #f8f9fa; border-radius: 8px;">⚙️ 백그라운드 최적화 상태 (클릭하여 펼치기)</summary>
                         <div style="padding: 10px; background: white; border-radius: 0 0 8px 8px; margin-top: -5px;">
                             <div id="optimizerStatusGrid" style="background: white; padding: 10px; border-radius: 8px;">
                                 <!-- 최적화 상태가 여기 표시됩니다 -->
                             </div>
                             <div id="optimizerHistory" style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 10px;">
-                                <h4 style="color: #667eea; margin-bottom: 8px; font-size: 14px;">최근 최적화 이력</h4>
+                                <h4 style="color: #c8890e; margin-bottom: 8px; font-size: 14px;">최근 최적화 이력</h4>
                                 <div id="optimizerHistoryTable" style="font-size: 12px;">
                                     <!-- 최적화 이력이 여기 표시됩니다 -->
                                 </div>
@@ -2809,7 +2921,7 @@ HTML_TEMPLATE_V2 = """
 
                     <!-- 백테스팅 성능 통계 (컴팩트) -->
                     <div id="backtestPerformance" style="margin-bottom: 15px;">
-                        <h3 style="color: #667eea; margin-bottom: 10px; font-size: 16px;">🎯 백테스팅 시뮬레이션 성능</h3>
+                        <h3 style="color: #c8890e; margin-bottom: 10px; font-size: 16px;">🎯 백테스팅 시뮬레이션 성능</h3>
                         <div id="backtestStatsGrid" class="stats-grid" style="gap: 8px;">
                             <!-- 백테스팅 통계가 여기 표시됩니다 -->
                         </div>
@@ -2817,7 +2929,7 @@ HTML_TEMPLATE_V2 = """
 
                     <!-- 실제 예측 통계 (컴팩트) -->
                     <div style="margin-top: 15px;">
-                        <h3 style="color: #667eea; margin-bottom: 10px; font-size: 16px;">📊 실제 예측 통계</h3>
+                        <h3 style="color: #c8890e; margin-bottom: 10px; font-size: 16px;">📊 실제 예측 통계</h3>
                         <div class="stats-grid" id="statsGrid" style="gap: 8px;">
                             <!-- 실제 예측 통계가 여기 표시됩니다 -->
                         </div>
@@ -3064,7 +3176,7 @@ HTML_TEMPLATE_V2 = """
             if (!stats.rank_distribution && !backtestData) {
                 detailSection.innerHTML = `
                     <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center;">
-                        <h4 style="color: #667eea; margin-bottom: 10px;">📊 백테스팅 시뮬레이션 - 맞춘 개수별 분석</h4>
+                        <h4 style="color: #c8890e; margin-bottom: 10px;">📊 백테스팅 시뮬레이션 - 맞춘 개수별 분석</h4>
                         <p style="color: #666; margin: 0;">분석할 데이터가 부족합니다.</p>
                         <small style="color: #999;">더 많은 예측 데이터가 필요합니다.</small>
                     </div>
@@ -3119,7 +3231,7 @@ HTML_TEMPLATE_V2 = """
             detailSection.innerHTML = `
                 <div style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 12px 15px; border-radius: 10px; border: 1px solid #dee2e6;">
                     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                        <h4 style="color: #667eea; margin: 0; font-size: 14px;">📊 맞춘 개수별 분석</h4>
+                        <h4 style="color: #c8890e; margin: 0; font-size: 14px;">📊 맞춘 개수별 분석</h4>
                         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                             ${Object.entries(matchAnalysis).map(([matches, count]) => {
                                 const percentage = ((count / totalPredictions) * 100).toFixed(1);
@@ -3400,7 +3512,7 @@ def generate_new_predictions():
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         _sys.path.insert(0, project_root)
 
-        # ✨ 중요: 작업 디렉토리를 프로젝트 루트로 변경 (DatabaseManager가 상대 경로 사용)
+        # [NEW] 중요: 작업 디렉토리를 프로젝트 루트로 변경 (DatabaseManager가 상대 경로 사용)
         original_cwd = os.getcwd()
         os.chdir(project_root)
 
@@ -3425,11 +3537,34 @@ def generate_new_predictions():
 
         final_predictions = []
 
+        # ============================================================
+        # [신 아키텍처 2026-05-31] 0단계: 극단성 풀 + 5장 다양성 경로 (production 1차 경로와 동일)
+        # - main.py와 동일하게 ExtremenessPoolPredictor 사용 -> 대시보드/메인 예측 정합 확보
+        # - 디스크 캐시(0.2s 재사용)로 웹 버튼 응답 속도 확보. 실패 시 QuickEngine으로 폴백.
+        # - 비활성화: 환경변수 LOTTO_USE_EXTREMENESS_POOL=0
+        # ============================================================
+        if os.environ.get('LOTTO_USE_EXTREMENESS_POOL', '1') != '0':
+            try:
+                from src.core.extremeness_pool_predictor import ExtremenessPoolPredictor
+                _target_K = int(os.environ.get('LOTTO_TARGET_POOL_K', '1500000'))
+                _epp = ExtremenessPoolPredictor(db_manager, target_K=_target_K)
+                _epp.build_pool()  # 학습회차+K+가중치 동일 시 디스크 캐시 재사용
+                _epp_preds = _epp.predict(num_sets=5)
+                if _epp_preds:
+                    final_predictions.extend(_epp_preds)
+                    logging.info(f"[API] 극단성 풀 경로로 {len(final_predictions)}개 예측 생성 (K={_target_K:,})")
+            except Exception as e:
+                import traceback
+                logging.warning(f"[API] 극단성 풀 경로 실패 - QuickEngine으로 폴백: {e}")
+                logging.warning(traceback.format_exc())
+
         # QuickPredictionEngine 우선 사용 (ML 학습은 너무 오래 걸림)
+        # NOTE: 극단성 풀 경로가 이미 5세트를 채웠으면 이 블록은 건너뜀(보충 전용).
         logging.info(f"[API] QuickPredictionEngine으로 {next_round}회차 예측 생성 시작...")
 
-        # 1단계: QuickPredictionEngine으로 빠른 예측 생성 (우선)
-        try:
+        # 1단계: QuickPredictionEngine으로 빠른 예측 생성 (극단성 풀 폴백/보충)
+        if len(final_predictions) < 5:
+          try:
             from src.core.quick_prediction_engine import QuickPredictionEngine
             quick_engine = QuickPredictionEngine()
             quick_predictions = quick_engine.generate_quick_predictions(
@@ -3450,7 +3585,7 @@ def generate_new_predictions():
                     })
 
             logging.info(f"[API] QuickPredictionEngine으로 {len(final_predictions)}개 예측 생성 완료")
-        except Exception as e:
+          except Exception as e:
             import traceback
             logging.warning(f"[API] QuickPredictionEngine 실패: {e}")
             logging.warning(traceback.format_exc())
@@ -3792,7 +3927,7 @@ def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001):
     SECURITY: debug parameter removed to prevent RCE vulnerability.
     Debug mode enables Werkzeug debugger with arbitrary code execution.
     """
-    # ✨ 중요: 프로젝트 루트로 작업 디렉토리 변경 (DatabaseManager가 상대 경로 사용)
+    # [NEW] 중요: 프로젝트 루트로 작업 디렉토리 변경 (DatabaseManager가 상대 경로 사용)
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     os.chdir(project_root)
     print(f"[INFO] Working directory: {os.getcwd()}")
