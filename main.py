@@ -2285,6 +2285,14 @@ def parse_args():
     # 자동화 시스템 전용 옵션
     parser.add_argument('--predict-only', action='store_true', help='예측만 수행 (필터링 건너뛰기)')
     parser.add_argument('--fetch-only', action='store_true', help='데이터 수집만 수행')
+    # [최적화 2026-06-01, Codex gpt-5.5 + Gemini 3.1-pro 합의] 극단성 풀 전용 fast 모드.
+    # 최종 예측은 ExtremenessPoolPredictor(8.14M 자체 채점→K풀)가 담당하므로, 그 앞단계의
+    # 구 16필터 전체/증분 필터링(8.14M 재처리, 수 분)은 신 경로에 불필요한 낭비다.
+    # 이 플래그가 켜지면: ①구 16필터 스킵 ②백테스트 자동복구(구 필터 재실행) 차단
+    # ③포함률 통계는 미측정 처리. 구 경로/통계가 필요하면 이 플래그 없이 실행.
+    # env LOTTO_FAST_EXTREMENESS_ONLY=1 로도 활성화 가능.
+    parser.add_argument('--fast-extremeness-only', action='store_true',
+                        help='극단성 풀 전용 fast 모드: 구 16필터 전체필터링/백테스트 자동복구 스킵 (F5 실행 단축)')
     
     # 대시보드 옵션 추가 (기본값: OFF, 성능 최적화를 위해 opt-in 방식으로 변경)
     parser.add_argument('--dashboard', action='store_true', help='웹 대시보드 활성화 (포트 5001)')
@@ -3257,15 +3265,22 @@ def main():
         
         # 필터링 모드 결정 및 필터 적용
         update_mode = 'full' if args.full_filter or args.force_filter else 'incremental'
-        
+
+        # [최적화 2026-06-01] 극단성 풀 전용 fast 모드 판정 (Codex+Gemini 합의).
+        # 최종 예측이 ExtremenessPoolPredictor(자체 풀 생성)이고 fast 모드가 켜져 있으면
+        # 구 16필터 전체/증분 필터링은 불필요한 낭비 -> 스킵. 백테스트 자동복구도 함께 차단.
+        _fast_extreme = (getattr(args, 'fast_extremeness_only', False)
+                         or os.environ.get('LOTTO_FAST_EXTREMENESS_ONLY', '0') == '1')
+
         # 성능 측정 시작
         filter_start_time = time.time()
 
         # 스트림 처리 모드 선택
         # [predict-only] 신 극단성 풀 경로(ExtremenessPoolPredictor)가 8.14M을 자체 채점/제거하여
         # 풀을 직접 만들므로, 여기서 16필터 전체 필터링(7.9M, 수 분 소요)은 불필요 -> 건너뜀.
-        if args.predict_only:
-            logging.info("\n[필터링] 예측 전용 모드 - 16필터 전체 필터링 건너뜀 (극단성 풀 경로가 자체 풀 생성)")
+        if args.predict_only or _fast_extreme:
+            _why = "예측 전용" if args.predict_only else "fast 극단성 풀 전용"
+            logging.info(f"\n[필터링] {_why} 모드 - 16필터 전체 필터링 건너뜀 (극단성 풀 경로가 자체 풀 생성)")
         elif args.stream_processing:
             logging.info("\n[STREAM] 스트림 처리 모드: 메모리 효율적인 스트림 기반 필터링을 사용합니다.")
             logging.info(f"  - 배치 크기: {args.batch_size:,}개")
@@ -3307,9 +3322,9 @@ def main():
                 filter_manager.apply_filters(latest_round, 'incremental', force=force_required)
                 log_memory("증분 필터링 완료")
         
-        # 성능 측정 결과 출력 (predict-only는 필터링을 건너뛰므로 보고서 불필요)
+        # 성능 측정 결과 출력 (predict-only/fast 모드는 필터링을 건너뛰므로 보고서 불필요)
         filter_elapsed_time = time.time() - filter_start_time
-        if not args.predict_only:
+        if not args.predict_only and not _fast_extreme:
             logging.info(f"\n[성능 보고서] 필터링 완료")
             logging.info(f"  - 모드: {update_mode.upper()}")
             logging.info(f"  - 실행 시간: {filter_elapsed_time:.1f}초")
@@ -3334,7 +3349,7 @@ def main():
         # ML/AI 분석 - 필터링된 조합 활용 (최적화)
         # ================================================================
         # 필터링된 조합 가져오기 (814만개 → 20만개)
-        if not args.predict_only and filter_manager:
+        if not args.predict_only and not _fast_extreme and filter_manager:
             try:
                 filtered_count = filter_manager.get_filtered_count(latest_round)
                 logging.info(f"\n[ML/AI] 필터링된 조합 {filtered_count:,}개로 ML 예측 수행")
@@ -3606,7 +3621,14 @@ def main():
             filtered_count = db_manager.combinations_db.get_filtered_combinations_count(latest_round)
             logging.info(f"  - 회차 {latest_round}: {filtered_count:,}개 조합")
 
-            if filtered_count == 0:
+            if filtered_count == 0 and _fast_extreme:
+                # [최적화 2026-06-01] fast 극단성 풀 모드에서는 구 16필터 풀이 없는 게 정상.
+                # 자동복구로 apply_filters(full)를 돌리면 스킵한 의미가 사라지므로 차단한다.
+                # 백테스트의 예측/매치 계산은 구 필터 풀과 무관(LSTM/Ensemble/MC가 생성),
+                # combinations_db는 '풀 포함률 통계'에만 쓰이므로 이 지표만 미측정 처리된다.
+                logging.info("[fast 모드] 구 16필터 풀 부재는 정상 - 자동복구 스킵 "
+                             "(풀 포함률 통계만 미측정, 예측/매치/DB저장은 정상)")
+            elif filtered_count == 0:
                 logging.warning(f"[자동 복구] 회차 {latest_round}에 필터링된 조합이 없습니다!")
                 logging.info("  - 필터링 재실행 중...")
 
