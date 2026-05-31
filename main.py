@@ -3094,7 +3094,11 @@ def main():
             # 필터 매니저 초기화 및 필터 등록 (자동)
 
             # 필터 시스템 선택 (가중치 시스템 또는 적응형 시스템)
-            use_weighted_system = True  # 가중치 시스템 활성화 (통과율 개선)
+            # [긴급 FIX] True->False: WeightedFilterSystem(점수 30점)은 "통과율 개선"을 위해
+            # 거의 모든 조합을 통과시켜 풀이 791만(97%) 잔존 → 핵심 전략(800만→30만) 무력화.
+            # 적응형 확률 필터(16필터 누적)로 전환하여 통계적 극단 제거 복원.
+            # (WeightedFilterSystem 도입 이유였던 "통과율 낮음"은 P0/P1 수정으로 이미 100% 확보)
+            use_weighted_system = False  # 적응형 확률 필터 활성화 (핵심 전략 복원)
         
         if use_weighted_system:
             # 가중치 기반 필터 시스템 사용 (문제있는 필터에 낮은 가중치)
@@ -3142,7 +3146,8 @@ def main():
                 filter_manager = IntegratedFilterManager(db_manager, threshold)
                 
                 # 과거 당첨번호 분석 및 필터 업데이트
-                winning_numbers = db_manager.get_all_winning_numbers()[:200]  # 최근 200개
+                # [v5 FIX #2] 전체 역사 분석(기존 [:200]은 가장 오래된 200회 버그)
+                winning_numbers = db_manager.get_all_winning_numbers()
                 filter_manager.adaptive_filter.analyze_patterns(winning_numbers)
                 
                 # 동적 기준 생성 및 개별 필터에 적용
