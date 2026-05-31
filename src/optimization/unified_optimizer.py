@@ -8,6 +8,7 @@ Phase 3: SmartAutoLearning(레이어 1) + BackgroundOptimization(레이어 2) �
 - 종료 플래그(stop_flag)를 AutoThresholdOptimizer → OptimizedBacktestingFramework 체인으로 전파
 """
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -17,6 +18,13 @@ from src.core.optimization_db import get_optimization_db
 
 # 피드백 루프 실행 간격 (분) - 구 SmartAutoLearning.min_interval_minutes
 _FEEDBACK_INTERVAL_MINUTES = 30
+
+# [신 아키텍처 2026-05-31] 최적화 엔진 선택:
+#   'pool'(기본): PoolOptimizer v6 (극단성 점수 가중치 탐색, 목표 풀 K, 통과율 제약 없음)
+#   'threshold' : 구 AutoThresholdOptimizer v5 (global_probability_threshold 탐색) - 폴백용
+# 환경변수 LOTTO_OPTIMIZER_MODE 로 전환.
+_OPTIMIZER_MODE = os.environ.get('LOTTO_OPTIMIZER_MODE', 'pool')
+_POOL_TARGET_K = int(os.environ.get('LOTTO_TARGET_POOL_K', '1500000'))
 
 
 class UnifiedOptimizer:
@@ -97,9 +105,15 @@ class UnifiedOptimizer:
     def _worker(self):
         """
         백그라운드 워커.
-        1) Optuna CMA-ES 최적화 사이클 (10 trials)
-        2) 30분마다 피드백 루프 (EnhancedFeedbackLoop)
+        mode='pool'(기본): PoolOptimizer v6 사이클 (극단성 가중치 탐색)
+        mode='threshold' : 구 AutoThresholdOptimizer v5 (Optuna CMA-ES, threshold 탐색)
+        공통: 30분마다 피드백 루프
         """
+        if _OPTIMIZER_MODE == 'pool':
+            self._worker_pool()
+            return
+
+        # ---- 구 v5 경로 (mode='threshold') ----
         # AutoThresholdOptimizer 초기화
         try:
             from src.scripts.auto_threshold_optimizer import AutoThresholdOptimizer
@@ -137,39 +151,41 @@ class UnifiedOptimizer:
                 if result.get('converged', False):
                     converged = True
                     convergence_reason = result.get('convergence_reason', 'unknown')
+                    best_params = result.get('best_params') or {}
                     self.logger.info(f"[CONVERGED] [UnifiedOptimizer] 최적화 수렴: {convergence_reason}")
-                    self.logger.info(f"   최적 파라미터: threshold={result['best_params']['threshold']:.2f}%, "
-                                     f"ml_bypass={result['best_params']['ml_bypass']}, "
-                                     f"ml_weight={result['best_params']['ml_weight']:.2f}")
-                    self.logger.info(f"   최적 점수: {result['best_score']:.4f}")
-                    self.logger.info(f"   총 누적 trials: {result['total_trials']}개")
+                    self.logger.info(f"   최적 파라미터: threshold={best_params.get('threshold', 'N/A')}, "
+                                     f"ml_bypass={best_params.get('ml_bypass', 'N/A')}, "
+                                     f"ml_weight={best_params.get('ml_weight', 'N/A')}")
+                    self.logger.info(f"   최적 점수: {result.get('best_score', 0):.4f}")
+                    self.logger.info(f"   총 누적 trials: {result.get('total_trials', 'N/A')}개")
                     break
 
-                if result['status'] == 'cycle_completed':
+                if result.get('status') == 'cycle_completed':
                     cycle_count += 1
                     total_trials = result.get('total_trials', cycle_count * 10)
                     self.logger.info(f"[UnifiedOptimizer] 사이클 #{cycle_count} 완료 (누적 trials: {total_trials}개)")
 
-                    if result.get('best_params'):
+                    best_params = result.get('best_params') or {}
+                    if best_params:
                         self.logger.info(
                             f"[UnifiedOptimizer] 현재 최적: "
-                            f"임계값={result['best_params']['threshold']}%, "
-                            f"ML바이패스={result['best_params']['ml_bypass']}, "
-                            f"ML가중치={result['best_params']['ml_weight']} "
-                            f"(점수: {result['best_score']:.3f})"
+                            f"임계값={best_params.get('threshold', 'N/A')}%, "
+                            f"ML바이패스={best_params.get('ml_bypass', 'N/A')}, "
+                            f"ML가중치={best_params.get('ml_weight', 'N/A')} "
+                            f"(점수: {result.get('best_score', 0):.3f})"
                         )
                         # OptimizationDB에 최적 파라미터 저장
-                        self._opt_db.set_state('last_best_params', result['best_params'])
+                        self._opt_db.set_state('last_best_params', best_params)
                         self._opt_db.set_state('last_best_score', result.get('best_score', 0))
                         self._opt_db.set_state('total_cycles', cycle_count)
 
                     # 사이클 완료 시 예측 번호 5세트 생성
                     self._generate_predictions_after_cycle(cycle_count)
 
-                elif result['status'] == 'completed':
+                elif result.get('status') == 'completed':
                     self.logger.info(f"[UnifiedOptimizer] 최적화 정상 완료 (총 trials: {result.get('total_trials')})")
                     break
-                elif result['status'] == 'error':
+                elif result.get('status') == 'error':
                     self.logger.error(f"[UnifiedOptimizer] 최적화 에러: {result.get('error')}")
                     break
 
@@ -190,6 +206,78 @@ class UnifiedOptimizer:
         if converged:
             self.logger.info("[CONVERGED] [UnifiedOptimizer] 수렴으로 종료 (최적 파라미터 적용됨)")
         self.logger.info("[UnifiedOptimizer] 워커 스레드 종료")
+        self._running = False
+
+    def _worker_pool(self):
+        """
+        [신 v6] PoolOptimizer 백그라운드 워커.
+        - 극단성 점수 가중치(feature scale + 페널티)를 Optuna로 탐색
+        - 목적: 분리도 AUC + 약한 hold-out lift LCB (통과율 제약 없음)
+        - 사이클마다 configs/extremeness_weights.json 갱신 → 예측 풀 캐시 자동 무효화
+        - 30분마다 피드백 루프(백테스팅 모니터링)
+        """
+        try:
+            from src.core.pool_optimizer import PoolOptimizer
+            optimizer = PoolOptimizer(self.db_manager, target_K=_POOL_TARGET_K)
+        except Exception as e:
+            self.logger.error(f"[UnifiedOptimizer] PoolOptimizer 초기화 실패 - 최적화 비활성(예측은 정상): {e}")
+            self._running = False
+            return
+
+        self.logger.info("[UnifiedOptimizer] 워커 스레드 시작 (mode=pool / PoolOptimizer v6)")
+        self.logger.info(f"   - 목표 풀 크기 K={_POOL_TARGET_K:,} (극단 최대 제거)")
+        self.logger.info("   - 목적: 분리도 AUC + 약한 lift LCB (통과율 제약 없음)")
+        self.logger.info("   - 누적 학습: 0->10->20... / 상태 data/pool_optimization.db")
+
+        cycle_count = self._opt_db.get_state('total_cycles_pool', 0)
+        last_feedback_time: Optional[datetime] = None
+        last_fb_str = self._opt_db.get_state('last_feedback_time')
+        if last_fb_str:
+            try:
+                last_feedback_time = datetime.fromisoformat(last_fb_str)
+            except (ValueError, TypeError):
+                last_feedback_time = None
+
+        while not self._stop_flag.get('stop', False):
+            try:
+                if self._stop_flag.get('stop', False):
+                    break
+                # ---- 1. PoolOptimizer 최적화 사이클 (10 trials 누적) ----
+                result = optimizer.optimize(n_trials=10, study_name="pool_optimization_v6")
+                cycle_count += 1
+                best_val = result.get('best_value', 0)
+                auc = result.get('auc_separation', 0)
+                lift = result.get('lift_lcb', 0)
+                self.logger.info(
+                    f"[UnifiedOptimizer] pool 사이클 #{cycle_count} 완료 "
+                    f"(누적 trials: {result.get('n_trials', 'N/A')}, "
+                    f"score={best_val:.4f}, AUC={auc:.4f}, lift_lcb={lift:.3f})"
+                )
+
+                # 최적 가중치 저장 (예측 풀 캐시 자동 무효화 트리거)
+                optimizer.save_best(result)
+                self._opt_db.set_state('last_best_params', result.get('best_params'))
+                self._opt_db.set_state('last_best_score', best_val)
+                self._opt_db.set_state('total_cycles_pool', cycle_count)
+
+                # 사이클 완료 시 예측 5세트 생성
+                self._generate_predictions_after_cycle(cycle_count)
+
+                # ---- 2. 정기 피드백 루프 (30분마다) ----
+                now = datetime.now()
+                if (last_feedback_time is None or
+                        (now - last_feedback_time).total_seconds() >= _FEEDBACK_INTERVAL_MINUTES * 60):
+                    self._run_feedback_cycle()
+                    last_feedback_time = datetime.now()
+
+            except KeyboardInterrupt:
+                self.logger.info("[UnifiedOptimizer] 최적화 중단 요청")
+                break
+            except Exception as e:
+                self.logger.error(f"[UnifiedOptimizer] pool 사이클 오류: {e}")
+                time.sleep(60)
+
+        self.logger.info("[UnifiedOptimizer] 워커 스레드 종료 (pool)")
         self._running = False
 
     def _run_feedback_cycle(self):
@@ -226,21 +314,26 @@ class UnifiedOptimizer:
             try:
                 from src.backtesting.optimized_backtesting_framework import OptimizedBacktestingFramework
                 backtesting = OptimizedBacktestingFramework(self.db_manager)
-                result = backtesting.run_backtest(test_rounds=50)
+                # run_backtest 필수 인자: start_round, end_round
+                latest = self.db_manager.get_latest_round() if self.db_manager else 0
+                _end = latest if latest > 0 else 50
+                _start = max(1, _end - 49)
+                result = backtesting.run_backtest(start_round=_start, end_round=_end)
+                perf = result.get('performance_metrics', {})
                 self.logger.info(
                     f"[UnifiedOptimizer] 피드백 백테스팅 완료: "
-                    f"평균 매치 {result.get('average_matches', 0):.2f}개"
+                    f"평균 매치 {perf.get('overall_avg_matches', 0):.2f}개"
                 )
             except Exception as e2:
                 self.logger.error(f"[UnifiedOptimizer] 피드백 대체 백테스팅 실패: {e2}")
-            return
 
         except Exception as e:
             self.logger.error(f"[UnifiedOptimizer] 피드백 루프 실패: {e}")
-            return
 
-        # 마지막 피드백 시간 저장
-        self._opt_db.set_state('last_feedback_time', datetime.now().isoformat())
+        finally:
+            # FIX: 모든 경로(정상/ImportError/Exception)에서 피드백 시간 저장
+            # 이전: except 블록의 return으로 저장이 누락되어 재시작 시 즉시 피드백 실행됨
+            self._opt_db.set_state('last_feedback_time', datetime.now().isoformat())
 
     def _generate_predictions_after_cycle(self, cycle_count: int):
         """최적화 사이클 완료 후 예측 번호 5세트 생성 (선택적)"""

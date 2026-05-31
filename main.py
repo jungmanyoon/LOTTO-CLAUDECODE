@@ -3257,7 +3257,11 @@ def main():
         filter_start_time = time.time()
 
         # 스트림 처리 모드 선택
-        if args.stream_processing:
+        # [predict-only] 신 극단성 풀 경로(ExtremenessPoolPredictor)가 8.14M을 자체 채점/제거하여
+        # 풀을 직접 만들므로, 여기서 16필터 전체 필터링(7.9M, 수 분 소요)은 불필요 -> 건너뜀.
+        if args.predict_only:
+            logging.info("\n[필터링] 예측 전용 모드 - 16필터 전체 필터링 건너뜀 (극단성 풀 경로가 자체 풀 생성)")
+        elif args.stream_processing:
             logging.info("\n[STREAM] 스트림 처리 모드: 메모리 효율적인 스트림 기반 필터링을 사용합니다.")
             logging.info(f"  - 배치 크기: {args.batch_size:,}개")
             logging.info(f"  - 메모리 제한: {args.memory_limit}MB")
@@ -3975,21 +3979,47 @@ def main():
         logging.info("\n" + "="*60)
         logging.info("[최종 예측] 로또 번호 5세트 생성...")
         logging.info("="*60)
-        
-        final_predictions = generate_final_predictions(
-            db_manager=db_manager,
-            filter_manager=filter_manager,
-            ml_predictions={
-                'lstm': lstm_predictions if 'lstm_predictions' in locals() else [],
-                'ensemble': ensemble_predictions if 'ensemble_predictions' in locals() else [],
-                'monte_carlo': mc_predictions if 'mc_predictions' in locals() else [],
-                'bayesian': bayesian_predictions if 'bayesian_predictions' in locals() else [],
-                'fractal': fractal_predictions if 'fractal_predictions' in locals() else [],
-                'combined': combined_predictions if 'combined_predictions' in locals() else []
-            },
-            num_sets=5
-        )
-        
+
+        # ML 예측 묶음 (신/구 경로 공통 입력)
+        _ml_preds_bundle = {
+            'lstm': lstm_predictions if 'lstm_predictions' in locals() else [],
+            'ensemble': ensemble_predictions if 'ensemble_predictions' in locals() else [],
+            'monte_carlo': mc_predictions if 'mc_predictions' in locals() else [],
+            'bayesian': bayesian_predictions if 'bayesian_predictions' in locals() else [],
+            'fractal': fractal_predictions if 'fractal_predictions' in locals() else [],
+            'combined': combined_predictions if 'combined_predictions' in locals() else []
+        }
+
+        # ============================================================
+        # [신 아키텍처 2026-05-31] 극단성 풀 + 5장 다양성 예측 (사용자 전략)
+        # - 단일 극단성 점수로 목표 풀 크기 K(기본 1.5M)까지 극단 패턴 최대 제거
+        # - 남은 풀에서 가중 max-coverage로 5장 다양성 극대화(많은 번호 맞추기)
+        # - 통과율 강제 제약 없음. ML은 풀 내 번호 다양성 가중치로만 사용.
+        # 비활성화: 환경변수 LOTTO_USE_EXTREMENESS_POOL=0 -> 구 ML-우선 경로로 폴백.
+        # ============================================================
+        final_predictions = None
+        _use_extreme_pool = os.environ.get('LOTTO_USE_EXTREMENESS_POOL', '1') != '0'
+        if _use_extreme_pool:
+            try:
+                from src.core.extremeness_pool_predictor import ExtremenessPoolPredictor
+                _target_K = int(os.environ.get('LOTTO_TARGET_POOL_K', '1500000'))
+                _epp = ExtremenessPoolPredictor(db_manager, target_K=_target_K)
+                _epp.build_pool()  # 학습회차+K 동일 시 디스크 캐시 재사용(0.2s)
+                final_predictions = _epp.predict(num_sets=5, ml_predictions=_ml_preds_bundle)
+                logging.info(f"[최종 예측] 극단성 풀 경로 사용 (K={_target_K:,})")
+            except Exception as _e:
+                logging.error(f"[최종 예측] 극단성 풀 경로 실패 - 구 경로로 폴백: {_e}")
+                final_predictions = None
+
+        # 폴백(또는 비활성화): 기존 ML-우선 하이브리드 경로
+        if not final_predictions:
+            final_predictions = generate_final_predictions(
+                db_manager=db_manager,
+                filter_manager=filter_manager,
+                ml_predictions=_ml_preds_bundle,
+                num_sets=5
+            )
+
         # 예측 저장을 위한 데이터 준비
         predictions_to_save = []
         

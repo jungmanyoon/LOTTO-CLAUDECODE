@@ -1,4 +1,4 @@
-# 다음 세션 핸드오프 (2026-05-31)
+# 다음 세션 핸드오프 (2026-05-31 업데이트 2)
 
 > 다음 세션 AI는 이 문서 + 메모리(MEMORY.md) + CLAUDE.md를 먼저 읽고 이어갈 것.
 
@@ -9,65 +9,75 @@
 - **확률 논쟁 영구 금지**: "어차피 매 회차 1/8,145,060이라 필터/풀 축소가 무의미하다",
   "당첨확률 못 높인다", "기대값으로 상쇄된다"는 순수 확률론적 비판을 **절대 꺼내지 말 것.**
   사용자는 독립시행 1/814만을 충분히 알고, 그 위에서 "역사적 극단 배제" 전략을 의도적으로 선택함.
-  (CLAUDE.md "CORE STRATEGY PHILOSOPHY > AI에게 지시 5번"에 명시)
 - **통과율 95% 제약 제거**: 통과율(당첨번호 보존율)을 강제 목표/제약으로 두지 않음.
   "출현율 낮은 패턴 최대 제거"가 우선. 통과율은 참고 지표로만 표시.
-- **사용자 방법**: 역사적으로 출현율이 극히 낮은 극단 패턴을 **최대한 많이 찾아 제거** →
-  남은 풀에서 **다양성 있게** 예측 → 최대한 많은 번호 맞추기(3·4개 등 하위 등수 포함).
-- **AI 역할**: 확률 강의가 아니라 사용자 방법을 **정확히 구현**하는 것.
+- **사용자 방법**: 역사적 극단 패턴 최대한 제거 → 남은 풀에서 다양성 예측 → 많은 번호 맞추기.
 
 ---
 
-## 2. 다음 세션 핵심 주제 (Codex + Gemini + Claude 셋이 상의)
+## 2. 이번 세션(과필터링 작업) 완료 내역 ★
 
-사용자가 마지막으로 던진 핵심 통찰 = **"과필터링(over-filtering)"** 문제:
+핵심 통찰("과필터링")을 실측·해결. **상세: docs/EXTREMENESS_POOL_ARCHITECTURE.md**
 
-> 16개 필터를 AND로 합치면 누적 제거율 = `1 − (1−p)^16`.
-> 각 필터 5%면 합쳐서 56%, 10%면 81%, 20%면 97% 제거 → "임계값 조금만 올려도 다 걸려버림".
-> 한 개 필터로는 의미 있는데 합치면 과도하게 제거되는 현상.
+### 발견
+- **구 16필터 AND + global_probability_threshold 레버가 죽어있었음**: 임계값 0.5%→20%로
+  20배 올려도 풀이 807만(전체 99.1%)에 고정 = 과소필터링(과필터링의 반대 문제).
 
-**다음 세션에서 할 일:**
-1. **"임계값 → 전체 풀 크기" 곡선 계산** (실제 8.14M, 각 필터 임계값 1/3/5/10%별 전체 제거율).
-   → "다 걸리기 직전의 최적 임계값" 찾기.
-2. **임계값을 "각 필터 개별"이 아니라 "16개 합친 후 전체 제거율" 기준으로 정하는 방법** 설계
-   (Codex/Gemini와 상의). 예: "풀을 X개로" 정하면 각 필터 임계값 역산.
-3. **임계값 자동 최적화(Optuna) 재설계**: 통과율 제약 빼고, "목표 전체 제거율(풀 크기)" 기준으로.
-   (현재 threshold_optimizer.py는 v5에서 통과율 1차 → 사용자 결정대로 통과율 제약 제거 필요)
-4. **5장 다양성 강화**: 서로 겹치지 않게 → 많은 번호 커버 ("많은 번호 맞추기"의 핵심 레버).
-5. **빈도 분석 / 새 필터 차원 추가** (사용자가 원하는 "모든 방법" 동원).
-6. **1226 기준 전체 실행** → 최종 5세트 예측까지 확인.
+### 해결 (Codex gpt-5.5 + Gemini 3.1-pro + Claude 만장일치)
+- 16 AND 필터 폐기 → **단일 "극단성 점수" + "목표 풀 크기 K" 컷오프 1개**.
+- 풀 크기 직접·단조 제어 + `1-(1-p)^16` 누적 과필터링 원천 소멸.
+
+### 신규 파일 4개 (모두 검증 완료)
+- `src/core/extremeness_scorer.py` — 마할라노비스(상관보정)+희귀패턴 페널티. 8.14M 채점 ~16s.
+- `src/core/diversity_selector.py` — 빈도 가중치 + 가중 max-coverage 5장 선택.
+- `src/core/pool_optimizer.py` — Optuna v6 (분리도AUC + 약한 lift_lcb, **통과율 제약 제거**).
+- `src/scripts/analyze_threshold_pool_curve.py`, `generate_diverse_predictions.py`.
+
+### 실측 결과 (정직한 데이터)
+- 곡선(hold-out 150회): **K=1.5M(81.6% 제거)에서 Lift 1.27 최고** → 사용자 채택.
+  분리도 AUC~0.51(미미) = 극단 특징만으론 미래 당첨 강하게 못 가림. 단 1.5M이 통계 최적점.
+- **진짜 레버=5장 다양성(hold-out 100회): 3개+ 맞춘 회차 무작위 6 → 다양성 13 (2배↑).**
+- Optuna v6 30 trials: best AUC=0.506, lift_lcb=1.157 → configs/extremeness_weights.json 저장.
+
+### 1227 예측 5세트 (K=1.5M, 최적 가중치)
+```
+세트1: [7, 12, 14, 27, 31, 38]
+세트2: [3, 15, 17, 33, 34, 36]
+세트3: [4, 13, 16, 30, 37, 40]
+세트4: [2, 11, 18, 32, 35, 39]
+세트5: [5, 8, 20, 24, 43, 45]
+```
+커버 30/45번호, 티켓 간 겹침 0. (재생성: `python src/scripts/generate_diverse_predictions.py`)
 
 ---
 
-## 3. 이번 세션 완료된 작업
+## 3. main.py 통합 완료 ★ (이번 세션 추가)
 
-### 코드 수정 (커밋 7f0d03c + 이후 working tree)
-- 데이터 수집 1218 → **1226 최신** (동행복권 새 API `selectPstLt645Info.do` 정상 작동 확인)
-- 목적함수 v5 (threshold_optimizer.py): avg_matches 최대화 폐기 → 통과율 1차
-  **(주의: 사용자가 통과율 제약도 빼라고 함 → 다음 세션에서 "전체 제거율 목표"로 재수정 필요)**
-- 당첨번호 통과율 91% → 100% (prime_composite 전체분석, ac_value min 2, digit_sum max 60)
-- `use_weighted_system = True → False` (main.py:3097): WeightedFilterSystem(점수30점)이
-  적응형 확률 필터를 무력화하던 것 → 적응형 필터로 전환 (단 현재도 791만 잔존 = 과필터 반대 문제)
-- window 버그 `[:200]`(가장 오래된 200회) → 전체 역사 (5곳)
-- L3 풀 우회 수정 (main.py: 풀 멤버십 검증 + 최근접 치환)
-- 새 회차/복구 3중 버그 (NR-P0): auto_scheduler 트리거체인, main.py 수집후 안전망,
-  system_state 원자적쓰기, force_sync 1218→1226
-- 디스크 38GB 정리 (data/filters excluded_combinations)
-- CLAUDE.md에 사용자 최종 결정 명시 (확률논쟁 금지 + 통과율 제약 제거)
+신 아키텍처를 production main.py 본류에 연결 완료:
 
-### 진단 (Codex+Gemini+6페르소나 협업)
-- 필터가 안 줄던 근본: use_weighted_system=True (적응형 필터 무력화)
-- 시계열 의존성 0 (완전 독립 확인)
-- 특성 분포 불균등은 사실이나 당첨번호 분포 ≈ 전체 조합 분포 (73% vs 75%)
-- **이상의 확률론적 결론들은 CLAUDE.md 결정에 따라 더 이상 사용자에게 제기하지 않음**
+- **신규 어댑터** `src/core/extremeness_pool_predictor.py` `ExtremenessPoolPredictor`:
+  단일 진입점. build_pool(8.14M 채점→K컷오프, **디스크 캐시 0.2s 재사용**) + predict(5장 다양성).
+  ML 예측은 번호 다양성 가중치로 결합(ml_signal, CLAUDE.md 핵심전략 정합).
+- **main.py:3979** 통합 블록 추가: 환경변수 `LOTTO_USE_EXTREMENESS_POOL`(기본 1=활성),
+  `LOTTO_TARGET_POOL_K`(기본 1500000). **신 경로 우선, 실패 시 구 generate_final_predictions로 graceful 폴백.**
+- **diversity_selector.py** `compute_weights`에 ml_signal/ml_beta 파라미터 추가(평탄 결합).
+- **검증**: main.py 구문 OK, 통합블록 재현테스트 PASS(5세트/포맷호환/6번호), 회귀 272 passed
+  (실패 6+에러 6은 모두 기존 - 내 파일 미임포트 확인됨).
+
+## 4. 다음 세션 할 일 (남은 통합)
+
+1. **diversity_selector 일원화**: 구 `src/utils/diversity_selector.py`(Hamming, main.py:1521 풀보충에서 사용 중)
+   를 신 `src/core/diversity_selector.py`(가중 max-coverage)로 대체할지 결정. (현재는 신 경로가 우선이라
+   구 풀보충 경로는 폴백 시에만 작동)
+2. **백그라운드 최적화 교체**: 구 `threshold_optimizer.py`(v5, threshold 탐색) →
+   신 `pool_optimizer.py`(v6, 가중치 탐색)로 unified_optimizer 루프 교체.
+3. `python main.py` 전체 실행으로 최종 end-to-end 확인 (현재는 블록 단위까지 검증).
+4. 대시보드(enhanced_dashboard_v2.py) 예측 표시도 신 경로와 정합되는지 확인.
 
 ---
 
 ## 4. 현재 시스템 상태
-- 데이터: lotto_numbers.db, combinations.db 모두 **1226 최신**
-- 필터: `use_weighted_system=False` (적응형 확률 필터 활성)
-- 풀: 현재 임계값 0.5%에서 약 791만 (거의 제거 안 됨 = 과필터의 **반대** 문제. 임계값을 올려야 제거됨)
-- 알려진 버그: 검증 스크립트의 통과율 측정 (풀 형식 비교) — 본질 무관
-
-## 5. 다음 세션 첫 명령 (바로 실행)
-"임계값별 전체 풀 크기 곡선"을 8.14M으로 계산 → Codex/Gemini와 과필터 방지 + 최적 임계값 설계.
+- 데이터: 1226 최신.
+- 구 적응형 필터(use_weighted_system=False)는 그대로 (신 구조와 병존, 아직 main 연결 안 됨).
+- 신 구조 산출물: configs/extremeness_weights.json, results/threshold_pool_curve.json,
+  data/pool_optimization.db (Optuna 30 trials).
