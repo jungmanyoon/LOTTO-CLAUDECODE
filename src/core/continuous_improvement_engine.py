@@ -12,7 +12,7 @@ import sqlite3
 import logging
 import threading
 import time
-import schedule
+import schedule as schedule_module
 import pytz
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Any
@@ -47,7 +47,7 @@ class PerformanceMetrics:
     threshold: float
     ml_bypass_filters: int
     ml_weight: float
-    filter_pass_rate: float  # ✅ NEW: 필터 통과율 추적 (historical winning numbers 통과율)
+    filter_pass_rate: float  # [NEW] 필터 통과율 추적 (historical winning numbers 통과율)
     timestamp: datetime
     session_id: int = None
 
@@ -95,6 +95,7 @@ class PerformanceTracker:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     round_number INTEGER,
                     session_type TEXT, -- 'weekly', 'manual', 'triggered'
+                    session_date TEXT,
                     start_time TEXT,
                     end_time TEXT,
                     status TEXT,
@@ -127,7 +128,7 @@ class PerformanceTracker:
                 )
             """)
 
-            # ✅ NEW: 필터 조건 스냅샷 테이블 (롤백 지원)
+            # [NEW] 필터 조건 스냅샷 테이블 (롤백 지원)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS filter_criteria_snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,13 +141,13 @@ class PerformanceTracker:
                 )
             """)
 
-            # ✅ 기존 테이블에 filter_pass_rate 컬럼 추가 (마이그레이션)
+            # [FIX] 기존 테이블에 filter_pass_rate 컬럼 추가 (마이그레이션)
             try:
                 cursor.execute("ALTER TABLE performance_history ADD COLUMN filter_pass_rate REAL")
             except sqlite3.OperationalError:
                 pass  # 컬럼이 이미 존재하는 경우 무시
 
-            # ✅ 기존 테이블에 is_best_pass_rate 컬럼 추가 (마이그레이션)
+            # [FIX] 기존 테이블에 is_best_pass_rate 컬럼 추가 (마이그레이션)
             try:
                 cursor.execute("ALTER TABLE performance_history ADD COLUMN is_best_pass_rate BOOLEAN DEFAULT FALSE")
             except sqlite3.OperationalError:
@@ -157,6 +158,13 @@ class PerformanceTracker:
     def save_performance_result(self, metrics: PerformanceMetrics, round_number: int = None,
                               is_baseline: bool = False) -> int:
         """성능 결과 저장"""
+        # 0값 쓰레기 데이터 방어: avg_matches=0이면 저장 거부
+        if metrics.avg_matches == 0:
+            self.logger.warning(
+                f"[PerformanceTracker] save_performance_result 거부: avg_matches=0 "
+                f"(threshold={metrics.threshold}) - 백테스팅 미수행 또는 실패 데이터 차단"
+            )
+            return -1
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
@@ -169,7 +177,7 @@ class PerformanceTracker:
             current_best = cursor.fetchone()[0] or 0
             is_best = metrics.avg_matches > current_best
 
-            # ✅ NEW: 현재 최고 필터 통과율 확인
+            # [NEW] 현재 최고 필터 통과율 확인
             cursor.execute("""
                 SELECT MAX(filter_pass_rate) FROM performance_history
                 WHERE round_number = ? OR round_number IS NULL
@@ -197,7 +205,7 @@ class PerformanceTracker:
                     WHERE round_number = ? OR round_number IS NULL
                 """, (round_number,))
 
-            # ✅ NEW: 새로운 최고 필터 통과율이면 기존 best_pass_rate 플래그 제거
+            # [NEW] 새로운 최고 필터 통과율이면 기존 best_pass_rate 플래그 제거
             if is_best_pass_rate:
                 cursor.execute("""
                     UPDATE performance_history SET is_best_pass_rate = FALSE
@@ -306,7 +314,7 @@ class PerformanceTracker:
     def save_filter_criteria_snapshot(self, performance_history_id: int,
                                      filter_criteria: Dict[str, Dict],
                                      filter_pass_rate: float) -> int:
-        """✅ NEW: 필터 조건 스냅샷 저장 (롤백 지원용)"""
+        """필터 조건 스냅샷 저장 (롤백 지원용)"""
         import json
 
         with sqlite3.connect(self.db_path) as conn:
@@ -332,7 +340,7 @@ class PerformanceTracker:
             return performance_history_id
 
     def get_filter_criteria_snapshot(self, performance_history_id: int) -> Dict[str, Dict]:
-        """✅ NEW: 필터 조건 스냅샷 조회 (롤백용)"""
+        """필터 조건 스냅샷 조회 (롤백용)"""
         import json
 
         with sqlite3.connect(self.db_path) as conn:
@@ -393,18 +401,21 @@ class AutoOptimizer:
             stats_db_path="data/performance_stats.db"
         )
 
-        def backtesting_func(config):
-            """백테스팅 함수"""
+        def backtesting_func(config, start_round=None, end_round=None):
+            """백테스팅 함수 (ThresholdOptimizer 호환: start_round/end_round 선택적 지원)"""
             backtesting = OptimizedBacktestingFramework(self.db_manager)
             latest_round = self.db_manager.get_latest_round()
-            start_round = max(1, latest_round - 29)
+            if start_round is None:
+                start_round = max(1, latest_round - 29)
+            if end_round is None:
+                end_round = latest_round
 
             # 백테스팅 프레임워크에 설정 적용
             self._apply_config_to_framework(backtesting, config)
 
             result = backtesting.run_backtest(
                 start_round=start_round,
-                end_round=latest_round
+                end_round=end_round
             )
 
             return {
@@ -420,13 +431,14 @@ class AutoOptimizer:
             n_jobs=1
         )
 
-        improvement = results['best_score'] - baseline_metrics.avg_matches
+        best_score = results.get('best_score', 0) if results else 0
+        improvement = best_score - baseline_metrics.avg_matches
 
         return {
-            'best_params': results['best_params'],
-            'best_performance': results['avg_matches'],
+            'best_params': results.get('best_params', {}) if results else {},
+            'best_performance': results.get('avg_matches', 0) if results else 0,
             'improvement': improvement,
-            'trials_completed': results['n_trials']
+            'trials_completed': results.get('new_trials', results.get('total_trials', n_trials)) if results else n_trials
         }
 
     def _create_temp_config(self, threshold: float, ml_bypass: int, ml_weight: float) -> Dict:
@@ -455,14 +467,22 @@ class AutoOptimizer:
         try:
             # 필터 매니저 설정 적용
             if hasattr(framework, 'filter_manager'):
-                # 적응형 필터 임계값 설정
-                if hasattr(framework.filter_manager, 'adaptive_filter'):
-                    threshold = config.get('global_probability_threshold', 1.0)
-                    framework.filter_manager.adaptive_filter.probability_threshold = threshold
+                threshold = config.get('global_probability_threshold', 1.0)
+                ml_bypass = config.get('ml_integration', {}).get('ml_bypass_filters', 8)
+                ml_weight = config.get('ml_integration', {}).get('ml_weight', 0.4)
 
-                # 통합 필터 매니저인 경우
-                elif hasattr(framework.filter_manager, 'set_config'):
-                    framework.filter_manager.set_config(config)
+                # update_config 메서드 우선 사용 (IntegratedFilterManager / WeightedFilterSystem)
+                if hasattr(framework.filter_manager, 'update_config'):
+                    framework.filter_manager.update_config(
+                        probability_threshold=threshold,
+                        ml_bypass_filters=ml_bypass,
+                        ml_weight=ml_weight
+                    )
+                elif hasattr(framework.filter_manager, 'adaptive_filter'):
+                    # AdaptiveProbabilityFilter 직접 보유 시 임계값만 설정
+                    framework.filter_manager.adaptive_filter.probability_threshold = threshold
+                else:
+                    logging.warning("[N-C19] filter_manager에 설정 업데이트 메서드 없음 (update_config 미존재)")
 
             # ML 설정 적용
             ml_config = config.get('ml_integration', {})
@@ -504,6 +524,9 @@ class ContinuousImprovementEngine:
         # 스케줄러 설정 (한국 시간 기준)
         self.korea_tz = pytz.timezone('Asia/Seoul')
 
+        # 독립 스케줄러 인스턴스 (global schedule 모듈과 충돌 방지)
+        self.scheduler = schedule_module.Scheduler()
+
         # 백그라운드 스레드
         self.scheduler_thread = None
         self.optimization_lock = threading.Lock()
@@ -531,9 +554,12 @@ class ContinuousImprovementEngine:
 
                 self.logger.info(f"설정 백업 생성: {backup_path}")
 
-            # 새 설정 저장
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+            # [FIX N-W24] 원자적 YAML 쓰기: tmp 파일 → os.replace()
+            import os as _os
+            tmp_path = self.config_path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, allow_unicode=True, sort_keys=False)
+            _os.replace(tmp_path, self.config_path)
 
             self.config = config
             self.logger.info("설정 파일 업데이트 완료")
@@ -552,13 +578,13 @@ class ContinuousImprovementEngine:
         self.logger.info("지속적 성능 개선 시스템 시작")
 
         # 토요일 밤 8시 30분 (로또 추첨 후) 자동 실행 스케줄
-        schedule.every().saturday.at("20:30").do(self._weekly_optimization_job)
+        self.scheduler.every().saturday.at("20:30").do(self._weekly_optimization_job)
 
         # 매일 저녁 9시 새 회차 확인 및 최적화 (토요일 제외)
-        schedule.every().day.at("21:00").do(self._check_new_round_and_optimize)
+        self.scheduler.every().day.at("21:00").do(self._check_new_round_and_optimize)
 
         # 매일 오전 3시 베이스라인 업데이트 검사
-        schedule.every().day.at("03:00").do(self._daily_baseline_check)
+        self.scheduler.every().day.at("03:00").do(self._daily_baseline_check)
 
         # 스케줄러 스레드 시작
         self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
@@ -572,7 +598,7 @@ class ContinuousImprovementEngine:
     def stop_continuous_improvement(self):
         """지속적 개선 시스템 중지"""
         self.is_running = False
-        schedule.clear()
+        self.scheduler.clear()
 
         if self.scheduler_thread and self.scheduler_thread.is_alive():
             self.scheduler_thread.join(timeout=5)
@@ -583,7 +609,7 @@ class ContinuousImprovementEngine:
         """스케줄러 실행"""
         while self.is_running:
             try:
-                schedule.run_pending()
+                self.scheduler.run_pending()
                 time.sleep(60)  # 1분마다 체크
             except Exception as e:
                 self.logger.error(f"스케줄러 오류: {e}")
@@ -679,20 +705,28 @@ class ContinuousImprovementEngine:
                 )
                 self.logger.info("첫 베이스라인 설정 완료")
             else:
-                # 성능 저하 확인 (10% 이상 하락)
+                # 성능 저하 확인
                 performance_ratio = current_metrics.avg_matches / best_performance.avg_matches
 
-                if performance_ratio < 0.9:
-                    self.logger.warning(f"성능 저하 감지: {performance_ratio:.1%} (현재: {current_metrics.avg_matches:.3f}, 최고: {best_performance.avg_matches:.3f})")
+                # [v5 FIX] 롤백 임계 0.9→0.75 + 절대 하한 이중 가드.
+                # 근거(Codex/Gemini 교차검증): avg_matches는 독립시행 로또에서 노이즈가 큼
+                # (SE≈0.35). 10% 하락은 노이즈 범위 내라 오탐 롤백이 빈발(롤백 4회 원인).
+                # 두 조건 동시 충족 시에만 롤백: ①최고 대비 25%+ 하락 AND ②절대값도 비정상(<0.6).
+                # 로또 정상 avg_matches는 0.8~1.5이므로 0.6 미만은 진짜 성능 저하로 판단.
+                ROLLBACK_RATIO = 0.75
+                NORMAL_FLOOR = 0.6
+
+                if performance_ratio < ROLLBACK_RATIO and current_metrics.avg_matches < NORMAL_FLOOR:
+                    self.logger.warning(f"성능 저하 감지: {performance_ratio:.1%} (현재: {current_metrics.avg_matches:.3f}, 최고: {best_performance.avg_matches:.3f}) - 절대값도 비정상(<{NORMAL_FLOOR})")
 
                     # [FIX] 자동 롤백 먼저 수행 - 성능 하락 시 즉시 이전 최적 설정으로 복원
                     self.logger.warning("자동 롤백 시작 - 최고 성능 설정으로 복원 시도...")
                     rollback_success = self.rollback_to_best()
 
                     if rollback_success:
-                        self.logger.info("✅ 자동 롤백 완료 - 최고 성능 설정 복원됨")
+                        self.logger.info("[O] 자동 롤백 완료 - 최고 성능 설정 복원됨")
                     else:
-                        self.logger.warning("⚠️ 자동 롤백 실패 - 긴급 최적화로 전환")
+                        self.logger.warning("[WARN] 자동 롤백 실패 - 긴급 최적화로 전환")
                         # 롤백 실패 시에만 긴급 최적화 트리거
                         self.trigger_emergency_optimization()
                 else:
@@ -736,9 +770,9 @@ class ContinuousImprovementEngine:
                     baseline_metrics, n_trials=25
                 )
 
-                best_params = bayesian_results['best_params']
-                best_performance = bayesian_results['best_performance']
-                final_improvement = bayesian_results['improvement']
+                best_params = bayesian_results.get('best_params', {})
+                best_performance = bayesian_results.get('best_performance', 0)
+                final_improvement = bayesian_results.get('improvement', 0)
                 optimization_method = 'bayesian'
                 trials_completed = bayesian_results.get('trials_completed', 25)
 
@@ -761,10 +795,10 @@ class ContinuousImprovementEngine:
                         self.logger.error(f"최적화 결과 적용 실패: {e}")
                         rollback_reason = f"적용 실패: {e}"
                         improvement_applied = False
-                elif final_improvement < -0.05:  # [FIX] 5% 이상 성능 하락 감지
+                elif final_improvement < -0.15:  # [v5 FIX] -0.05→-0.15: avg_matches 노이즈(SE≈0.35) 범위 밖에서만 롤백
                     # 성능 하락률 계산
                     degradation_rate = abs(final_improvement / baseline_metrics.avg_matches) if baseline_metrics.avg_matches > 0 else 0
-                    self.logger.warning(f"⚠️ 성능 하락 감지: {final_improvement:+.3f} ({degradation_rate:.1%} 하락)")
+                    self.logger.warning(f"[WARN] 성능 하락 감지: {final_improvement:+.3f} ({degradation_rate:.1%} 하락)")
 
                     # 자동 롤백 수행
                     self.logger.warning("자동 롤백 시작 - 최고 성능 설정으로 복원 시도...")
@@ -772,10 +806,10 @@ class ContinuousImprovementEngine:
 
                     if rollback_success:
                         rollback_reason = f"성능 하락 롤백: {final_improvement:+.3f} ({degradation_rate:.1%})"
-                        self.logger.info("✅ 자동 롤백 완료 - 최고 성능 설정 복원됨")
+                        self.logger.info("[O] 자동 롤백 완료 - 최고 성능 설정 복원됨")
                     else:
                         rollback_reason = f"롤백 실패: {final_improvement:+.3f}"
-                        self.logger.error("❌ 자동 롤백 실패 - 백업 설정을 찾을 수 없음")
+                        self.logger.error("[X] 자동 롤백 실패 - 백업 설정을 찾을 수 없음")
 
                     improvement_applied = False
                 else:
@@ -805,7 +839,9 @@ class ContinuousImprovementEngine:
                 }
 
             except Exception as e:
+                import traceback
                 self.logger.error(f"최적화 사이클 실행 실패: {e}")
+                self.logger.debug(f"스택 트레이스:\n{traceback.format_exc()}")
                 self.status = OptimizationStatus.FAILED
 
                 if self.current_session_id:
@@ -836,7 +872,7 @@ class ContinuousImprovementEngine:
             backtesting = OptimizedBacktestingFramework(self.db_manager)
             latest_round = self.db_manager.get_latest_round()
 
-            # ✅ FIX: latest_round는 이미 발표된 회차이므로 제외 (데이터 오염 방지)
+            # [FIX] latest_round는 이미 발표된 회차이므로 제외 (데이터 오염 방지)
             # 최신 회차를 학습 데이터로 사용하지 않도록 end_round = latest_round - 1
             end_round = latest_round - 1  # 최신 회차 제외
             start_round = max(1, end_round - 29)  # 30회차 테스트 (end_round 기준)
@@ -863,7 +899,7 @@ class ContinuousImprovementEngine:
                 best_match = max(best_match, model_metrics.get('best_match', 0))
                 accuracy_3plus = max(accuracy_3plus, model_metrics.get('accuracy_3plus', 0))
 
-            # ✅ FIX: overall_filter_pass_rate 추출 (백테스팅 결과에서)
+            # [FIX] overall_filter_pass_rate 추출 (백테스팅 결과에서)
             # performance_metrics 내부에 overall_filter_pass_rate가 있음
             performance_metrics = result.get('performance_metrics', {})
             overall_filter_pass_rate = performance_metrics.get('overall_filter_pass_rate', 0.0)
@@ -877,7 +913,7 @@ class ContinuousImprovementEngine:
                 threshold=self.config.get('global_probability_threshold', 1.0),
                 ml_bypass_filters=self.config.get('ml_integration', {}).get('ml_bypass_filters', 8),
                 ml_weight=self.config.get('ml_integration', {}).get('ml_weight', 0.4),
-                filter_pass_rate=overall_filter_pass_rate,  # ✅ FIX: 전체 필터 통과율 사용
+                filter_pass_rate=overall_filter_pass_rate,  # [FIX] 전체 필터 통과율 사용
                 timestamp=datetime.now()
             )
 
@@ -906,7 +942,7 @@ class ContinuousImprovementEngine:
             self.logger.warning(f"[ContinuousImprovementEngine] 유효하지 않은 ml_weight={ml_weight}, 설정 저장 중단")
             return
 
-        # ✅ FIX: 최신 설정 파일 다시 로드 (FilterAutoAdjuster 조정값 반영)
+        # [FIX] 최신 설정 파일 다시 로드 (FilterAutoAdjuster 조정값 반영)
         # 메모리 캐시(self.config) 대신 파일에서 직접 로드
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -920,8 +956,8 @@ class ContinuousImprovementEngine:
         if has_dynamic_criteria:
             self.logger.info("[ContinuousImprovementEngine] dynamic_criteria 발견 - 보존됨")
 
-        # ✅ FIX: global_probability_threshold만 업데이트 (dynamic_criteria 보존)
-        # ✅ PRECISION FIX: round()로 부동소수점 오차 제거
+        # [FIX] global_probability_threshold만 업데이트 (dynamic_criteria 보존)
+        # [FIX] PRECISION: round()로 부동소수점 오차 제거
         old_threshold = current_config.get('global_probability_threshold', 1.0)
         current_config['global_probability_threshold'] = round(best_params['threshold'], 2)
         self.logger.info(
@@ -939,7 +975,7 @@ class ContinuousImprovementEngine:
         if 'ml_weight' in best_params:
             current_config['ml_integration']['ml_weight'] = round(best_params['ml_weight'], 2)
 
-        # ✅ FIX: 설정 저장 (dynamic_criteria 보존됨)
+        # [FIX] 설정 저장 (dynamic_criteria 보존됨)
         self._save_config(current_config, backup=True)
 
     def _start_optimization_session(self, round_number: int, session_type: str) -> int:
@@ -1097,7 +1133,7 @@ class ContinuousImprovementEngine:
             return False
 
     def rollback_to_best_pass_rate(self) -> bool:
-        """✅ NEW: 최고 필터 통과율 설정으로 롤백"""
+        """최고 필터 통과율 설정으로 롤백"""
         try:
             best_pass_rate_perf = self.performance_tracker.get_best_pass_rate_performance()
             if best_pass_rate_perf is None:
@@ -1146,11 +1182,14 @@ class ContinuousImprovementEngine:
 
                         adaptive_config['dynamic_criteria'].update(filter_criteria)
 
-                        # 저장
-                        with open(adaptive_config_path, 'w', encoding='utf-8') as f:
+                        # [FIX N-W24] 원자적 YAML 쓰기: tmp 파일 → os.replace()
+                        import os as _os
+                        tmp_path = adaptive_config_path + '.tmp'
+                        with open(tmp_path, 'w', encoding='utf-8') as f:
                             yaml.dump(adaptive_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+                        _os.replace(tmp_path, adaptive_config_path)
 
-                        self.logger.info(f"✅ 필터 조건 스냅샷 복원 완료 ({len(filter_criteria)}개 필터)")
+                        self.logger.info(f"[O] 필터 조건 스냅샷 복원 완료 ({len(filter_criteria)}개 필터)")
 
             self.logger.info(f"최고 필터 통과율 설정으로 롤백 완료:")
             self.logger.info(f"  - 필터 통과율: {best_pass_rate_perf.filter_pass_rate:.2f}%")
@@ -1172,14 +1211,22 @@ class ContinuousImprovementEngine:
         try:
             # 필터 매니저 설정 적용
             if hasattr(framework, 'filter_manager'):
-                # 적응형 필터 임계값 설정
-                if hasattr(framework.filter_manager, 'adaptive_filter'):
-                    threshold = config.get('global_probability_threshold', 1.0)
-                    framework.filter_manager.adaptive_filter.probability_threshold = threshold
+                threshold = config.get('global_probability_threshold', 1.0)
+                ml_bypass = config.get('ml_integration', {}).get('ml_bypass_filters', 8)
+                ml_weight = config.get('ml_integration', {}).get('ml_weight', 0.4)
 
-                # 통합 필터 매니저인 경우
-                elif hasattr(framework.filter_manager, 'set_config'):
-                    framework.filter_manager.set_config(config)
+                # update_config 메서드 우선 사용 (IntegratedFilterManager / WeightedFilterSystem)
+                if hasattr(framework.filter_manager, 'update_config'):
+                    framework.filter_manager.update_config(
+                        probability_threshold=threshold,
+                        ml_bypass_filters=ml_bypass,
+                        ml_weight=ml_weight
+                    )
+                elif hasattr(framework.filter_manager, 'adaptive_filter'):
+                    # AdaptiveProbabilityFilter 직접 보유 시 임계값만 설정
+                    framework.filter_manager.adaptive_filter.probability_threshold = threshold
+                else:
+                    self.logger.warning("[N-C19] filter_manager에 설정 업데이트 메서드 없음 (update_config 미존재)")
 
             # ML 설정 적용
             ml_config = config.get('ml_integration', {})

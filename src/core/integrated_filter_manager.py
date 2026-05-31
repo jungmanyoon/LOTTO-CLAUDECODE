@@ -103,7 +103,7 @@ class IntegratedFilterManager:
             self.adaptive_filter.probability_threshold = probability_threshold
             # 패턴 재분석 (임계값 변경 반영)
             self.adaptive_filter._reload_patterns()
-            # 🔥 FIX: dynamic_criteria 재계산 및 개별 필터 업데이트
+            # [HOT] FIX: dynamic_criteria 재계산 및 개별 필터 업데이트
             dynamic_criteria = self.adaptive_filter.generate_dynamic_criteria()
             self._update_individual_filters(dynamic_criteria)
             updated.append(f"threshold={probability_threshold}")
@@ -178,7 +178,8 @@ class IntegratedFilterManager:
             patterns = self.adaptive_filter.patterns
             if not patterns:
                 # 패턴이 없으면 분석 먼저 수행
-                winning_numbers = self.db_manager.get_all_winning_numbers()[:200]
+                # [v5 FIX #2] 전체 역사 분석(기존 [:200]은 가장 오래된 200회 버그)
+                winning_numbers = self.db_manager.get_all_winning_numbers()
                 patterns = self.adaptive_filter.analyze_patterns(winning_numbers)
 
             # 임계값 이하 패턴들로 필터링
@@ -276,9 +277,10 @@ class IntegratedFilterManager:
             
             logging.info(f"1단계: 최신 회차 {new_round}번 데이터 확인")
             
-            # 2. 과거 당첨번호 가져오기 (최근 200개)
-            winning_numbers = self.db_manager.get_all_winning_numbers()[:200]
-            logging.info(f"2단계: 최근 {len(winning_numbers)}개 당첨번호로 패턴 분석")
+            # 2. 과거 당첨번호 가져오기 (전체 역사)
+            # [v5 FIX #2] 전체 역사 분석(기존 [:200]은 가장 오래된 200회 버그)
+            winning_numbers = self.db_manager.get_all_winning_numbers()
+            logging.info(f"2단계: 전체 {len(winning_numbers)}개 당첨번호로 패턴 분석")
             
             # 3. 적응형 필터로 패턴 분석
             patterns = self.adaptive_filter.analyze_patterns(winning_numbers)
@@ -313,15 +315,31 @@ class IntegratedFilterManager:
             }
             
             self.update_history.append(update_info)
-            
+
+            # [NR-원인3 FIX] combinations.db 풀 재생성(새 기준 적용).
+            # 근거: 기존 update_filters_weekly는 criteria만 갱신하고 실제 815만->30만 풀을
+            # 재생성하지 않아 '새 기준 vs 옛 풀' 불일치가 발생(새 회차 시 1217 풀 누락 등).
+            # 이 메서드는 AutoScheduler 트리거 체인(_trigger_filter_update) 전용이며 main.py
+            # 본 필터링과 호출 경로가 분리되어 있으므로 여기서 풀을 재필터링해야 예측이 최신 풀 사용.
+            # (시작 동기화/수집후 안전망 경로는 main.py 본 필터링이 풀을 생성하므로 중복 없음)
+            try:
+                logging.info("5단계: combinations.db 풀 재생성(새 기준 적용)")
+                pool_ok = self.apply_filters(new_round, mode='full', force=True)
+                update_info['pool_regenerated'] = bool(pool_ok)
+                logging.info(f"[통합 필터] 풀 재생성 {'완료' if pool_ok else '실패/스킵'}")
+            except Exception as _pe:
+                logging.error(f"[통합 필터] 풀 재생성 실패: {_pe}")
+                update_info['pool_regenerated'] = False
+
             # 결과 요약 출력
             logging.info("\n" + "="*60)
             logging.info("[업데이트 완료]")
             logging.info(f"  - 회차: {new_round}")
             logging.info(f"  - 업데이트된 필터: {len(updated_filters)}개")
+            logging.info(f"  - 풀 재생성: {update_info.get('pool_regenerated', False)}")
             logging.info(f"  - 소요 시간: {update_info['duration']:.1f}초")
             logging.info("="*60)
-            
+
             return update_info
             
         except Exception as e:
@@ -530,21 +548,22 @@ class IntegratedFilterManager:
 
             # 1. 패턴 재분석
             logging.info("[통합 필터] 1단계: 패턴 재분석 중...")
-            winning_numbers = self.db_manager.get_all_winning_numbers()[:200]
+            # [v5 FIX #2] 전체 역사 분석(기존 [:200]은 가장 오래된 200회 버그)
+            winning_numbers = self.db_manager.get_all_winning_numbers()
             patterns = self.adaptive_filter.analyze_patterns(winning_numbers)
             self.db_manager.save_pattern_analysis(round_num, patterns)
-            logging.info(f"[통합 필터] ✅ 패턴 재분석 완료: {len(patterns)}개 패턴")
+            logging.info(f"[통합 필터] [O] 패턴 재분석 완료: {len(patterns)}개 패턴")
 
             # 2. 동적 기준 생성
             logging.info("[통합 필터] 2단계: 동적 필터 기준 생성 중...")
             dynamic_criteria = self.adaptive_filter.generate_dynamic_criteria()
             self.adaptive_filter.save_criteria_to_db(dynamic_criteria)
-            logging.info(f"[통합 필터] ✅ 동적 기준 생성 완료: {len(dynamic_criteria)}개 기준")
+            logging.info(f"[통합 필터] [O] 동적 기준 생성 완료: {len(dynamic_criteria)}개 기준")
 
             # 3. 개별 필터 업데이트
             logging.info("[통합 필터] 3단계: 개별 필터 업데이트 중...")
             updated_filters = self._update_individual_filters(dynamic_criteria)
-            logging.info(f"[통합 필터] ✅ 필터 업데이트 완료: {len(updated_filters)}개 필터")
+            logging.info(f"[통합 필터] [O] 필터 업데이트 완료: {len(updated_filters)}개 필터")
 
             # 4. 업데이트 히스토리 저장
             from datetime import datetime
@@ -559,7 +578,7 @@ class IntegratedFilterManager:
             self.update_history.append(update_info)
 
             logging.info("="*60)
-            logging.info(f"[통합 필터] ✅ 새 회차 자동 업데이트 완료: {round_num}회차")
+            logging.info(f"[통합 필터] [O] 새 회차 자동 업데이트 완료: {round_num}회차")
             logging.info("="*60)
 
         except Exception as e:

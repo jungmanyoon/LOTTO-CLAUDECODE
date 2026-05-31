@@ -29,17 +29,17 @@ class SystemStateManager:
         self.state_file = Path(self.STATE_FILE)
         self.state = self._load_state()
 
-        # ✨ NEW: Weekly Cycle Manager 통합
+        # [NEW] NEW: Weekly Cycle Manager 통합
         self.weekly_cycle_manager = weekly_cycle_manager
         self.backtesting_func = backtesting_func
 
         logging.info("[SystemStateManager] 상태 관리자 초기화 완료")
         if self.weekly_cycle_manager:
-            logging.info("[SystemStateManager] ✨ WeeklyCycleManager 통합됨")
+            logging.info("[SystemStateManager] [NEW] WeeklyCycleManager 통합됨")
 
     def set_weekly_cycle_manager(self, weekly_cycle_manager, backtesting_func=None):
         """
-        ✨ NEW: WeeklyCycleManager 설정 (나중에 설정 가능)
+        [NEW] NEW: WeeklyCycleManager 설정 (나중에 설정 가능)
 
         Args:
             weekly_cycle_manager: WeeklyCycleManager 인스턴스
@@ -81,13 +81,18 @@ class SystemStateManager:
             }
 
     def _save_state(self, state: Dict[str, Any]):
-        """상태 파일 저장"""
+        """상태 파일 저장 (원자적 쓰기: tmp -> os.replace)"""
         try:
             # data 디렉토리 생성
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(self.state_file, 'w', encoding='utf-8') as f:
+            # [NR-P0-3 FIX] 원자적 쓰기: 임시파일에 먼저 쓴 뒤 os.replace로 교체.
+            # 기존 직접 쓰기는 쓰는 도중 크래시/동시접근 시 파일이 손상되어, 다음 로드에서
+            # 예외 → 회차 0으로 리셋되는 위험이 있었음(재시작 시 "새로 시작" 증상의 한 원인).
+            tmp_file = str(self.state_file) + '.tmp'
+            with open(tmp_file, 'w', encoding='utf-8') as f:
                 json.dump(state, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_file, self.state_file)
 
             logging.debug(f"[SystemState] 상태 파일 저장: 회차 {state.get('last_round', 0)}")
         except Exception as e:
@@ -111,24 +116,24 @@ class SystemStateManager:
 
             # DB 회차가 상태 파일보다 최신인 경우
             if db_round > state_round:
-                logging.warning(f"[SystemState] 🔄 새 회차 감지: {state_round} → {db_round}")
+                logging.warning(f"[SystemState] [SYNC] 새 회차 감지: {state_round} → {db_round}")
                 logging.info(f"[SystemState] 현재 상태:")
                 logging.info(f"  - 패턴 분석: {pattern_round}회차")
                 logging.info(f"  - 필터 업데이트: {filter_round}회차")
                 logging.info(f"  - ML 캐시: {ml_round}회차")
 
-                # ✨ NEW: WeeklyCycleManager에 새 회차 알림
+                # [NEW] NEW: WeeklyCycleManager에 새 회차 알림
                 if self.weekly_cycle_manager and self.backtesting_func:
                     try:
-                        logging.info(f"[SystemState] ✨ WeeklyCycleManager에 새 회차 알림: Round #{db_round}")
+                        logging.info(f"[SystemState] [NEW] WeeklyCycleManager에 새 회차 알림: Round #{db_round}")
                         cycle_started = self.weekly_cycle_manager.on_new_round_detected(
                             round_num=db_round,
                             backtesting_func=self.backtesting_func
                         )
                         if cycle_started:
-                            logging.info(f"[SystemState] ✅ 새 사이클 시작됨: Round #{db_round}")
+                            logging.info(f"[SystemState] [O] 새 사이클 시작됨: Round #{db_round}")
                         else:
-                            logging.info(f"[SystemState] ℹ️ 무한 학습 모드 비활성화 또는 사이클 시작 실패")
+                            logging.info(f"[SystemState] [INFO] 무한 학습 모드 비활성화 또는 사이클 시작 실패")
                     except Exception as e:
                         logging.error(f"[SystemState] WeeklyCycleManager 호출 실패: {e}")
 
@@ -137,16 +142,16 @@ class SystemStateManager:
             # 상태 파일 컴포넌트별 불일치 확인
             if state_round > 0:
                 if pattern_round < state_round:
-                    logging.warning(f"[SystemState] ⚠️ 패턴 분석 미동기화: {pattern_round} < {state_round}")
+                    logging.warning(f"[SystemState] [WARN] 패턴 분석 미동기화: {pattern_round} < {state_round}")
                     return True
                 if filter_round < state_round:
-                    logging.warning(f"[SystemState] ⚠️ 필터 미동기화: {filter_round} < {state_round}")
+                    logging.warning(f"[SystemState] [WARN] 필터 미동기화: {filter_round} < {state_round}")
                     return True
                 if ml_round < state_round:
-                    logging.warning(f"[SystemState] ⚠️ ML 캐시 미동기화: {ml_round} < {state_round}")
+                    logging.warning(f"[SystemState] [WARN] ML 캐시 미동기화: {ml_round} < {state_round}")
                     return True
 
-            logging.info(f"[SystemState] ✅ 시스템 동기화 상태 양호 (회차: {db_round})")
+            logging.info(f"[SystemState] [O] 시스템 동기화 상태 양호 (회차: {db_round})")
             return False
 
         except Exception as e:
@@ -187,7 +192,7 @@ class SystemStateManager:
 
             self._save_state(self.state)
 
-            logging.info(f"[SystemState] ✅ 상태 업데이트 완료: 회차 {round_num}")
+            logging.info(f"[SystemState] [O] 상태 업데이트 완료: 회차 {round_num}")
 
         except Exception as e:
             logging.error(f"[SystemState] 상태 업데이트 실패: {e}")

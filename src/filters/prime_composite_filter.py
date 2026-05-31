@@ -52,23 +52,27 @@ class PrimeCompositeFilter(BaseFilter):
     def _initialize_criteria(self):
         """필터링 기준 초기화"""
         if not self._criteria:
-            # 기본 필터링 기준 설정
-            last_rounds_data = self._get_recent_winning_data(30)  # 최근 30회 데이터 분석
-            
+            # [v5 FIX] 최근 30회 → 전체 당첨번호 분석 (표본 확대로 당첨번호 과잉 제외 방지).
+            # 근거(통과율 측정): 30회 표본은 드문 소수개수(0,5개 등)를 누락하여 min/max 경계가
+            # 좁아짐 → 실제 당첨번호 7%를 제외(통과율 91%). 전체 역사 분포를 봐야 핵심 전략
+            # ("역사적으로 거의 안 나온 극단만 제외")에 부합. count>총회차면 전체 반환됨.
+            last_rounds_data = self._get_recent_winning_data(10000)  # 전체 당첨번호 분석
+
             # 소수/합성수 분포 분석
             prime_counts = []
             for numbers in last_rounds_data:
                 prime_count = sum(1 for num in numbers if num in self.primes)
                 prime_counts.append(prime_count)
-            
+
             # 빈도수 계산
             counter = Counter(prime_counts)
             valid_distributions = []
-            
+
             # 가장 빈번한 분포 패턴 추출
+            # [v5 FIX] 2%→0.5%: 전체 1200+회 기준 6회 이상 나온 소수개수는 허용(드문 정상 패턴 보호)
             total_rounds = len(prime_counts)
             for count, frequency in counter.items():
-                if frequency / total_rounds >= 0.02:  # 2% 이상 빈도의 패턴만 허용 (완화)
+                if frequency / total_rounds >= 0.005:  # 0.5% 이상 빈도 패턴 허용
                     valid_distributions.append(count)
             
             # 기준 설정
@@ -168,5 +172,8 @@ class PrimeCompositeFilter(BaseFilter):
         Returns:
             당첨 번호 목록의 목록
         """
-        numbers_data = self.db_manager.lotto_db.get_recent_numbers(count)
-        return [[int(n) for n in numbers.split(",")] for _, numbers, _ in numbers_data] 
+        # 공개 API 사용: lotto_db 내부 구현에 직접 접근하지 않음
+        raw_data = self.db_manager.get_numbers_with_bonus()
+        # 최근 count개만 추출하고, 보너스 번호 제외한 본번호 6개만 반환
+        recent_data = raw_data[-count:] if len(raw_data) >= count else raw_data
+        return [list(entry[1][:6]) for entry in recent_data]

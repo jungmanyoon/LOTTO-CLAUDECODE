@@ -61,6 +61,8 @@ class ThresholdOptimizer:
 
         # 동적 검증 세트 설정 (개선: 고정 세트 → 슬라이딩 윈도우)
         # 이유: 새 회차가 추가되면 최신 데이터로 검증해야 함
+        # [v5 FIX] 50→100: 표본 확대로 통과율/avg_matches 표준오차 감소(노이즈 롤백 방지).
+        # 50회 표본은 통과율 granularity 2%p라 0.95 임계와 정합 불가 → 100회로 1%p 해상도 확보.
         self.validation_window_size = 100   # 검증에 사용할 회차 수
         self.use_dynamic_validation = True  # 동적 검증 사용 여부
         self.state_file = "data/auto_improvement_state.json"
@@ -101,7 +103,7 @@ class ThresholdOptimizer:
 
             # 최적화 세션 테이블
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS optimization_sessions (
+                CREATE TABLE IF NOT EXISTS threshold_optimization_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_date TEXT NOT NULL,
                     study_name TEXT NOT NULL,
@@ -117,9 +119,9 @@ class ThresholdOptimizer:
                 )
             """)
 
-            # 개별 시도 결과 테이블
+            # 개별 시도 결과 테이블 (optimization_db.py의 optimization_trials와 충돌 방지)
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS optimization_trials (
+                CREATE TABLE IF NOT EXISTS threshold_trial_details (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id INTEGER,
                     trial_number INTEGER,
@@ -133,7 +135,7 @@ class ThresholdOptimizer:
                     execution_time REAL,
                     status TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (session_id) REFERENCES optimization_sessions (id)
+                    FOREIGN KEY (session_id) REFERENCES threshold_optimization_sessions (id)
                 )
             """)
 
@@ -314,7 +316,7 @@ class ThresholdOptimizer:
             self.convergence_threshold = opt_config.get('convergence_threshold', 0.01)
             self.max_cumulative_trials = opt_config.get('max_cumulative_trials', 500)
 
-            # ✨ NEW: Never-Stop Learning Mode 설정 로드
+            # [NEW] Never-Stop Learning Mode 설정 로드
             self.never_stop_learning = opt_config.get('never_stop_learning', False)
             self.weekly_cycle_mode = opt_config.get('weekly_cycle_mode', False)
             self.trial_batch_size = opt_config.get('trial_batch_size', 25)
@@ -325,9 +327,9 @@ class ThresholdOptimizer:
             self.logger.info(f"  - convergence_threshold: {self.convergence_threshold}")
             self.logger.info(f"  - max_cumulative_trials: {self.max_cumulative_trials}")
 
-            # ✨ NEW: 무한 학습 모드 로그
+            # [NEW] 무한 학습 모드 로그
             if self.never_stop_learning:
-                self.logger.info(f"  ✨ [무한 학습 모드 활성화]")
+                self.logger.info(f"  [무한 학습 모드 활성화]")
                 self.logger.info(f"     - 수렴 감지 무시: True")
                 self.logger.info(f"     - 주간 사이클 모드: {self.weekly_cycle_mode}")
                 self.logger.info(f"     - 배치 크기: {self.trial_batch_size}회")
@@ -336,7 +338,7 @@ class ThresholdOptimizer:
         except Exception as e:
             self.logger.warning(f"수렴 감지 설정 로드 실패 (기본값 사용): {e}")
             # 기본값 설정
-            self.convergence_patience = 50
+            self.convergence_patience = 150   # 50→150: 너무 빠른 조기 수렴 방지
             self.convergence_threshold = 0.01
             self.max_cumulative_trials = 500
             self.never_stop_learning = False
@@ -549,36 +551,16 @@ class ThresholdOptimizer:
             )
 
             # ============================================================
-            # Phase 4: ML 하이퍼파라미터 (모델 재훈련 여부 결정)
-            # ============================================================
-            lstm_epochs = trial.suggest_int(
-                'lstm_epochs',
-                self.lstm_epochs_range[0],
-                self.lstm_epochs_range[1],
-                step=5
-            )
-            ensemble_n_estimators = trial.suggest_int(
-                'ensemble_n_estimators',
-                self.ensemble_n_estimators_range[0],
-                self.ensemble_n_estimators_range[1],
-                step=50
-            )
-            monte_carlo_simulations = trial.suggest_int(
-                'monte_carlo_simulations',
-                self.monte_carlo_simulations_range[0],
-                self.monte_carlo_simulations_range[1],
-                step=1000
-            )
-
-            # ============================================================
-            # [v3] Trial 시작 로그
+            # [v4] Trial 시작 로그 (threshold/ml_bypass/ml_weight 3개만 최적화)
+            # NOTE: lstm_epochs, n_estimators, mc_sims는 Optuna 검색공간에서 제거
+            #       이유: 백테스팅 프레임워크에 전달 경로 없음 → 최적화 효과 없음
+            #             + 검색 공간 확대로 threshold 탐색 수렴 방해
             # ============================================================
             self.logger.info(f"")
             self.logger.info(f"={'=' * 78}")
             self.logger.info(
-                f"  [v3] Trial #{trial.number:4d} CONFIG: "
-                f"threshold={threshold:.2f}, ml_bypass={ml_bypass}, ml_weight={ml_weight:.2f}, "
-                f"lstm_epochs={lstm_epochs}, n_estimators={ensemble_n_estimators}, mc_sims={monte_carlo_simulations}"
+                f"  [v4] Trial #{trial.number:4d} CONFIG: "
+                f"threshold={threshold:.2f}, ml_bypass={ml_bypass}, ml_weight={ml_weight:.2f}"
             )
             self.logger.info(f"={'=' * 78}")
 
@@ -588,17 +570,9 @@ class ThresholdOptimizer:
             temp_config['ml_integration'] = dict(temp_config.get('ml_integration', {}))
             temp_config['ml_integration']['ml_bypass_filters'] = ml_bypass
             temp_config['ml_integration']['ml_weight'] = ml_weight
-            # Phase 4: ML 하이퍼파라미터 전달
-            temp_config['ml_params'] = {
-                'lstm_epochs': lstm_epochs,
-                'ensemble_n_estimators': ensemble_n_estimators,
-                'monte_carlo_simulations': monte_carlo_simulations,
-            }
 
-            # Phase 4: 모델 파라미터 캐시 확인 - 동일 파라미터 시 백테스팅 재실행 방지
-            # 캐시 키: (lstm_epochs, n_estimators, monte_carlo, threshold 0.01 단위 bin)
-            # [FIX] 0.1 단위 bin → 0.01 단위 bin: 1.25%와 1.30%가 동일 캐시 공유 방지
-            cache_key = (lstm_epochs, ensemble_n_estimators, monte_carlo_simulations, round(threshold * 100))
+            # 캐시 키: threshold 0.01 단위 bin + ml_bypass + ml_weight
+            cache_key = (round(threshold * 100), ml_bypass, round(ml_weight * 10))
             cache_hit = cache_key in self._model_param_cache
 
             # 백테스팅 실행
@@ -715,9 +689,9 @@ class ThresholdOptimizer:
                 if avg_matches > 3.0:  # 데이터 오염 의심
                     raise optuna.TrialPruned()
 
-                # 0값 결과 방어
-                if avg_matches == 0 and total_predictions == 0:
-                    self.logger.warning(f"[GARBAGE] Trial #{trial.number}: avg_matches=0, predictions=0 - TrialPruned")
+                # 0값 결과 방어 - avg_matches=0이면 predictions 여부와 무관하게 제거
+                if avg_matches == 0:
+                    self.logger.warning(f"[GARBAGE] Trial #{trial.number}: avg_matches=0 - TrialPruned (predictions={total_predictions})")
                     raise optuna.TrialPruned()
 
                 return score
@@ -726,7 +700,8 @@ class ThresholdOptimizer:
                 raise  # TrialPruned는 그대로 전파
             except Exception as e:
                 self.logger.error(f"백테스팅 실행 실패: {e}")
-                return float('-inf')
+                # CMA-ES 공분산 행렬 오염 방지: float('-inf') 대신 TrialPruned 사용
+                raise optuna.TrialPruned()
 
         return objective
 
@@ -739,67 +714,66 @@ class ThresholdOptimizer:
         winning_inclusion_rate: float = 1.0
     ) -> float:
         """
-        [v4] avg_matches 최대화 중심 점수 계산
+        [v5] 통과율(winning_inclusion) 최대화 중심 점수 계산
 
         공식:
-            score = avg_matches
-                    - penalty(winning_inclusion < 0.99)
-                    - 0.05 * log(pool_size / 100_000)
+            제약 충족(통과율 >= 0.95):
+                score = winning_inclusion + 0.1 * avg_matches - 0.05 * log(pool/100_000)
+            제약 위반(통과율 < 0.95):
+                score = winning_inclusion - 10 * deficit - pool_penalty
 
-        설계 원칙:
-        - avg_matches가 유일한 최적화 목표
-        - ml_inclusion 가중치 제거: Level-3 바이패스로 항상 ~1.0 → 상수 편향 유발
-        - 당첨번호 포함률 99% 미만 시 페널티 (0.98→0.99 강화)
-        - pool_penalty 계수 0.01→0.05: pool 최소화 인센티브 강화
-          (300K vs 8.14M 격차: 0.033 → 0.165로 5배 증가)
+        설계 원칙(2026-05-31 재설계, Codex/Gemini 교차검증):
+        - [핵심 전략] 1차 지표 = "실제 당첨번호가 필터를 통과하는 비율(통과율)".
+          로또는 독립시행이므로 avg_matches 최대화는 노이즈/과적합 추종(E[일치수]=0.8 고정).
+        - winning_inclusion_rate를 "주 목표"로 승격(기존 v4는 제약조건으로만 사용 → 우선순위 역전 버그).
+        - avg_matches는 가중치 0.1의 tie-breaker로 강등(동률 trial 구분용, 노이즈 영향 최소화).
+        - pool_penalty(풀 축소 인센티브) 유지: "통과율 유지하며 풀 최소화" = 핵심 전략 그 자체.
+        - 제약 위반 시 deficit*10 강페널티로 통과율 미달 trial이 절대 선택되지 않게 함.
 
         Args:
-            avg_matches: 평균 매칭 수 (주 최적화 목표)
-            ml_inclusion: ML 예측의 필터 통과율 (미사용 - 상수 편향 제거)
+            avg_matches: 평균 매칭 수 (보조 tie-breaker, 노이즈 신호)
+            ml_inclusion: ML 예측의 필터 통과율 (미사용 - Level-3 바이패스로 상수 편향)
             combination_count: 필터링 후 조합 수 (로그 페널티)
             threshold: 현재 probability threshold (내부 사용 안 함, 하위호환성 유지)
-            winning_inclusion_rate: 당첨번호가 필터 풀에 포함되는 비율 (제약조건)
+            winning_inclusion_rate: 당첨번호가 필터를 통과하는 비율 (주 최적화 목표)
         """
-        # [FIX] 0.98 → 0.99: 더 엄격한 당첨번호 포함 기준 (100회차 중 1개만 허용)
-        INCLUSION_THRESHOLD = 0.99
+        # [v5 FIX] 0.99 → 0.95: 50~100회 표본에서 1~2개 누락에 score가 절벽처럼 0이 되는
+        #          cliff 제거. 0.95는 핵심 전략(통과율 95%+)의 목표값과 정합.
+        INCLUSION_THRESHOLD = 0.95
 
         # ============================================================
-        # (A) 당첨번호 포함률 제약조건 (Hard Constraint)
-        # 99% 미만 시 미달분에 비례한 페널티 적용
-        # ============================================================
-        if winning_inclusion_rate < INCLUSION_THRESHOLD:
-            deficit = INCLUSION_THRESHOLD - winning_inclusion_rate
-            # 1% 미달 당 0.1 감점
-            penalty = deficit * 10.0
-            score = max(0.0, avg_matches - penalty)
-            self.logger.debug(
-                f"[SCORE v4] 포함률 제약 위반: {winning_inclusion_rate:.3f} < {INCLUSION_THRESHOLD} "
-                f"-> penalty={penalty:.3f}, score={score:.4f}"
-            )
-            return score
-
-        # ============================================================
-        # (B) 풀 크기 로그 페널티 (regularizer)
-        # [FIX] 계수 0.01→0.05: pool 최소화 인센티브 5배 강화
+        # (A) 풀 크기 로그 페널티 (regularizer) - 먼저 계산하여 모든 경로에 적용
         # pool=300K → penalty=0.055, pool=8.14M → penalty=0.220
-        # 기존: 300K→0.011, 8.14M→0.044 (격차 0.033)
-        # 개선: 격차 0.165로 확대 → Optuna가 더 적극적으로 pool 축소 탐색
+        # "같은 통과율이면 더 좁은 풀"을 선호하도록 유도 (핵심 전략)
         # ============================================================
         effective_pool = max(combination_count if combination_count > 0 else 8_145_060, 100_000)
         pool_penalty = 0.05 * math.log(effective_pool / 100_000)
 
         # ============================================================
-        # (C) 최종 점수: avg_matches 순수 최대화
-        # [FIX] ml_inclusion 항 제거: Level-3 바이패스로 항상 ~1.0 → 상수 0.1 편향
-        #       ml_inclusion이 실제 최적화 신호가 아닌 것으로 확인됨
+        # (B) 당첨번호 통과율 제약 위반 (Hard Constraint)
+        # 95% 미만 시 미달분에 강한 페널티 → 풀 축소 이득이 절대 이기지 못하게
         # ============================================================
-        score = avg_matches - pool_penalty
+        if winning_inclusion_rate < INCLUSION_THRESHOLD:
+            deficit = INCLUSION_THRESHOLD - winning_inclusion_rate
+            # 1%p 미달 당 0.1 감점 (통과율 주항보다 10배 큰 기울기로 위반을 강하게 회피)
+            score = winning_inclusion_rate - deficit * 10.0 - pool_penalty
+            self.logger.debug(
+                f"[SCORE v5] 통과율 제약 위반: {winning_inclusion_rate:.3f} < {INCLUSION_THRESHOLD} "
+                f"-> deficit={deficit:.3f}, score={score:.4f}"
+            )
+            return score
+
+        # ============================================================
+        # (C) 최종 점수: 통과율(주) + avg_matches(보조 tie-breaker) - 풀 페널티
+        # 통과율 충족 trial들 사이에서는 pool_penalty(풀 크기)가 실질 구분자가 됨
+        # → "통과율 95%+ 유지하면서 풀을 최대한 좁힌" trial이 최고 점수
+        # ============================================================
+        score = winning_inclusion_rate + 0.1 * avg_matches - pool_penalty
 
         self.logger.debug(
-            f"[SCORE v4] avg_matches={avg_matches:.3f} "
-            f"- pool_penalty={pool_penalty:.4f} "
-            f"(ml_inclusion={ml_inclusion:.3f} 미사용) "
-            f"-> score={score:.4f}"
+            f"[SCORE v5] winning_inclusion={winning_inclusion_rate:.3f}(주) "
+            f"+ 0.1*avg_matches={0.1 * avg_matches:.3f}(보조) "
+            f"- pool_penalty={pool_penalty:.4f} -> score={score:.4f}"
         )
 
         return score
@@ -824,13 +798,13 @@ class ThresholdOptimizer:
             최적 파라미터와 성능 지표
         """
         # ============================================================
-        # 🔄 새 회차 감지 및 검증 범위 업데이트
+        # [SYNC] 새 회차 감지 및 검증 범위 업데이트
         # ============================================================
         new_round_detected = self.check_new_round()
         if new_round_detected:
             self.logger.info(f"")
             self.logger.info(f"╔{'═' * 78}╗")
-            self.logger.info(f"║ 🆕 새 회차 감지! 검증 범위 업데이트됨                                     ║")
+            self.logger.info(f"║ [NEW] 새 회차 감지! 검증 범위 업데이트됨                                   ║")
             self.logger.info(f"╠{'═' * 78}╣")
             self.logger.info(f"║   검증 범위: {self.fixed_validation_start}~{self.fixed_validation_end}                                     ║")
             self.logger.info(f"║   이전 최고 성능 파라미터 사용                                      ║")
@@ -872,11 +846,11 @@ class ThresholdOptimizer:
         self.logger.info(f"  - 추가 시도: {n_trials}회")
         self.logger.info(f"  - 총 목표: {total_trials_target}회")
 
-        # ✨ NEW: Never-Stop Learning Mode 활성화 체크
+        # [NEW] Never-Stop Learning Mode 활성화 체크
         if self.never_stop_learning:
             self.logger.info(f"")
             self.logger.info(f"╔{'═' * 78}╗")
-            self.logger.info(f"║ ✨ 무한 학습 모드 활성화 - 수렴 감지 무시됨                                 ║")
+            self.logger.info(f"║ [ON] 무한 학습 모드 활성화 - 수렴 감지 무시됨                               ║")
             self.logger.info(f"╠{'═' * 78}╣")
             self.logger.info(f"║   • 최대 trial 제한 무시: {self.max_cumulative_trials} → ∞                      ║")
             self.logger.info(f"║   • 수렴 감지 무시: patience={self.convergence_patience} → 무효화               ║")
@@ -887,7 +861,7 @@ class ThresholdOptimizer:
 
         # 수렴 감지: 최대 누적 trial 체크 (무한 학습 모드에서는 우회)
         if not self.weekly_cycle_mode and previous_trials >= self.max_cumulative_trials:
-            self.logger.warning(f"⚠️ 최대 누적 trial 수 도달 ({previous_trials}/{self.max_cumulative_trials})")
+            self.logger.warning(f"[WARN] 최대 누적 trial 수 도달 ({previous_trials}/{self.max_cumulative_trials})")
             self.logger.warning(f"   기존 최적 파라미터 유지: threshold={study.best_trial.params['threshold']:.2f}, "
                               f"ml_bypass={study.best_trial.params['ml_bypass']}, "
                               f"ml_weight={study.best_trial.params['ml_weight']:.2f}")
@@ -912,7 +886,7 @@ class ThresholdOptimizer:
             )
             if is_converged:
                 # Changed from WARNING to INFO: Convergence is a positive outcome, not an error
-                self.logger.info(f"✅ [CONVERGED] 최적화 수렴 완료 - 최적 파라미터 적용")
+                self.logger.info(f"[CONVERGED] 최적화 수렴 완료 - 최적 파라미터 적용")
                 self.logger.info(f"   최적 파라미터: threshold={study.best_trial.params['threshold']:.2f}, "
                                f"ml_bypass={study.best_trial.params['ml_bypass']}, "
                                f"ml_weight={study.best_trial.params['ml_weight']:.2f}")
@@ -935,7 +909,10 @@ class ThresholdOptimizer:
                 initial_params = {
                     'threshold': self.best_params.get('threshold', 1.0),
                     'ml_bypass': self.best_params.get('ml_bypass', 15),
-                    'ml_weight': self.best_params.get('ml_weight', 0.5)
+                    'ml_weight': self.best_params.get('ml_weight', 0.5),
+                    'lstm_epochs': self.best_params.get('lstm_epochs', 30),
+                    'ensemble_n_estimators': self.best_params.get('ensemble_n_estimators', 100),
+                    'monte_carlo_simulations': self.best_params.get('monte_carlo_simulations', 6000),
                 }
                 study.enqueue_trial(initial_params)
                 self.logger.info(f"[새 회차] 이전 최고 성능 파라미터로 초기화: {initial_params}")
@@ -944,14 +921,17 @@ class ThresholdOptimizer:
                 study.enqueue_trial({
                     'threshold': self.current_config.get('global_probability_threshold', 1.0),
                     'ml_bypass': self.current_config.get('ml_integration', {}).get('ml_bypass_filters', 8),
-                    'ml_weight': self.current_config.get('ml_integration', {}).get('ml_weight', 0.4)
+                    'ml_weight': self.current_config.get('ml_integration', {}).get('ml_weight', 0.4),
+                    'lstm_epochs': 30,
+                    'ensemble_n_estimators': 100,
+                    'monte_carlo_simulations': 6000,
                 })
                 self.logger.info("첫 실행: 현재 설정을 초기값으로 사용")
         else:
             self.logger.info(f"이전 최적 파라미터 기반으로 계속 탐색 (best score: {study.best_value:.3f})")
 
         # 최적화 실행
-        # ✅ FIX: VSCode/Cursor 디버거에서 tqdm 진행 표시줄 충돌 방지
+        # [FIX] VSCode/Cursor 디버거에서 tqdm 진행 표시줄 충돌 방지
         study.optimize(
             self.create_objective(backtesting_func),
             n_trials=n_trials,
@@ -1025,14 +1005,17 @@ class ThresholdOptimizer:
             if overall_best_score <= 0:
                 return False  # 점수가 0이하면 수렴 판단 불가
 
-            improvement_rate = (recent_best_score - overall_best_score) / abs(overall_best_score)
+            # [FIX] 공식 수정: recent - overall이 아닌 overall - recent
+            # 최근 최고가 전체 최고와 얼마나 차이 나는지 측정
+            # improvement_rate < threshold → 최근이 전체 최고 대비 거의 차이 없음 → 수렴
+            improvement_rate = (overall_best_score - recent_best_score) / abs(overall_best_score)
 
             # 로그 출력
             self.logger.info(f"[수렴 감지] 최근 {patience}회 최고: {recent_best_score:.4f}, "
                            f"전체 최고: {overall_best_score:.4f}, "
-                           f"개선율: {improvement_rate:.2%}")
+                           f"정체율: {improvement_rate:.2%}")
 
-            # 개선율이 threshold 이하면 수렴으로 판단
+            # 정체율이 threshold 이하면 수렴으로 판단 (최근이 전체 최고와 거의 같음)
             if improvement_rate < threshold:
                 self.logger.info(f"[CONVERGED] [수렴 감지] {patience}회 동안 {threshold:.1%} 이상 개선 없음 → 최적화 수렴됨")
                 return True
@@ -1051,7 +1034,7 @@ class ThresholdOptimizer:
             # 세션 정보 저장
             best_trial = study.best_trial
             cursor.execute("""
-                INSERT INTO optimization_sessions
+                INSERT INTO threshold_optimization_sessions
                 (session_date, study_name, n_trials, best_threshold, best_ml_bypass,
                  best_ml_weight, best_score, avg_matches, ml_inclusion_rate, combination_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1074,7 +1057,7 @@ class ThresholdOptimizer:
             for trial in study.trials:
                 if trial.state == optuna.trial.TrialState.COMPLETE:
                     cursor.execute("""
-                        INSERT INTO optimization_trials
+                        INSERT INTO threshold_trial_details
                         (session_id, trial_number, threshold, ml_bypass, ml_weight,
                          score, avg_matches, ml_inclusion_rate, combination_count,
                          execution_time, status)
@@ -1112,7 +1095,7 @@ class ThresholdOptimizer:
             return False
 
         try:
-            # ✅ FIX: 최신 설정 파일 다시 로드 (FilterAutoAdjuster 조정값 반영)
+            # [FIX] 최신 설정 파일 다시 로드 (FilterAutoAdjuster 조정값 반영)
             # 메모리 캐시(self.current_config) 대신 파일에서 직접 로드
             with open(self.adaptive_config_path, 'r', encoding='utf-8') as f:
                 current_config = yaml.safe_load(f)
@@ -1122,8 +1105,8 @@ class ThresholdOptimizer:
             if has_dynamic_criteria:
                 self.logger.info("[ThresholdOptimizer] dynamic_criteria 발견 - 보존됨")
 
-            # ✅ FIX: global_probability_threshold만 업데이트 (dynamic_criteria 보존)
-            # ✅ PRECISION FIX: round()로 부동소수점 오차 제거
+            # [FIX] global_probability_threshold만 업데이트 (dynamic_criteria 보존)
+            # [FIX] PRECISION: round()로 부동소수점 오차 제거
             old_threshold = current_config.get('global_probability_threshold', 1.0)
             current_config['global_probability_threshold'] = round(self.best_params['threshold'], 2)
             self.logger.info(
@@ -1185,7 +1168,7 @@ class ThresholdOptimizer:
         with sqlite3.connect(self.optimization_db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM optimization_sessions
+                SELECT * FROM threshold_optimization_sessions
                 ORDER BY created_at DESC
                 LIMIT ?
             """, (limit,))
@@ -1289,22 +1272,22 @@ class ThresholdOptimizer:
                 self.logger.info(f"성능 개선 확인 ({improvement:.1%}), 새 파라미터 적용")
                 self.apply_best_params(validate=True)
             elif improvement < -0.10:  # [FIX] 10% 이상 성능 하락 감지
-                self.logger.warning(f"⚠️ 성능 하락 감지: {improvement:.1%}")
+                self.logger.warning(f"[WARN] 성능 하락 감지: {improvement:.1%}")
                 self.logger.warning("자동 롤백 시작 - 이전 파라미터로 복원 시도...")
 
                 # 자동 롤백 수행
                 rollback_success = self.rollback_params()
                 if rollback_success:
-                    self.logger.info("✅ 자동 롤백 완료 - 이전 파라미터 복원됨")
+                    self.logger.info("[O] 자동 롤백 완료 - 이전 파라미터 복원됨")
                 else:
-                    self.logger.error("❌ 자동 롤백 실패 - 백업 파일 없음")
+                    self.logger.error("[X] 자동 롤백 실패 - 백업 파일 없음")
             else:
                 self.logger.info(f"개선율 미달 ({improvement:.1%} < {min_improvement:.1%}), 현재 파라미터 유지")
         else:
             # 첫 최적화인 경우
             self.apply_best_params(validate=True)
 
-    def reset_study(self, study_name: str = "lotto_threshold_optimization_cmaes"):
+    def reset_study(self, study_name: str = "lotto_threshold_v4"):
         """
         최적화 스터디 초기화 (새로 시작하고 싶을 때 사용)
 
@@ -1323,7 +1306,7 @@ class ThresholdOptimizer:
             self.logger.warning(f"스터디 초기화 실패 (이미 없을 수 있음): {e}")
             return False
 
-    def get_study_info(self, study_name: str = "lotto_threshold_optimization_cmaes") -> Dict:
+    def get_study_info(self, study_name: str = "lotto_threshold_v4") -> Dict:
         """
         현재 스터디 정보 조회
 
@@ -1362,7 +1345,7 @@ class ThresholdOptimizer:
         with sqlite3.connect(self.optimization_db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT created_at FROM optimization_sessions
+                SELECT created_at FROM threshold_optimization_sessions
                 ORDER BY created_at DESC
                 LIMIT 1
             """)

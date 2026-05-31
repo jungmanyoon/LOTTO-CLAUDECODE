@@ -223,11 +223,11 @@ class AdaptiveProbabilityFilter:
         except Exception as e:
             logging.warning(f"[적응형 필터] YAML 폴백 로드 실패: {e}")
 
-        # 🔥 CRITICAL: 항상 probability_threshold 기반으로 재계산
+        # [HOT] CRITICAL: 항상 probability_threshold 기반으로 재계산
         logging.info(f"[적응형 필터] probability_threshold={self.probability_threshold}% 기반 dynamic_criteria 계산 시작")
         criteria = {}
 
-        # ★ 핵심 수정: pattern_statistics가 초기화되지 않은 경우 YAML 폴백 사용
+        # [KEY] 핵심 수정: pattern_statistics가 초기화되지 않은 경우 YAML 폴백 사용
         required_keys = ['odd_even', 'consecutive', 'sum_range', 'multiple', 'average', 'match', 'max_gap', 'ten_section']
         if not self.pattern_statistics or not all(key in self.pattern_statistics for key in required_keys):
             logging.info(f"[적응형 필터] pattern_statistics 미초기화 - YAML 폴백 사용")
@@ -310,12 +310,16 @@ class AdaptiveProbabilityFilter:
         }
         
         # 5. 10구간 필터 - 1% 이하만 제외
+        # [v5 FIX #1] 카운트 몰림 필터는 threshold 상한 1.0%로 클램프(당첨번호 과잉 제외 방지).
+        # 근거(53에이전트 감사): threshold가 2.0~3.0으로 오르면 출현율 3% 미만 패턴을 모두 제외하여
+        # 실제 당첨번호 제거 → 통과율 84% 급락/롤백. 실측상 th<=1.0에서 통과율 98%+ 유지.
+        ten_section_threshold = min(self.probability_threshold, 1.0)
         section_limits = {}
         for section in ['section1', 'section2', 'section3', 'section4', 'section5']:
             excluded = []
             if section in self.pattern_statistics['ten_section']:
                 for count, rate in self.pattern_statistics['ten_section'][section].items():
-                    if rate < self.probability_threshold:
+                    if rate < ten_section_threshold:
                         excluded.append(count)
             section_limits[section] = excluded
         
@@ -546,12 +550,14 @@ class AdaptiveProbabilityFilter:
         }
 
         # 16. 이상치 탐지 필터 (OutlierDetection) - 1% 이하 패턴 제외
+        # [v5 FIX #1] threshold 상한 1.0%로 클램프 (당첨번호 과잉 제외 방지)
+        outlier_threshold = min(self.probability_threshold, 1.0)
         outlier_dist = self.pattern_statistics.get('outlier_detection', {})
         max_outliers = 6  # 기본값 (모든 이상치 허용)
 
         # threshold 이하인 패턴 찾기 (높은 이상치 개수부터 검사)
         for outlier_count in [6, 5, 4, 3, 2, 1]:
-            if outlier_count in outlier_dist and outlier_dist[outlier_count] <= self.probability_threshold:
+            if outlier_count in outlier_dist and outlier_dist[outlier_count] <= outlier_threshold:
                 # 이 개수 이상 이상치는 제외
                 max_outliers = outlier_count - 1
                 logging.info(f"[이상치 필터] {outlier_count}개 이상치 패턴이 {outlier_dist[outlier_count]:.2f}% (임계값 {self.probability_threshold}% 이하)이므로 제외")
@@ -565,12 +571,14 @@ class AdaptiveProbabilityFilter:
         }
 
         # 17. 사분면 균형 필터 (BalancedQuadrant) - 1% 이하 패턴 제외
+        # [v5 FIX #1] threshold 상한 1.0%로 클램프 (당첨번호 과잉 제외 방지)
+        quadrant_threshold = min(self.probability_threshold, 1.0)
         quadrant_dist = self.pattern_statistics.get('balanced_quadrant', {})
         max_per_quadrant = 6  # 기본값 (모든 분포 허용)
 
         # threshold 이하인 패턴 찾기 (높은 몰림부터 검사)
         for quadrant_count in [6, 5, 4, 3, 2]:
-            if quadrant_count in quadrant_dist and quadrant_dist[quadrant_count] <= self.probability_threshold:
+            if quadrant_count in quadrant_dist and quadrant_dist[quadrant_count] <= quadrant_threshold:
                 # 이 개수 이상 몰림은 제외
                 max_per_quadrant = quadrant_count - 1
                 logging.info(f"[사분면 필터] 한 사분면 {quadrant_count}개 몰림 패턴이 {quadrant_dist[quadrant_count]:.2f}% (임계값 {self.probability_threshold}% 이하)이므로 제외")
@@ -582,7 +590,7 @@ class AdaptiveProbabilityFilter:
             'reason': f"{self.probability_threshold}% 이하 사분면 몰림 패턴 제외"
         }
 
-        # 🔥 YAML 폴백: 확률 계산이 불가능한 필터에 대해 YAML 값 사용
+        # [HOT] YAML 폴백: 확률 계산이 불가능한 필터에 대해 YAML 값 사용
         # (예: ac_value, fixed_step 등 패턴 통계가 없는 필터)
         fallback_filters = ['ac_value', 'fixed_step']
         for filter_name in fallback_filters:
@@ -590,7 +598,7 @@ class AdaptiveProbabilityFilter:
                 criteria[filter_name] = yaml_fallback[filter_name]
                 logging.info(f"[적응형 필터] {filter_name}: YAML 폴백 값 사용")
 
-        # 🔥 요약 로그: 계산된 주요 기준값
+        # [HOT] 요약 로그: 계산된 주요 기준값
         logging.info(f"[적응형 필터] === probability_threshold={self.probability_threshold}% 기반 계산 완료 ===")
         logging.info(f"  - match: max_match={criteria.get('match', {}).get('max_match', 'N/A')}")
         logging.info(f"  - consecutive: max_consecutive={criteria.get('consecutive', {}).get('max_consecutive', 'N/A')}")
@@ -1077,7 +1085,9 @@ class AdaptiveProbabilityFilter:
             logging.info(f"[적응형 필터] 필터링 시작 (모드: {mode}, 임계값: {self.probability_threshold}%)")
             
             # 과거 당첨번호 분석
-            winning_numbers = self.db_manager.get_all_winning_numbers()[:200]
+            # [v5 FIX #2] [:200] 제거: ORDER BY round ASC라 '가장 오래된 200회'(약 20년전)를
+            # 분석하던 버그. 핵심 전략(전체 1214회 역사 패턴)상 전체 당첨번호로 분석해야 정확/안정적.
+            winning_numbers = self.db_manager.get_all_winning_numbers()
             
             # 패턴 분석
             self.analyze_patterns(winning_numbers)

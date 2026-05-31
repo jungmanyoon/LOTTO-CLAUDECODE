@@ -20,7 +20,7 @@ backtesting_targets:
 dynamic_criteria:
   ac_value:
     max_ac: 10
-    min_ac: 3
+    min_ac: 2  # [v5 FIX] 3->2: 실제 당첨번호 1152회(AC값2, 준연속패턴) 보호. AC값1은 여전히 제외
     use_scoring: false
   arithmetic:
     exclude_lengths:
@@ -36,9 +36,9 @@ dynamic_criteria:
     max_consecutive: 5
     min_gap: 1
   digit_sum:
-    max_digit_sum: 63
-    max_digit_sum_range: 13
-    min_digit_sum: 15
+    max_digit_sum: 60  # [v5 FIX] 55->60: 실제 당첨번호 1189회(digit_sum=59) 보호. 60 초과는 여전히 제외
+    max_digit_sum_range: 17
+    min_digit_sum: 9
     min_digit_sum_range: 0
   dispersion:
     max_std_dev: 20.0
@@ -140,7 +140,7 @@ filters:
   section: false
   sum_range: true
   ten_section: false
-global_probability_threshold: 1.5
+global_probability_threshold: 0.5
 logging:
   log_excluded_patterns: true
   statistics_interval: 25
@@ -148,7 +148,7 @@ logging:
 ml_integration:
   ensemble_confidence_threshold: 0.2
   ml_bypass_filters: 10
-  ml_weight: 0.5
+  ml_weight: 0.4
 ml_relaxed_threshold: 0.5
 performance:
   batch_size: 5000
@@ -157,13 +157,13 @@ performance:
   max_workers: 4
   parallel_processing: true
 statistical_weights:
+  alpha_ml: 0.65
+  beta_stat: 0.35
   enabled: true
-  alpha_ml: 0.65       # ML 점수 가중치 (Optuna 최적화 대상)
-  beta_stat: 0.35      # 통계 점수 가중치
-  pool_top_n: 300      # 후보 풀 크기 (기존 300 유지)
   factors:
-    freq_weight: 0.35  # 번호 빈도 편향 (1214회차 기반, 신뢰도 최고)
-    digit_weight: 0.25 # 끝자리 편향 (4,3,1 선호 / 9,8,0 기피)
-    absence_weight: 0.20  # 연속 미출현 패턴
-    pair_weight: 0.15  # 고빈도 쌍 포함 가중치
-    sum_weight: 0.05   # 합계 범위 (경쟁 감소 전략 - 보조)
+    absence_weight: 0.2
+    digit_weight: 0.25
+    freq_weight: 0.35
+    pair_weight: 0.15
+    sum_weight: 0.05
+  pool_top_n: 300

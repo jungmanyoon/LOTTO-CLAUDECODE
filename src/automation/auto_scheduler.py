@@ -5,7 +5,7 @@
 새 회차 감지, 정기 작업 실행, 시스템 최적화
 """
 
-import schedule
+import schedule as schedule_module
 import threading
 import time
 import logging
@@ -44,9 +44,12 @@ class AutoScheduler:
             'optimization_complete': None
         }
         
+        # 독립 스케줄러 인스턴스 (global schedule 모듈과 충돌 방지)
+        self.scheduler = schedule_module.Scheduler()
+
         # 스케줄 설정
         self._setup_schedule()
-        
+
         logging.info("[AutoScheduler] 24시간 스케줄러 초기화 완료")
     
     def _setup_schedule(self):
@@ -54,24 +57,24 @@ class AutoScheduler:
         # 토요일 저녁 8시 45분부터 9시 30분까지 1분마다 새 회차 확인
         # (로또 추첨 시간: 토요일 저녁 8시 45분)
         for minute in range(45, 60):  # 8시 45분 ~ 8시 59분
-            schedule.every().saturday.at(f"20:{minute:02d}").do(self._check_new_round_intensive)
+            self.scheduler.every().saturday.at(f"20:{minute:02d}").do(self._check_new_round_intensive)
         for minute in range(0, 31):  # 9시 00분 ~ 9시 30분 (여유있게)
-            schedule.every().saturday.at(f"21:{minute:02d}").do(self._check_new_round_intensive)
+            self.scheduler.every().saturday.at(f"21:{minute:02d}").do(self._check_new_round_intensive)
 
         # 다른 날은 3시간마다 확인 (토요일 제외)
-        schedule.every(3).hours.do(self._check_new_round_if_not_saturday)
+        self.scheduler.every(3).hours.do(self._check_new_round_if_not_saturday)
 
         # 매일 오전 9시: 일일 예측 실행
-        schedule.every().day.at("09:00").do(self._run_daily_prediction)
+        self.scheduler.every().day.at("09:00").do(self._run_daily_prediction)
 
         # 매주 일요일 오전 3시: 시스템 최적화
-        schedule.every().sunday.at("03:00").do(self._run_weekly_optimization)
+        self.scheduler.every().sunday.at("03:00").do(self._run_weekly_optimization)
 
         # 30분마다: 시스템 상태 체크
-        schedule.every(30).minutes.do(self._health_check)
+        self.scheduler.every(30).minutes.do(self._health_check)
 
         # 매일 자정: 로그 정리
-        schedule.every().day.at("00:00").do(self._cleanup_logs)
+        self.scheduler.every().day.at("00:00").do(self._cleanup_logs)
 
         logging.info("[AutoScheduler] 스케줄 설정 완료")
         logging.info("[AutoScheduler] 토요일 20:45 ~ 21:30 집중 모니터링 활성화")
@@ -104,7 +107,7 @@ class AutoScheduler:
         """스케줄러 메인 루프"""
         while self.running:
             try:
-                schedule.run_pending()
+                self.scheduler.run_pending()
                 time.sleep(1)
             except Exception as e:
                 logging.error(f"[AutoScheduler] 스케줄러 오류: {e}")
@@ -124,18 +127,26 @@ class AutoScheduler:
 
                 # None 체크 추가하여 NoneType 비교 오류 방지
                 if current_db_round is not None and latest_web_round > current_db_round:
-                    logging.warning(f"[AutoScheduler] 🆕 새 회차 발견! {current_db_round} → {latest_web_round}")
+                    logging.warning(f"[AutoScheduler] [NEW] 새 회차 발견! {current_db_round} -> {latest_web_round}")
                     
                     # 새 회차 데이터 수집
                     if self._fetch_and_save_new_round(latest_web_round):
                         # 콜백 트리거
                         if self.callbacks['new_round_detected']:
                             self.callbacks['new_round_detected'](latest_web_round)
-                        
+
+                        # [NR-P0-1 FIX] 일반 경로도 토요일 경로(_check_new_round_intensive)와 동일하게
+                        # 트리거 체인을 직접 호출. 기존엔 일반 경로가 _trigger_update_chain을 호출하지 않아
+                        # system_state(패턴/필터/ML/last_round)가 갱신되지 않고 1216에 멈추는 근본 원인이었음.
+                        # subprocess(--fetch-only)로 저장하면 부모의 new_round_added 콜백이 발동 안 하므로
+                        # 여기서 명시적으로 체인을 호출해야 상태/패턴/필터가 갱신됨.
+                        logging.info("[AutoScheduler] [SYNC] 자동 업데이트 체인 시작(일반 경로)...")
+                        self._trigger_update_chain(latest_web_round)
+
                         # 재필터링 트리거
                         if self.callbacks['refilter_required']:
                             self.callbacks['refilter_required']('new_round', latest_web_round)
-                        
+
                         self._update_job_status(job_name, True)
                         return True
                 else:
@@ -153,7 +164,7 @@ class AutoScheduler:
         """토요일 집중 모니터링 - 당첨번호 확인 후 자동 실행"""
         job_name = 'check_new_round_intensive'
         current_time = datetime.now()
-        logging.info(f"[AutoScheduler] 🎯 토요일 집중 모니터링 시작 ({current_time.strftime('%H:%M:%S')})")
+        logging.info(f"[AutoScheduler] [TARGET] 토요일 집중 모니터링 시작 ({current_time.strftime('%H:%M:%S')})")
 
         try:
             # 새 회차 확인
@@ -164,28 +175,28 @@ class AutoScheduler:
 
                 # None 체크 추가하여 NoneType 비교 오류 방지
                 if current_db_round is not None and latest_web_round > current_db_round:
-                    logging.warning(f"[AutoScheduler] 🎉 새 당첨번호 발표! {current_db_round} → {latest_web_round}")
+                    logging.warning(f"[AutoScheduler] [!] 새 당첨번호 발표! {current_db_round} -> {latest_web_round}")
 
                     # 새 회차 데이터 수집
                     if self._fetch_and_save_new_round(latest_web_round):
-                        logging.info(f"[AutoScheduler] ✅ {latest_web_round}회차 당첨번호 저장 완료!")
+                        logging.info(f"[AutoScheduler] [O] {latest_web_round}회차 당첨번호 저장 완료!")
 
                         # 콜백 트리거 - 새 회차 감지
                         if self.callbacks['new_round_detected']:
                             self.callbacks['new_round_detected'](latest_web_round)
 
                         # 자동 업데이트 콜백 체인 실행
-                        logging.info("[AutoScheduler] 🔄 자동 업데이트 체인 시작...")
+                        logging.info("[AutoScheduler] [SYNC] 자동 업데이트 체인 시작...")
                         self._trigger_update_chain(latest_web_round)
 
                         # 자동 재필터링 실행
-                        logging.info("[AutoScheduler] 🔄 자동 재필터링 시작...")
+                        logging.info("[AutoScheduler] [SYNC] 자동 재필터링 시작...")
                         if self.callbacks['refilter_required']:
                             self.callbacks['refilter_required']('new_round', latest_web_round)
 
                         # 자동 예측 생성 (토요일 밤에만)
                         if current_time.hour >= 20:  # 저녁 8시 이후
-                            logging.info("[AutoScheduler] 🎲 새 회차 예측 생성 시작...")
+                            logging.info("[AutoScheduler] [RANDOM] 새 회차 예측 생성 시작...")
                             self._run_prediction_for_new_round(latest_web_round + 1)
 
                         # 최적화 콜백 실행
@@ -235,7 +246,7 @@ class AutoScheduler:
             )
 
             if result.returncode == 0:
-                logging.info(f"[AutoScheduler] ✅ {next_round}회차 예측 생성 완료!")
+                logging.info(f"[AutoScheduler] [O] {next_round}회차 예측 생성 완료!")
 
                 # 예측 완료 알림
                 self._notify_prediction_complete()
@@ -312,7 +323,7 @@ class AutoScheduler:
         """새 회차 데이터 수집 및 저장"""
         try:
             # main.py의 fetch_lotto_data 호출
-            # ✅ FIX: 데이터 수집 타임아웃 60초 → 180초 (3분)
+            # [O] FIX: 데이터 수집 타임아웃 60초 -> 180초 (3분)
             result = subprocess.run(
                 ['python', 'main.py', '--fetch-only'],
                 capture_output=True,
@@ -561,7 +572,7 @@ class AutoScheduler:
     
     def _send_alert(self, message: str):
         """경고 알림 전송"""
-        logging.critical(f"[AutoScheduler] 🚨 {message}")
+        logging.critical(f"[AutoScheduler] [!] {message}")
         # 관리자 알림
     
     def _trigger_update_chain(self, round_num: int):
@@ -586,7 +597,7 @@ class AutoScheduler:
             # 4. 시스템 상태 업데이트
             self._update_system_state(round_num)
 
-            logging.info(f"[AutoScheduler] ✅ 자동 업데이트 체인 완료: {round_num}회차")
+            logging.info(f"[AutoScheduler] [O] 자동 업데이트 체인 완료: {round_num}회차")
 
         except Exception as e:
             logging.error(f"[AutoScheduler] 자동 업데이트 체인 실패: {e}")
@@ -600,14 +611,12 @@ class AutoScheduler:
             from src.core.pattern_manager import PatternManager
             pattern_mgr = PatternManager(self.db_manager)
 
-            # 최근 200개 당첨번호로 패턴 분석
-            winning_numbers = self.db_manager.get_all_winning_numbers()[:200]
-            patterns = pattern_mgr.analyze_all_patterns(winning_numbers)
+            # 최신 회차 번호 조회 후 analyze_patterns(round_num) 호출
+            all_rounds = self.db_manager.get_numbers_with_bonus()
+            latest_round = all_rounds[-1][0] if all_rounds else round_num
+            pattern_mgr.analyze_patterns(latest_round)
 
-            # 결과 저장
-            self.db_manager.save_pattern_analysis(round_num, patterns)
-
-            logging.info(f"[AutoScheduler] ✅ 패턴 재분석 완료: {len(patterns)}개 패턴")
+            logging.info(f"[AutoScheduler] [O] 패턴 재분석 완료: 회차={latest_round}")
 
         except Exception as e:
             logging.error(f"[AutoScheduler] 패턴 재분석 실패: {e}")
@@ -630,7 +639,7 @@ class AutoScheduler:
             filter_mgr = IntegratedFilterManager(self.db_manager, threshold)
             update_result = filter_mgr.update_filters_weekly(round_num)
 
-            logging.info(f"[AutoScheduler] ✅ 필터 업데이트 완료: {update_result.get('updated_filters', [])}개 필터")
+            logging.info(f"[AutoScheduler] [O] 필터 업데이트 완료: {update_result.get('updated_filters', [])}개 필터")
 
         except Exception as e:
             logging.error(f"[AutoScheduler] 필터 업데이트 실패: {e}")
@@ -649,7 +658,7 @@ class AutoScheduler:
                 shutil.rmtree(cache_dir)
                 # 디렉토리 재생성
                 os.makedirs(cache_dir)
-                logging.info("[AutoScheduler] ✅ ML 캐시 무효화 완료 (다음 실행 시 재학습)")
+                logging.info("[AutoScheduler] [O] ML 캐시 무효화 완료 (다음 실행 시 재학습)")
             else:
                 logging.info("[AutoScheduler] ML 캐시가 없음 (스킵)")
 
@@ -666,7 +675,7 @@ class AutoScheduler:
             state_mgr = SystemStateManager()
             state_mgr.update_state(round_num, components=['all', 'pattern', 'filter', 'ml'])
 
-            logging.info(f"[AutoScheduler] ✅ 시스템 상태 업데이트 완료: {round_num}회차")
+            logging.info(f"[AutoScheduler] [O] 시스템 상태 업데이트 완료: {round_num}회차")
 
         except Exception as e:
             logging.error(f"[AutoScheduler] 시스템 상태 업데이트 실패: {e}")
@@ -680,7 +689,7 @@ class AutoScheduler:
 
     def _on_new_round_added(self, round_num: int):
         """새 회차 추가 시 콜백 핸들러"""
-        logging.info(f"[AutoScheduler] 🆕 새 회차 감지: {round_num}회차")
+        logging.info(f"[AutoScheduler] [NEW] 새 회차 감지: {round_num}회차")
         self._trigger_update_chain(round_num)
 
     def get_status(self) -> Dict[str, Any]:
@@ -690,6 +699,6 @@ class AutoScheduler:
             'jobs': self.job_status,
             'next_runs': {
                 job.job_func.__name__: job.next_run
-                for job in schedule.jobs
+                for job in self.scheduler.jobs
             }
         }

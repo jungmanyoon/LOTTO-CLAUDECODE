@@ -108,6 +108,15 @@ class FilterCache(IFilterCache):
         if not excluded_combinations:
             return
 
+        # [v5 FIX #25] excluded_combinations 무한 누적 차단 (data/filters 39GB+ 방지).
+        # 근거(53에이전트 감사): 이 테이블은 저장만 되고 read 경로가 0건(get_excluded_combinations 미사용).
+        # 회차마다 수백만 행이 무한 INSERT되어 디스크 39GB+ 점유 → 디스크 풀 시 시스템 정지 위험.
+        # 디버그가 필요하면 환경변수 LOTTO_SAVE_EXCLUDED=1로 활성화.
+        import os as _os
+        if _os.environ.get('LOTTO_SAVE_EXCLUDED', '0') != '1':
+            logging.debug(f"[FilterCache] {filter_name}: excluded 저장 생략(read 경로 없음, 누적 방지)")
+            return
+
         try:
             excluded_list = list(excluded_combinations)
             batch_size = min(10000, len(excluded_list))
