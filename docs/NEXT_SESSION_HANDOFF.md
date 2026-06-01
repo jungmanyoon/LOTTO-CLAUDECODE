@@ -21,7 +21,11 @@
   0.97~1.29), 최근일수록 우위(1100→1.29). 위험한 과적합 없음 → 극단풀+5장다양성 그대로 유지.
 - 신규 스크립트 5개(git 추적): evaluate_wheel_vs_cover / evaluate_selection_boost /
   analyze_extreme_patterns / analyze_deep_patterns / validate_pool_walkforward. 결과 results/*.json.
-- [미완/선택] (a) mean_reversion 연결(콜드→다양성 가중치, 신호 약함) (b) diversity_selector 일원화.
+- **콜드 가중치 실측 완료**: 콜드 비중↑ 무의미/역효과(evaluate_cold_weight.py — cold_off 1.92 >
+  baseline 1.86 > cold_only 1.85, 무작위 1.74). **콜드 연결 안 함 확정, 현행 0.2 유지**(사용자 결정).
+  cold_off 미세 우위는 단일시드 노이즈 → 향후 다시드 확정 시 비중 하향 여지.
+- [미완/선택] diversity_selector 일원화(구 utils Farthest-Point vs 신 core 1cover; 이미 '분리 유지'
+  결정됨·import 경로 달라 충돌 없음 → 추가 조치 불필요. 정리하려면 구 utils docstring에 용도 명시 정도).
 
 ---
 
