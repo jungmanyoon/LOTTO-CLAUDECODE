@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-필터 검증 시스템
-예측된 번호가 실제로 필터 시스템을 통과하는지 검증
+필터 검증 시스템 (utils 버전) - 예측된 번호가 필터를 통과하는지 검증(ML 완화 필터 구분).
+
+[동명 클래스 주의 - 2026-06-01] 'FilterValidator'는 책임이 다른 3개가 공존(통합 금지, Codex+Gemini 합의):
+  - core/filter_validator.py       (filter_manager, db_manager): 당첨번호 필터통과 검증 + 성능분석. production 핵심.
+  - validators/filter_validator.py (무인자)                    : 통과율 추적 + DB 저장 + 자동조정.
+  - utils/filter_validator.py (이 파일; db_manager, filter_manager): 예측번호 ML완화 검증.
+세 클래스는 단일책임(SRP)이 달라 통합하면 책임이 오염됨. 이름만 같으니 import 시 경로 확인 필수.
 """
 import logging
 from typing import List, Dict, Tuple, Any, Optional

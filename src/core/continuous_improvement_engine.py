@@ -1133,7 +1133,12 @@ class ContinuousImprovementEngine:
             return False
 
     def rollback_to_best_pass_rate(self) -> bool:
-        """최고 필터 통과율 설정으로 롤백"""
+        """최고 필터 통과율 설정으로 롤백.
+
+        [미사용 주의 - 2026-06-01] production 호출처 0 (테스트만 참조). 통과율 기준 자동 롤백은
+        사용자 전략(통과율은 참고 지표, 극단 최대 제거 우선)과 충돌하여 filter_validator에서 호출이 제거됨.
+        제거하지 않고 유지하는 이유: optimizer 계열에서 향후 '수동 롤백' 후보로 재연결될 수 있음(Codex 권고).
+        """
         try:
             best_pass_rate_perf = self.performance_tracker.get_best_pass_rate_performance()
             if best_pass_rate_perf is None:

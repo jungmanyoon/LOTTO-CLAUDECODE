@@ -1,5 +1,10 @@
 """
-Maximum Diversity Selection - 풀 내 최대 다양성 조합 선택
+Maximum Diversity Selection (utils 버전, Farthest-Point/Hamming) - 풀 내 최대 다양성 조합 선택
+
+[동명 클래스 주의] 'DiversitySelector' 2개 공존(분리 유지 결정):
+  - core/diversity_selector.py : 가중 max-coverage(1-cover). production 1차(ExtremenessPoolPredictor 사용).
+  - utils/diversity_selector.py (이 파일): Farthest-Point Sampling. 구 ML-우선 경로(main.py:1521) 폴백 전용.
+  import 경로가 달라 충돌 없음. production 다양성 로직 변경 시 core 버전을 수정할 것.
 
 필터링된 조합 풀에서 서로 가장 다른 N개의 조합을 선택하여
 커버리지를 극대화합니다.

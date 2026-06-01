@@ -1,6 +1,11 @@
 """
-필터 검증 시스템
-당첨번호가 필터로 제외되었는지 확인하고 필터 성능을 분석합니다.
+필터 검증 시스템 (core 버전) - 당첨번호가 필터로 제외되었는지 확인하고 필터 성능을 분석.
+
+[동명 클래스 주의 - 2026-06-01] 'FilterValidator'는 책임이 다른 3개가 공존(통합 금지, Codex+Gemini 합의):
+  - core/filter_validator.py       (filter_manager, db_manager): 당첨번호 필터통과 검증 + 성능분석. production 핵심.
+  - validators/filter_validator.py (무인자)                    : 통과율 추적 + DB 저장 + 자동조정.
+  - utils/filter_validator.py      (db_manager, filter_manager): 예측번호 ML완화 검증.
+세 클래스는 단일책임(SRP)이 달라 통합하면 책임이 오염됨. 이름만 같으니 import 시 경로 확인 필수.
 """
 
 import logging
@@ -68,12 +73,12 @@ class FilterValidator:
                             'weight': filter_result.get('weight', 1.0)
                         })
                         self.logger.warning(
-                            f"🚨 경고: {round_num}회차 당첨번호가 {filter_name} 필터에서 "
+                            f"[!] 경고: {round_num}회차 당첨번호가 {filter_name} 필터에서 "
                             f"낮은 점수 ({filter_result.get('score', 0)}점)를 받음!"
                         )
             else:
                 self.logger.debug(
-                    f"✅ {round_num}회차 당첨번호가 가중치 시스템을 통과함 "
+                    f"[O] {round_num}회차 당첨번호가 가중치 시스템을 통과함 "
                     f"(점수: {evaluation['total_score']:.1f}/100)"
                 )
         else:
@@ -103,14 +108,14 @@ class FilterValidator:
                                 'reason': self._get_filter_failure_reason(filter_obj, winning_numbers)
                             })
 
-                            # 🔧 FIX: 당첨번호는 실제로 나온 번호이므로 경고가 아닌 정보성 메시지로 변경
+                            # [FIX] 당첨번호는 실제로 나온 번호이므로 경고가 아닌 정보성 메시지로 변경
                             # 필터는 예측 조합을 걸러내는 용도이지, 당첨번호를 검증하는 용도가 아님
-                            self.logger.debug(f"ℹ️  정보: {round_num}회차 당첨번호가 {filter_name} 필터 기준을 벗어남 (정상)")
+                            self.logger.debug(f"[INFO] 정보: {round_num}회차 당첨번호가 {filter_name} 필터 기준을 벗어남 (정상)")
                 except Exception as e:
                     self.logger.error(f"필터 검증 중 오류 ({filter_name}): {e}")
         
         # 경고 레벨 설정 (DEBUG로 변경)
-        # 🔧 FIX: 당첨번호가 필터를 통과하지 못하는 것은 정상적인 현상
+        # [FIX] 당첨번호가 필터를 통과하지 못하는 것은 정상적인 현상
         # 필터는 확률적으로 낮은 패턴을 제외하는 것이므로, 당첨번호가 이례적 패턴일 수 있음
         if not result['passed_all_filters']:
             failed_count = len(result['failed_filters'])
@@ -118,10 +123,10 @@ class FilterValidator:
 
             if failed_count >= 3:
                 result['warning_level'] = 'critical'
-                self.logger.debug(f"ℹ️  {round_num}회차 당첨번호가 {failed_count}개 필터 기준 벗어남: {', '.join(failed_filter_names)}")
+                self.logger.debug(f"[INFO] {round_num}회차 당첨번호가 {failed_count}개 필터 기준 벗어남: {', '.join(failed_filter_names)}")
             elif failed_count >= 1:
                 result['warning_level'] = 'warning'
-                self.logger.debug(f"ℹ️  {round_num}회차 당첨번호가 {failed_count}개 필터 기준 벗어남: {', '.join(failed_filter_names)}")
+                self.logger.debug(f"[INFO] {round_num}회차 당첨번호가 {failed_count}개 필터 기준 벗어남: {', '.join(failed_filter_names)}")
         
         # 결과 저장
         self.validation_results.append(result)
@@ -169,7 +174,7 @@ class FilterValidator:
             self.logger.info(f"  - 제외: {failed_rounds}개")
             
             if failed_rounds > 0:
-                self.logger.warning(f"⚠️ 주의: {failed_rounds}개 회차의 당첨번호가 필터에 의해 제외되었습니다!")
+                self.logger.warning(f"[WARN] 주의: {failed_rounds}개 회차의 당첨번호가 필터에 의해 제외되었습니다!")
                 self.logger.warning("  필터 기준이 너무 엄격할 수 있습니다.")
         
         return results
@@ -432,7 +437,7 @@ class FilterValidator:
         """검증 보고서 생성"""
         report = []
         report.append("\n" + "="*60)
-        report.append("📋 필터 검증 보고서")
+        report.append("[LIST] 필터 검증 보고서")
         report.append("="*60)
         
         # 최근 성능 분석
@@ -441,19 +446,19 @@ class FilterValidator:
         report.append(f"\n총 분석 회차: {performance['total_rounds']}회")
         
         if performance['critical_filters']:
-            report.append("\n🚨 위험 필터 (조정 필요):")
+            report.append("\n[!] 위험 필터 (조정 필요):")
             for critical in performance['critical_filters']:
                 report.append(f"  - {critical['name']}: 실패율 {critical['failure_rate']:.1%}")
                 report.append(f"    실패 회차: {critical['failed_rounds'][:5]}...")
         else:
-            report.append("\n✅ 모든 필터가 정상 작동 중")
+            report.append("\n[O] 모든 필터가 정상 작동 중")
         
         # 조정 제안
         suggestions = self.get_filter_adjustment_suggestions()
         if suggestions:
-            report.append("\n💡 필터 조정 제안:")
+            report.append("\n[TIP] 필터 조정 제안:")
             for suggestion in suggestions:
-                priority_icon = "🔴" if suggestion['priority'] == 'high' else "🟡"
+                priority_icon = "[RED]" if suggestion['priority'] == 'high' else "[YELLOW]"
                 report.append(f"  {priority_icon} {suggestion['filter']}: {suggestion['action']} ({suggestion['reason']})")
         
         return "\n".join(report)
