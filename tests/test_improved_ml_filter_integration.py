@@ -27,12 +27,12 @@ from main import (
     find_similar_combinations
 )
 
-# 로깅 설정
+# 로깅 설정 (테스트는 콘솔만 사용 - 프로젝트 logs/ 디렉토리를 오염시키지 않도록 FileHandler 제거.
+# CLAUDE.md: 테스트 산출물은 logs/에 만들지 않는다)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/test_improved_integration.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
