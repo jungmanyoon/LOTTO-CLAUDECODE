@@ -3723,6 +3723,7 @@ def generate_new_predictions():
             pass
 
 @app.route('/api/quick-prediction-status')
+@limiter.limit("300 per hour")  # [2026-06-01] read-only 상태 폴링: 기본 limit(20/h) 초과 방지(로컬 전용)
 def get_quick_prediction_status():
     """빠른 예측 시스템 상태 API"""
     try:
@@ -3777,6 +3778,7 @@ def get_quick_prediction_status():
         }), 500
 
 @app.route('/api/optimizer-status')
+@limiter.limit("300 per hour")  # [2026-06-01] read-only 상태 폴링: 기본 limit 초과 방지(로컬 전용)
 def get_optimizer_status():
     """백그라운드 최적화 상태 API"""
     try:
@@ -3821,6 +3823,7 @@ def get_optimizer_status():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/optimizer-history')
+@limiter.limit("300 per hour")  # [2026-06-01] read-only 히스토리 폴링: 기본 limit 초과 방지(로컬 전용)
 def get_optimizer_history():
     """최적화 히스토리 API"""
     try:

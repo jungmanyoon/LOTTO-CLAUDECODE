@@ -185,6 +185,18 @@ class IntegratedFilterManager:
             # 임계값 이하 패턴들로 필터링
             low_prob_patterns = self.adaptive_filter._identify_low_probability_patterns()
 
+            # [성능 2026-06-01] _is_low_probability는 checks >= 3 (odd_even / sum_range / consecutive
+            # 3종을 동시에 만족)일 때만 조합을 제거한다. 따라서 3종 중 하나라도 후보 패턴이 비어 있으면
+            # 어떤 조합도 checks == 3 이 될 수 없어 제거량이 수학적으로 0으로 보장된다. 그 경우 8.14M
+            # 조합 전수 스캔은 순수 낭비(실측 약 63분, production 예측은 ExtremenessPoolPredictor를
+            # 사용하므로 이 산출물 미사용)이므로 전수 스캔을 생략한다(결과 불변: 0개 제거 -> 0개 제거).
+            # 주의: 아래 _REQUIRED 는 _is_low_probability 의 'return checks >= 3' 상수와 반드시 함께 유지할 것.
+            _REQUIRED = 3
+            _active = sum(1 for k in ('odd_even', 'sum_range', 'consecutive') if low_prob_patterns.get(k))
+            if _active < _REQUIRED:
+                logging.info(f"  - 확률 필터: 제거 후보 패턴 부족(활성 {_active}/{_REQUIRED}) -> 전수 스캔 생략(0개 제거 확정)")
+                return True
+
             # DB에서 조합들을 배치로 처리하며 필터링
             batch_size = 10000
             offset = 0
