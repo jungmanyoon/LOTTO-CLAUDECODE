@@ -1,83 +1,103 @@
-# 다음 세션 핸드오프 (2026-05-31 업데이트 2)
+# 다음 세션 핸드오프 (2026-06-01 업데이트 3)
 
 > 다음 세션 AI는 이 문서 + 메모리(MEMORY.md) + CLAUDE.md를 먼저 읽고 이어갈 것.
+> 메모리 핵심: [[extremeness-pool-architecture-2026-05-31]], [[user-strategy-final-decision]],
+> [[test-isolation-order-dependent-fix]]
 
 ---
 
 ## 1. 사용자 최종 전략 결정 (절대 준수 — CLAUDE.md에 명시됨)
 
-- **확률 논쟁 영구 금지**: "어차피 매 회차 1/8,145,060이라 필터/풀 축소가 무의미하다",
-  "당첨확률 못 높인다", "기대값으로 상쇄된다"는 순수 확률론적 비판을 **절대 꺼내지 말 것.**
-  사용자는 독립시행 1/814만을 충분히 알고, 그 위에서 "역사적 극단 배제" 전략을 의도적으로 선택함.
-- **통과율 95% 제약 제거**: 통과율(당첨번호 보존율)을 강제 목표/제약으로 두지 않음.
-  "출현율 낮은 패턴 최대 제거"가 우선. 통과율은 참고 지표로만 표시.
+- **확률 논쟁 영구 금지**: "어차피 매 회차 1/8,145,060이라 무의미", "당첨확률 못 높인다",
+  "기대값으로 상쇄된다"는 순수 확률론적 비판을 **절대 꺼내지 말 것.** 사용자는 독립시행
+  1/814만을 충분히 알고, 그 위에서 "역사적 극단 배제" 전략을 의도적으로 선택함.
+- **통과율 95% 제약 제거**: 통과율은 강제 목표가 아니라 참고 지표.
 - **사용자 방법**: 역사적 극단 패턴 최대한 제거 → 남은 풀에서 다양성 예측 → 많은 번호 맞추기.
+- **AI 역할**: 확률 강의 X, 사용자 방법을 정확히 구현 + 실측으로 최선을 골라내기 O.
 
 ---
 
-## 2. 이번 세션(과필터링 작업) 완료 내역 ★
+## 2. 현재 시스템 상태 (2026-06-01)
 
-핵심 통찰("과필터링")을 실측·해결. **상세: docs/EXTREMENESS_POOL_ARCHITECTURE.md**
+- **데이터**: 1226 최신 (1227 미발표 — 동행복권 사이트도 1226).
+- **테스트**: **전체 809 passed, 0 failed** (순서의존 4건 격리 완료, 3회 재현). 추적 테스트 37개.
+- **최종 예측 경로**: ExtremenessPoolPredictor (극단성 풀 K=1.5M + 5장 1-cover 다양성).
+  main.py:4008~, 대시보드 모두 신 경로 통합 완료. ML은 번호 다양성 가중치로 결합.
+- **1227 예측 5세트** (K=1.5M): `[7,12,14,27,31,38] [3,15,17,33,34,36] [4,13,16,30,37,40]
+  [2,11,18,32,35,39] [5,8,20,24,43,45]` — 커버 30/45, 티켓겹침 0. 1227 발표 시 갱신 필요.
+- **git**: lotto/feature/major-system-upgrade 원격 동기화 완료(0 ahead). 최근 커밋:
+  92d9208(테스트31편입) ← 6e48e67(fast모드) ← eb79f0e(순서의존격리+triple반증).
 
-### 발견
-- **구 16필터 AND + global_probability_threshold 레버가 죽어있었음**: 임계값 0.5%→20%로
-  20배 올려도 풀이 807만(전체 99.1%)에 고정 = 과소필터링(과필터링의 반대 문제).
+---
 
-### 해결 (Codex gpt-5.5 + Gemini 3.1-pro + Claude 만장일치)
-- 16 AND 필터 폐기 → **단일 "극단성 점수" + "목표 풀 크기 K" 컷오프 1개**.
-- 풀 크기 직접·단조 제어 + `1-(1-p)^16` 누적 과필터링 원천 소멸.
+## 3. 완료된 작업 누적 (커밋 순)
 
-### 신규 파일 4개 (모두 검증 완료)
-- `src/core/extremeness_scorer.py` — 마할라노비스(상관보정)+희귀패턴 페널티. 8.14M 채점 ~16s.
-- `src/core/diversity_selector.py` — 빈도 가중치 + 가중 max-coverage 5장 선택.
-- `src/core/pool_optimizer.py` — Optuna v6 (분리도AUC + 약한 lift_lcb, **통과율 제약 제거**).
-- `src/scripts/analyze_threshold_pool_curve.py`, `generate_diverse_predictions.py`.
+| 커밋 | 내용 |
+|------|------|
+| 1ae2a7c | 극단성 풀 + 5장 다양성 아키텍처 (신규 6파일 + main 통합 + Optuna v6) |
+| c244cf3 | --skip-ml/--predict-only 플래그 존중 + 버그 3건 |
+| f3ba38a | 대시보드 예측을 극단성 풀 경로로 정합 |
+| f3e77a7 | 회귀 테스트 4건 + gitignore 루트 앵커 |
+| **eb79f0e** | **순서의존 테스트 4건 격리(809 passed) + triple-cover 시도·반증** |
+| **6e48e67** | **F5 최적화: --fast-extremeness-only (구 16필터 스킵)** |
+| **92d9208** | **정식 테스트 31개 git 추적 편입 (37개로 복원)** |
 
-### 실측 결과 (정직한 데이터)
-- 곡선(hold-out 150회): **K=1.5M(81.6% 제거)에서 Lift 1.27 최고** → 사용자 채택.
-  분리도 AUC~0.51(미미) = 극단 특징만으론 미래 당첨 강하게 못 가림. 단 1.5M이 통계 최적점.
-- **진짜 레버=5장 다양성(hold-out 100회): 3개+ 맞춘 회차 무작위 6 → 다양성 13 (2배↑).**
-- Optuna v6 30 trials: best AUC=0.506, lift_lcb=1.157 → configs/extremeness_weights.json 저장.
+### 핵심 실측 결론 (정직한 음성 결과 — 반복 금지, 이미 검증됨)
+- **분리도 AUC ≈ 0.51 벽**: PoolOptimizer 가중치를 어떻게 튜닝해도 AUC 0.4935~0.5099.
+  "극단성 특징만으로는 미래 당첨을 분리 못함"은 독립시행상 근본 한계 (재시도 불필요).
+- **triple-cover 반증**: 쌍빈도 가중 3-부분집합 커버리지(select_triple_cover)는 기존 1-cover를
+  못 이김. random 8.33 / **1cover 11.33(최선)** / triple 11.0. → production은 1cover 유지.
+- 즉 검증된 레버는 **"극단 최대 제거(K=1.5M, 81.6%) + 1cover 5장 다양성"** 뿐.
 
-### 1227 예측 5세트 (K=1.5M, 최적 가중치)
+---
+
+## 4. 다음 세션 후보 작업 (우선순위)
+
+### A. wheeling_system 기반 전략 탐색 (탐색형, 사용자 결정 필요) ★
+- **발견**: `src/optimization/wheeling_system.py`에 이미 "n-k-g 휠"(n개 번호로 k장 조합, g개
+  보장) covering design이 구현돼 있음. Codex/Gemini가 triple-cover 대안으로 지목한 정석.
+- **핵심 질문(사용자에게)**: 현재 "5장 고정" 전략을 유지할지, 아니면 "N개 번호 선택 → 휠로
+  더 많은 장수로 k개 보장 커버" 전략을 허용할지. 후자는 구매 장수↑(예산↑)를 수반.
+  - 5장 고정 유지 시: 휠링 적용 불가(휠은 보통 7~20장).
+  - 예산 허용 시: 극단성 풀 상위 N개 번호 → 휠로 3·4개 보장 조합 생성 → hold-out 검증.
+- **선행 작업**: 사용자에게 "몇 장까지 구매 가능한지(예산)" 확인 후 진행.
+
+### B. diversity_selector 일원화 (위생, 선택)
+- 구 `src/utils/diversity_selector.py`(Hamming, main.py:1521 폴백)와
+  신 `src/core/diversity_selector.py`(1-cover, production) 병존 중. 충돌 없으나 혼란 소지.
+  구를 폐기하거나 명확히 분리할지 결정.
+
+### C. 백그라운드 최적화 의미 재검토 (선택)
+- PoolOptimizer v6가 AUC 0.51 벽에 막혀 가중치 튜닝 이득이 거의 없음(0.519→0.525).
+  백그라운드 최적화를 계속 돌릴 가치가 있는지, 아니면 다른 목적함수로 바꿀지 검토.
+  (단 새 목적함수도 독립시행 한계는 동일 — 신중히)
+
+### D. 1227 발표 시 데이터 갱신 + 5세트 재생성 (정기)
+- 1227 발표되면 `python main.py`(또는 --fast-extremeness-only)로 갱신 + 신 5세트 생성.
+
+---
+
+## 5. 운영 명령 메모
+
+```bash
+# F5 빠른 실행(구 16필터 스킵, 권장 신규)
+python main.py --fast-extremeness-only
+# 또는 env: LOTTO_FAST_EXTREMENESS_ONLY=1 python main.py
+
+# 예측만 (가장 빠름, 19초급)
+python main.py --predict-only --skip-ml
+
+# 전체 테스트 (809 passed 기준)
+python -m pytest tests/ --timeout=300 --no-cov -p no:cacheprovider -q
+
+# 극단성 풀 5세트 직접 생성
+python src/scripts/generate_diverse_predictions.py --K 1500000
 ```
-세트1: [7, 12, 14, 27, 31, 38]
-세트2: [3, 15, 17, 33, 34, 36]
-세트3: [4, 13, 16, 30, 37, 40]
-세트4: [2, 11, 18, 32, 35, 39]
-세트5: [5, 8, 20, 24, 43, 45]
-```
-커버 30/45번호, 티켓 간 겹침 0. (재생성: `python src/scripts/generate_diverse_predictions.py`)
 
----
-
-## 3. main.py 통합 완료 ★ (이번 세션 추가)
-
-신 아키텍처를 production main.py 본류에 연결 완료:
-
-- **신규 어댑터** `src/core/extremeness_pool_predictor.py` `ExtremenessPoolPredictor`:
-  단일 진입점. build_pool(8.14M 채점→K컷오프, **디스크 캐시 0.2s 재사용**) + predict(5장 다양성).
-  ML 예측은 번호 다양성 가중치로 결합(ml_signal, CLAUDE.md 핵심전략 정합).
-- **main.py:3979** 통합 블록 추가: 환경변수 `LOTTO_USE_EXTREMENESS_POOL`(기본 1=활성),
-  `LOTTO_TARGET_POOL_K`(기본 1500000). **신 경로 우선, 실패 시 구 generate_final_predictions로 graceful 폴백.**
-- **diversity_selector.py** `compute_weights`에 ml_signal/ml_beta 파라미터 추가(평탄 결합).
-- **검증**: main.py 구문 OK, 통합블록 재현테스트 PASS(5세트/포맷호환/6번호), 회귀 272 passed
-  (실패 6+에러 6은 모두 기존 - 내 파일 미임포트 확인됨).
-
-## 4. 다음 세션 할 일 (남은 통합)
-
-1. **diversity_selector 일원화**: 구 `src/utils/diversity_selector.py`(Hamming, main.py:1521 풀보충에서 사용 중)
-   를 신 `src/core/diversity_selector.py`(가중 max-coverage)로 대체할지 결정. (현재는 신 경로가 우선이라
-   구 풀보충 경로는 폴백 시에만 작동)
-2. **백그라운드 최적화 교체**: 구 `threshold_optimizer.py`(v5, threshold 탐색) →
-   신 `pool_optimizer.py`(v6, 가중치 탐색)로 unified_optimizer 루프 교체.
-3. `python main.py` 전체 실행으로 최종 end-to-end 확인 (현재는 블록 단위까지 검증).
-4. 대시보드(enhanced_dashboard_v2.py) 예측 표시도 신 경로와 정합되는지 확인.
-
----
-
-## 4. 현재 시스템 상태
-- 데이터: 1226 최신.
-- 구 적응형 필터(use_weighted_system=False)는 그대로 (신 구조와 병존, 아직 main 연결 안 됨).
-- 신 구조 산출물: configs/extremeness_weights.json, results/threshold_pool_curve.json,
-  data/pool_optimization.db (Optuna 30 trials).
+### 환경 주의사항 (이 세션에서 겪은 것)
+- git-bash의 `python3`에는 optuna 없음 → **반드시 `python`** 사용.
+- 무거운 작업(main/pytest)은 **백그라운드(run_in_background)** + 로그 파일 폴링. 한 응답에
+  도구 과다 투입 시 배치 취소됨 → 소수씩.
+- 다른 Claude 프로세스 startup cleanup이 **untracked 임시파일을 삭제**함 → 임시 산출물은
+  src/scripts 등 추적 경로에 두지 말 것(평가 스크립트가 삭제됐던 사례 있음).
+- 콘솔 한글 깨짐 → 로그는 python으로 키워드 grep하거나 ASCII 치환해 확인.
