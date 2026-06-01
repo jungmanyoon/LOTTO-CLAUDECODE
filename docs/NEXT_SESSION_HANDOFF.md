@@ -1,4 +1,4 @@
-# 다음 세션 핸드오프 (2026-06-01 업데이트 4)
+# 다음 세션 핸드오프 (2026-06-01 업데이트 5)
 
 > 다음 세션 AI는 이 문서 + 메모리(MEMORY.md) + CLAUDE.md를 먼저 읽고 이어갈 것.
 > 메모리 핵심: [[extremeness-pool-architecture-2026-05-31]], [[user-strategy-final-decision]],
@@ -9,6 +9,18 @@
 > 0개제거 조기탈출 가드) + 대시보드 rate limit 상향 + 통과율 자동롤백 제거 + np.float_/status 버그.
 > FilterValidator 3개·DiversitySelector 2개 = 동명 별개 클래스(통합 부적절, docstring 구분 명시).
 > 보류(다음): fast-extremeness-only 기본전환(ML 필터풀 의존성 확인 필요), FilterValidator rename(13곳).
+>
+> **재시작 최적화(f7edae3)**: 앙상블이 매 재시작마다 8분(필터풀791만+특징추출) 재학습하던 것 →
+> filtered_pool_ensemble save/load에 학습회차 도장 + main.py에서 load_models()+회차검증으로
+> 데이터 무변경 시 재사용(8분 스킵), 새회차/캐시없음 시 재학습(가드). round-trip 검증 통과.
+> 효과는 "이번 첫 실행으로 모델 저장 후 다음 재시작부터".
+>
+> **★다음 세션 할 일**:
+> 1. [정기] 1227 발표 시 python main.py로 데이터 갱신 + 신 5세트 재생성.
+> 2. [검증] 재시작 최적화 실동작: main.py 2회 실행 → 2회차에 "저장된 앙상블 모델 재사용" 로그 확인.
+> 3. [선택·위험] fast-extremeness-only 기본전환(ML 필터풀/폴백 풀 의존성 코드확인 후).
+> 4. [선택·위험] FilterValidator 3개 rename(통합 아닌 이름구분, 13곳, IDE 리팩토링 권장).
+> 5. [선택·저이득] 재시작 최적화 확장(LSTM/패턴/필터기준; 각 수초라 이득 작음).
 
 ## 0. 이번 세션 요약 (2026-06-01 업데이트 4) ★최신
 
