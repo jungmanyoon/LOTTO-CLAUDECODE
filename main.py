@@ -3357,16 +3357,22 @@ def main():
         # ================================================================
         # ML/AI 분석 - 필터링된 조합 활용 (최적화)
         # ================================================================
-        # 필터링된 조합 가져오기 (814만개 → 20만개)
+        # 필터링된 조합 개수 조회 (로그 표시용 - 이후 ML 예측에는 직접 사용 안 함)
         if not args.predict_only and not _fast_extreme and filter_manager:
             try:
                 filtered_count = filter_manager.get_filtered_count(latest_round)
-                logging.info(f"\n[ML/AI] 필터링된 조합 {filtered_count:,}개로 ML 예측 수행")
-                logging.info(f"  - 메모리 사용량 {(filtered_count/8145060)*100:.1f}% (97.5% 절약)")
-                logging.info(f"  - 예상 속도 향상: {8145060/filtered_count:.1f}배")
-            except:
-                filtered_count = 200000  # 기본값
-                logging.info(f"\n[ML/AI] 필터링된 조합으로 ML 예측 수행 (약 20만개)")
+                if filtered_count and filtered_count > 0:
+                    # 실제 값 기반 표시 (절약률/속도배수를 하드코딩하지 않고 실측 계산)
+                    ratio = filtered_count / 8145060 * 100
+                    logging.info(f"\n[ML/AI] 필터링된 조합 {filtered_count:,}개로 ML 예측 수행")
+                    logging.info(f"  - 전체(8,145,060) 대비 {ratio:.1f}% (절약 {100 - ratio:.1f}%)")
+                    logging.info(f"  - 예상 속도 향상: {8145060 / filtered_count:.1f}배")
+                else:
+                    logging.info(f"\n[ML/AI] 필터링된 조합으로 ML 예측 수행 (개수 조회값 0/미상)")
+            except Exception as e:
+                # 가짜 '약 20만개' 하드코딩 대신, 조회 실패 사실과 원인을 정직하게 기록
+                filtered_count = 0
+                logging.warning(f"\n[ML/AI] 필터링 조합 수 조회 실패 - ML은 전체 필터 풀 사용 (원인: {e})")
         else:
             filtered_count = 0
             logging.info(f"\n[ML/AI] 예측 전용 모드 - 필터링 없이 ML 예측 수행")
