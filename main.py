@@ -3410,6 +3410,22 @@ def main():
                         logging.info("\n[Ensemble] 앙상블 모델 (RF+XGBoost+NN) 실행...")
                         ensemble_predictor = EnsemblePredictor()
 
+                        # [재시작 최적화 2026-06-01] 저장된 모델 로드 시도 -> 데이터(회차) 무변경이면
+                        # 재학습/미세조정(실측 약 8분)을 스킵. 회차 불일치/캐시없음/손상이면 정상 재학습(가드).
+                        _ens_reuse = False
+                        try:
+                            ensemble_predictor.load_models()
+                            _cached_round = getattr(ensemble_predictor, 'trained_round', None)
+                            if ensemble_predictor.is_trained and _cached_round == latest_round:
+                                _ens_reuse = True
+                                logging.info(f"  - [최적화] 저장된 앙상블 모델 재사용 (학습회차 {_cached_round}=최신 {latest_round}, 재학습/미세조정 스킵)")
+                            elif _cached_round is not None:
+                                logging.info(f"  - 앙상블 캐시 회차({_cached_round}) != 최신({latest_round}) -> 재학습")
+                                ensemble_predictor.is_trained = False
+                        except Exception as _load_e:
+                            logging.debug(f"  - 앙상블 캐시 로드 실패(정상 재학습): {_load_e}")
+                            ensemble_predictor.is_trained = False
+
                         # 모델 학습 (필요시) - 클래스 불균형 예외 처리 추가
                         if not ensemble_predictor.is_trained:
                             logging.info("  - 앙상블 모델 학습 중...")
@@ -3430,7 +3446,8 @@ def main():
                                     ensemble_predictions = []  # 빈 예측 리스트로 설정
 
                         # === 필터링된 풀 기반 미세조정 ===
-                        if filter_manager and ensemble_predictor.is_trained:
+                        # [재시작 최적화] 재사용(_ens_reuse) 시 이미 미세조정된 모델이 로드됐으므로 스킵.
+                        if not _ens_reuse and filter_manager and ensemble_predictor.is_trained:
                             try:
                                 logging.info("\n  [Filtered Pool Training] 필터링된 풀로 모델 미세조정...")
                                 from src.ml.filtered_pool_trainer import FilteredPoolTrainer
@@ -3440,6 +3457,13 @@ def main():
                                     ensemble_predictor, db_manager, filter_manager, winning_numbers
                                 )
                                 logging.info("  - 미세조정 완료: ML 필터 통과율 향상 예상 (8.5% -> 15%+)")
+                                # [재시작 최적화] 미세조정 모델에 회차 도장 후 저장 -> 다음 재시작 시 재사용
+                                try:
+                                    ensemble_predictor.trained_round = latest_round
+                                    ensemble_predictor.save_models()
+                                    logging.info(f"  - 앙상블 모델 캐시 저장 (회차 {latest_round}) -> 다음 재시작 시 재사용")
+                                except Exception as _save_e:
+                                    logging.warning(f"  - 앙상블 모델 캐시 저장 실패: {_save_e}")
                             except Exception as finetune_e:
                                 logging.warning(f"  - 필터링된 풀 미세조정 실패: {finetune_e}")
                                 logging.info("  - 기본 앙상블 모델로 계속합니다...")

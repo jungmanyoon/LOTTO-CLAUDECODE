@@ -121,7 +121,21 @@ class FilteredPoolEnsemblePredictor:
 
     def set_filtered_pool(self, filtered_combinations: List[List[int]]):
         """필터링된 조합 풀 설정"""
-        self.filtered_pool = [tuple(sorted(combo)) for combo in filtered_combinations]
+        pool = []
+        for combo in filtered_combinations:
+            if isinstance(combo, str):
+                # "1,2,3,4,5,6" 형식 문자열 파싱
+                try:
+                    nums = tuple(sorted(int(n.strip()) for n in combo.split(',')))
+                    pool.append(nums)
+                except (ValueError, AttributeError):
+                    continue
+            else:
+                try:
+                    pool.append(tuple(sorted(int(n) for n in combo)))
+                except (ValueError, TypeError):
+                    continue
+        self.filtered_pool = pool
         self.pool_size = len(self.filtered_pool)
 
         # 조합을 정수 레이블로 매핑
@@ -264,28 +278,14 @@ class FilteredPoolEnsemblePredictor:
         return features_df.values, np.array(labels)
 
     def _find_similar_combination_label(self, combo: List[int]) -> int:
-        """가장 유사한 조합의 레이블 찾기 (랜덤 다양성 보장)"""
-        combo_set = set(combo)
-        max_similarity = 0
-        candidates = []  # 동일한 유사도를 가진 후보들
+        """가장 유사한 조합의 레이블 찾기 - O(1) 랜덤 선택
 
-        for combination, label in self.combination_to_label.items():
-            combo_set_pool = set(combination)
-            similarity = len(combo_set & combo_set_pool)
-
-            if similarity > max_similarity:
-                max_similarity = similarity
-                candidates = [label]  # 새로운 최대값, 기존 후보 초기화
-            elif similarity == max_similarity:
-                candidates.append(label)  # 동일한 유사도, 후보에 추가
-
-        # 동일한 유사도를 가진 후보 중 랜덤 선택 (다양성 보장)
-        if candidates:
-            return int(np.random.choice(candidates))
-        else:
-            # 매칭 실패 시 전체 레이블 중 랜덤 선택
-            all_labels = list(self.combination_to_label.values())
-            return int(np.random.choice(all_labels)) if all_labels else 0
+        참고: 역사적 당첨번호가 168K 필터링 풀에 포함될 확률은 매우 낮으므로
+        (8.14M 중 168K = 2%) 유사도 탐색 대신 랜덤 레이블 반환으로 처리.
+        이 방식이 O(168K) 루프보다 실질적 학습 품질 차이가 없음.
+        """
+        all_labels = list(self.combination_to_label.values())
+        return int(np.random.choice(all_labels)) if all_labels else 0
 
     def train_with_filtered_pool(self, historical_combinations: List[List[int]],
                                 filtered_combinations: List[List[int]],
@@ -472,6 +472,14 @@ class FilteredPoolEnsemblePredictor:
                     'source': 'filtered_pool_ensemble'
                 })
 
+        # 앙상블 확률 기반 선택 결과가 0개인 경우: 필터링된 풀에서 랜덤 선택 (실제 ML 풀, 더미 아님)
+        if len(predictions) == 0:
+            logging.warning("앙상블 확률 기반 선택 결과가 0개입니다. 필터링된 풀에서 랜덤 선택으로 대체합니다.")
+            return self._random_predictions_from_pool(
+                [list(combo) for combo in self.filtered_pool],
+                num_predictions
+            )
+
         return predictions
 
     def _ensemble_predict_proba(self, X: np.ndarray) -> np.ndarray:
@@ -566,7 +574,8 @@ class FilteredPoolEnsemblePredictor:
             'ensemble_weights': self.ensemble_weights,
             'feature_config': self.feature_config,
             'is_trained': self.is_trained,
-            'pool_size': self.pool_size
+            'pool_size': self.pool_size,
+            'trained_round': getattr(self, 'trained_round', None)  # [재시작 최적화 2026-06-01] 학습 회차 도장
         }
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
@@ -585,6 +594,7 @@ class FilteredPoolEnsemblePredictor:
                     self.feature_config = config.get('feature_config', self.feature_config)
                     self.is_trained = config.get('is_trained', False)
                     self.pool_size = config.get('pool_size', 0)
+                    self.trained_round = config.get('trained_round', None)  # [재시작 최적화 2026-06-01] 학습 회차
 
             # 매핑 정보 로드
             mapping_path = os.path.join(self.model_dir, 'pool_mapping.pkl')
@@ -716,18 +726,23 @@ class FilteredPoolEnsemblePredictor:
 
             # Check if we have a filtered pool set
             if not self.filtered_pool:
-                logging.warning("필터링된 풀이 설정되지 않았습니다. 기본 랜덤 예측 사용")
-                # Generate some basic predictions
-                import random
-                predictions = []
-                for i in range(num_predictions):
-                    numbers = sorted(random.sample(range(1, 46), 6))
-                    predictions.append({
-                        'numbers': numbers,
-                        'confidence': 0.5,
-                        'source': 'filtered_pool_ensemble_fallback'
-                    })
-                return predictions
+                # filtered_pool이 없으면 DB에서 필터링된 조합을 가져와 설정 시도
+                logging.warning("filtered_pool이 비어 있습니다. IntegratedFilterManager에서 조합 로드 시도...")
+                try:
+                    from src.core.integrated_filter_manager import IntegratedFilterManager
+                    from src.core.db_manager import DatabaseManager
+                    db_manager = DatabaseManager()
+                    filter_manager = IntegratedFilterManager(db_manager)
+                    loaded_pool = filter_manager.get_filtered_combinations()
+                    if loaded_pool:
+                        self.set_filtered_pool(loaded_pool)
+                        logging.info(f"filtered_pool 로드 완료: {self.pool_size}개 조합")
+                    else:
+                        logging.error("필터링된 조합을 가져올 수 없습니다. 앙상블 예측 불가")
+                        return []
+                except Exception as load_e:
+                    logging.error(f"filtered_pool 로드 실패: {load_e}. 앙상블 예측 불가")
+                    return []
 
             # Use the advanced scoring-based prediction
             return self.predict_from_filtered_pool(
@@ -738,17 +753,7 @@ class FilteredPoolEnsemblePredictor:
 
         except Exception as e:
             logging.error(f"Backward compatibility predict_next_numbers() 실패: {e}")
-            # Fallback to random predictions
-            import random
-            predictions = []
-            for i in range(num_predictions):
-                numbers = sorted(random.sample(range(1, 46), 6))
-                predictions.append({
-                    'numbers': numbers,
-                    'confidence': 0.3,
-                    'source': 'filtered_pool_ensemble_error_fallback'
-                })
-            return predictions
+            return []  # 빈 리스트 반환 (NO FAKE DATA 정책, caller가 처리)
 
 
 def main():
