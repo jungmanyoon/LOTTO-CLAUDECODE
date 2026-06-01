@@ -57,6 +57,8 @@ Thumbs.db
 configs/*.backup_*
 # 패턴 2: adaptive_filter_config_backup_YYYYMMDD_HHMMSS.yaml
 configs/*_backup_*.yaml
+# 패턴 3: ThresholdManager retention 백업 디렉토리 (로컬 전용)
+configs/backup/
 *_old.py
 *_fixed.py
 cleanup_archive/
