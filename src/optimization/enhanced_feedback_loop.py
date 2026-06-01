@@ -80,8 +80,8 @@ class EnhancedFeedbackLoop:
             Dict: 개선 사이클 결과
         """
         logging.info("\n" + "="*60)
-        logging.info("🚀 향상된 자동 개선 사이클 시작")
-        logging.info(f"📊 [시작 시점] 현재까지 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info("[START] 향상된 자동 개선 사이클 시작")
+        logging.info(f"[STAT] [시작 시점] 현재까지 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
         logging.info("="*60)
 
         # 시작 시점에서는 상태 보고서를 출력하지 않음 (혼란 방지)
@@ -107,7 +107,16 @@ class EnhancedFeedbackLoop:
             backtest_results = self.backtesting_framework.run_backtest(
                 start_round, end_round, window_size=100
             )
-            
+
+            # [SHUTDOWN 가드] 백테스팅이 취소(종료 중 조기중단)되었거나 0건이면
+            # track_backtest(백테스팅 #N 카운터 증가)와 save_state를 건너뛴다.
+            # 종료 중 0.000 성능이 정상 데이터처럼 기록되어 최적화 판단을 오염시키는 것을 방지.
+            if (backtest_results.get('cancelled') or
+                    not backtest_results.get('predictions') or
+                    backtest_results.get('performance_metrics', {}).get('total_rounds', 0) == 0):
+                logging.info("[SHUTDOWN] 백테스팅 취소/0건 - 개선 추적·상태저장 생략(데이터 오염 방지)")
+                break
+
             # Step 2: 개선 추적 및 판단
             logging.info("Step 2: 성능 평가 및 개선 판단...")
             improvement_info = self.improvement_manager.track_backtest(backtest_results)
@@ -118,7 +127,7 @@ class EnhancedFeedbackLoop:
             
             # Step 3: 개선이 있는 경우에만 모델 업데이트
             if improvement_info['should_update']:
-                logging.info("✅ 성능 개선 확인! 모델 최적화 시작...")
+                logging.info("[O] 성능 개선 확인! 모델 최적화 시작...")
                 
                 # 모델 최적화
                 for model_type, model in self.models.items():
@@ -137,7 +146,7 @@ class EnhancedFeedbackLoop:
                             
                             cycle_results['total_improvements'] += 1
             else:
-                logging.info("❌ 성능 개선 없음. 파라미터 유지.")
+                logging.info("[X] 성능 개선 없음. 파라미터 유지.")
             
             # 반복 결과 기록
             cycle_results['iterations'].append({
@@ -156,10 +165,10 @@ class EnhancedFeedbackLoop:
         
         # 최종 보고서 출력
         logging.info("\n" + "="*60)
-        logging.info("🏁 개선 사이클 완료!")
-        logging.info(f"📊 [완료 시점] 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
-        logging.info(f"📈 이번 사이클에서 실행된 반복 횟수: {iteration}회")
-        logging.info(f"✅ 총 누적 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info("[DONE] 개선 사이클 완료!")
+        logging.info(f"[STAT] [완료 시점] 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info(f"[UP] 이번 사이클에서 실행된 반복 횟수: {iteration}회")
+        logging.info(f"[O] 총 누적 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
         logging.info("="*60)
 
         # 완료 후 전체 상태 보고서 출력

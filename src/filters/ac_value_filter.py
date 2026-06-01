@@ -210,7 +210,8 @@ class ACValueFilter(BaseFilter):
 
         except Exception as e:
             logging.error(f"AC값 청크 처리 중 오류: {str(e)}")
-            return []
+            # 오류 시 입력 조합 보존하여 청크 전체 손실 방지 (필터 간 예외 정책 통일)
+            return combinations_chunk
 
     def get_ac_score(self, numbers: List[int]) -> float:
         """

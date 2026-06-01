@@ -85,6 +85,19 @@ class PoolOptimizer:
         # 무작위 음성 표본 (분리도 AUC용; 시드 고정)
         self._neg = self._sample_random(random_negatives, seed=7)
 
+        # 종료 플래그 (UnifiedOptimizer가 set_shutdown_flag로 주입).
+        # Optuna trial 경계마다 확인하여 종료 신호 시 study.stop()으로 협조적 중단.
+        self._shutdown_flag: Optional[Dict] = None
+
+    # ------------------------------------------------------------------
+    def set_shutdown_flag(self, flag: Dict):
+        """외부 종료 플래그 주입 (예: UnifiedOptimizer._stop_flag)."""
+        self._shutdown_flag = flag
+
+    def _is_shutting_down(self) -> bool:
+        """종료 플래그 확인."""
+        return bool(self._shutdown_flag and self._shutdown_flag.get('stop', False))
+
     # ------------------------------------------------------------------
     def _winning(self, lo: int, hi: int) -> np.ndarray:
         return np.array(
@@ -122,6 +135,11 @@ class PoolOptimizer:
         train_until = self.latest_round - self.holdout
 
         # (1) 분리도 AUC: train 구간 당첨 vs 무작위
+        # [한계 주석] s_pos를 fit에 사용한 win_train으로 측정 → in-sample 평가(낙관적).
+        #   엄밀한 out-of-sample AUC는 hold-out 당첨번호로 측정해야 하나, 이는 목적함수의 본질
+        #   변경 + 누적 study 무효화 + 사용자 확정 전략 영향이 있어 '별도 합의 후' 진행 사항이다.
+        #   (현재 AUC~0.5는 알려진 구조적 한계이며, lift_lcb(hold-out K-fold, 아래 (2))가
+        #    과적합 방지 보조 신호로 작동 중 — MEMORY: walk-forward lift 견고)
         scorer = self._build_scorer(params)
         win_train = self._winning(1, train_until)
         scorer.fit(win_train)
@@ -186,6 +204,9 @@ class PoolOptimizer:
             sampler=TPESampler(seed=42))
 
         def objective(trial):
+            # 종료 신호 시 현재 trial을 즉시 가지치기 (무거운 evaluate 진입 방지)
+            if self._is_shutting_down():
+                raise optuna.TrialPruned()
             params = {'alpha': trial.suggest_float('alpha', 0.1, 2.0)}
             for f in self.cont_features:
                 params[f"fw_{f}"] = trial.suggest_float(f"fw_{f}", 0.2, 3.0)
@@ -196,7 +217,23 @@ class PoolOptimizer:
             trial.set_user_attr('lift_lcb', res['lift_lcb'])
             return res['score']
 
-        study.optimize(objective, n_trials=n_trials)
+        def _stop_cb(study, trial):
+            # 종료 플래그 감지 시 Optuna 루프를 trial 경계에서 협조적으로 중단
+            # (daemon 강제종료/30초 join 초과 방지)
+            if self._is_shutting_down():
+                self.logger.info("[PoolOpt] 종료 신호 감지 - Optuna study 조기 중단")
+                study.stop()
+
+        study.optimize(objective, n_trials=n_trials, callbacks=[_stop_cb])
+
+        # 종료 등으로 완료된 trial이 하나도 없으면 best 접근이 불가하므로 안전하게 취소 결과 반환
+        completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        if not completed:
+            self.logger.info("[PoolOpt] 완료된 trial 없음(종료/가지치기) - 최적화 결과 생략")
+            return {'best_params': {}, 'best_value': 0.0, 'auc_separation': 0.5,
+                    'lift_mean': 1.0, 'lift_lcb': 1.0, 'complexity': 0.0,
+                    'target_K': self.target_K, 'n_trials': len(study.trials), 'cancelled': True}
+
         best = study.best_params
         best_res = self.evaluate(best, verbose=True)
         out = {'best_params': best, 'best_value': study.best_value, **best_res,

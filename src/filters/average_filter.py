@@ -1,12 +1,17 @@
 from typing import Any, List, Dict
 import logging
+import threading
 import numpy as np
 from .base_filter import BaseFilter
 from ..filter_optimizer import FilterOptimizer
 
 class AverageFilter(BaseFilter):
     """산술 평균 필터"""
-    
+
+    # 병렬 스레드 간 클래스 변수 접근 보호용 Lock
+    _debug_lock: threading.Lock = threading.Lock()
+    _main_debug_logged: bool = False
+
     def __init__(self, db_manager, criteria: Dict[str, Any] = None):
         super().__init__(db_manager, criteria)
         self.optimizer = FilterOptimizer(self._process_chunk)
@@ -63,16 +68,20 @@ class AverageFilter(BaseFilter):
                 (averages <= max_average)
             )
             
-            # 디버깅: 대량 데이터 처리 시 로그 출력 (한 번만)
+            # 디버깅: 대량 데이터 처리 시 로그 출력 (한 번만, Lock으로 병렬 접근 보호)
             if len(combinations_chunk) > 10000 and not getattr(AverageFilter, '_main_debug_logged', False):
-                logging.info(f"[AverageFilter MAIN] Criteria: min={min_average}, max={max_average}")
-                logging.info(f"[AverageFilter MAIN] Chunk size: {len(combinations_chunk)}")
-                logging.info(f"[AverageFilter MAIN] Sample averages: {averages[:10]}")
-                logging.info(f"[AverageFilter MAIN] Valid count: {np.sum(valid_mask)}/{len(averages)}")
-                AverageFilter._main_debug_logged = True
+                with AverageFilter._debug_lock:
+                    # Double-checked locking: Lock 획득 후 다시 확인
+                    if not AverageFilter._main_debug_logged:
+                        logging.info(f"[AverageFilter MAIN] Criteria: min={min_average}, max={max_average}")
+                        logging.info(f"[AverageFilter MAIN] Chunk size: {len(combinations_chunk)}")
+                        logging.info(f"[AverageFilter MAIN] Sample averages: {averages[:10]}")
+                        logging.info(f"[AverageFilter MAIN] Valid count: {np.sum(valid_mask)}/{len(averages)}")
+                        AverageFilter._main_debug_logged = True
             
             return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid_mask[i]]
 
         except Exception as e:
             logging.error(f"청크 처리 중 오류 발생: {str(e)}")
-            return []
+            # 오류 시 입력 조합 보존하여 청크 전체 손실 방지 (필터 간 예외 정책 통일)
+            return combinations_chunk

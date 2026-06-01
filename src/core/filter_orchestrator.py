@@ -238,7 +238,7 @@ class FilterOrchestrator(IFilterOrchestrator):
             ordered_filters = self.get_optimized_filter_order()
 
             for filter_name, filter_instance in ordered_filters:
-                filter_func = self._convert_filter_to_numpy(filter_name, filter_instance)
+                filter_func = self._convert_filter_to_numpy(filter_name, filter_instance, latest_round)
                 if filter_func:
                     filter_pipeline.append(filter_func)
 
@@ -264,9 +264,14 @@ class FilterOrchestrator(IFilterOrchestrator):
                     save_callback=save_callback
                 )
 
+                total_processed = stats.get('total_processed', 0)
+                if total_processed > 0:
+                    exclusion_rate = stats['total_excluded'] / total_processed * 100
+                else:
+                    exclusion_rate = 0.0
                 logging.info(
-                    f"스트림 필터링 완료: {stats['total_passed']:,}개 통과 "
-                    f"(제외율: {(stats['total_excluded'] / stats['total_processed'] * 100):.2f}%)"
+                    f"스트림 필터링 완료: {stats.get('total_passed', 0):,}개 통과 "
+                    f"(제외율: {exclusion_rate:.2f}%)"
                 )
             else:
                 logging.warning("[FilterOrchestrator] stream_processor가 없습니다. 일반 필터링으로 전환합니다.")
@@ -311,13 +316,18 @@ class FilterOrchestrator(IFilterOrchestrator):
         )
 
     def _check_previous_filtering_results(self, round_num: int) -> bool:
-        """이전 필터링 결과가 있는지 확인"""
+        """이전 필터링 결과가 있는지 확인
+
+        NOTE: 결과는 combinations_db에 저장되므로 거기서 체크해야 함.
+        (filter_dbs의 filtered_combinations는 별도 테이블로 항상 비어있음)
+        """
         try:
-            for filter_name, filter_db in self.db_manager.filter_dbs.items():
-                if hasattr(filter_db, 'get_filtered_combinations_count'):
-                    count = filter_db.get_filtered_combinations_count(round_num)
-                    if count > 0:
-                        return True
+            # 실제 저장 위치인 combinations_db를 체크
+            if hasattr(self.db_manager, 'combinations_db') and self.db_manager.combinations_db is not None:
+                count = self.db_manager.combinations_db.get_filtered_combinations_count(round_num)
+                if count > 0:
+                    logging.debug(f"[캐시 확인] 회차 {round_num}의 필터링 결과 {count:,}개 존재 → 재필터링 불필요")
+                    return True
             return False
         except Exception as e:
             logging.warning(f"이전 필터링 결과 확인 중 오류: {e}")
@@ -459,6 +469,10 @@ class FilterOrchestrator(IFilterOrchestrator):
         _tqdm_disable = _threading.current_thread() is not _threading.main_thread()
         with tqdm(total=len(ordered_filters), desc="필터 적용 중", unit="필터", file=sys.stdout, disable=_tqdm_disable) as pbar:
             for filter_name, filter_instance in ordered_filters:
+                # 종료 요청 시 즉시 중단 (긴 필터링이 강제 완주되는 것을 방지)
+                if self.stop_requested:
+                    logging.info("[FilterOrchestrator] 종료 요청 수신 - 필터링 중단")
+                    return None
                 # 필터 적용
                 filtered_combinations = self.filter_core.apply_single_filter(
                     filter_name=filter_name,
@@ -679,7 +693,7 @@ class FilterOrchestrator(IFilterOrchestrator):
         except Exception as e:
             logging.error(f"필터링 통계 표시 중 오류: {e}")
 
-    def _convert_filter_to_numpy(self, filter_name: str, filter_instance) -> Optional[Callable]:
+    def _convert_filter_to_numpy(self, filter_name: str, filter_instance, round_num: int = 0) -> Optional[Callable]:
         """필터를 numpy 최적화 함수로 변환"""
         try:
             if filter_name == 'sum_range':
@@ -726,7 +740,7 @@ class FilterOrchestrator(IFilterOrchestrator):
 
                     try:
                         if hasattr(filter_instance, 'apply'):
-                            filtered = filter_instance.apply(combo_strings, 1189)
+                            filtered = filter_instance.apply(combo_strings, round_num)
                             filtered_set = set(filtered)
                             for i, combo_str in enumerate(combo_strings):
                                 mask[i] = combo_str in filtered_set

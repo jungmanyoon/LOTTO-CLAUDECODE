@@ -9,6 +9,7 @@
 import json
 import hashlib
 import sqlite3
+import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 import logging
@@ -16,7 +17,10 @@ from typing import Dict, List, Optional, Tuple
 
 class IntelligentCacheManager:
     """지능형 캐시 관리자"""
-    
+
+    # 필터 설정 파일 경로 (adaptive_filter_config.yaml이 단일 소스)
+    _ADAPTIVE_CONFIG_PATH = "configs/adaptive_filter_config.yaml"
+
     def __init__(self, db_manager):
         self.db_manager = db_manager
         self.cache_dir = Path("data/cache")
@@ -27,6 +31,13 @@ class IntelligentCacheManager:
     def _init_cache_db(self):
         """캐시 메타데이터 DB 초기화"""
         with sqlite3.connect(self.cache_db_path) as conn:
+            # 동시 접근 안정화: WAL 모드(DB 파일 영속 속성 -> 이후 연결에도 적용) + busy_timeout
+            # (Windows 멀티스레드 환경에서 raw sqlite 연결의 락 경합/충돌 완화)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")
+            except Exception:
+                pass
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS cache_metadata (
                     cache_key TEXT PRIMARY KEY,
@@ -53,6 +64,22 @@ class IntelligentCacheManager:
                 )
             """)
     
+    def _get_filter_config(self) -> Dict:
+        """adaptive_filter_config.yaml에서 필터 설정 로드
+
+        DatabaseManager에는 config 속성이 없으므로
+        설정 파일을 직접 읽어 필터 기준값을 가져옵니다.
+        """
+        try:
+            config_path = Path(self._ADAPTIVE_CONFIG_PATH)
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    adaptive_config = yaml.safe_load(f) or {}
+                return adaptive_config.get('dynamic_criteria', {})
+        except Exception as e:
+            logging.warning(f"필터 설정 로드 실패 ({self._ADAPTIVE_CONFIG_PATH}): {e}")
+        return {}
+
     def get_filter_hash(self, filter_config: Dict) -> str:
         """필터 설정의 해시값 생성"""
         # 필터 설정을 정렬하여 일관된 해시 생성
@@ -86,8 +113,8 @@ class IntelligentCacheManager:
             if latest_round > cached_round:
                 return False, f"새 회차 발견 ({cached_round} → {latest_round})"
             
-            # 3. 필터 설정 변경 확인
-            current_config = self.db_manager.config.get('filters', {}).get('criteria', {})
+            # 3. 필터 설정 변경 확인 (adaptive_filter_config.yaml에서 직접 로드)
+            current_config = self._get_filter_config()
             current_hash = self.get_filter_hash(current_config)
             
             if current_hash != cached_hash:
@@ -129,7 +156,8 @@ class IntelligentCacheManager:
         # 1. 필터링 결과를 DB에 저장 (이미 filter_manager가 처리)
         # 여기서는 메타데이터만 저장
         
-        filter_config = self.db_manager.config.get('filters', {}).get('criteria', {})
+        # adaptive_filter_config.yaml에서 직접 필터 설정 로드
+        filter_config = self._get_filter_config()
         filter_hash = self.get_filter_hash(filter_config)
         
         # 2. 캐시 메타데이터 저장
@@ -246,15 +274,18 @@ class IntelligentCacheManager:
         return False
     
     def _evaluate_filter_performance(self, recent_rounds: List[List[int]]) -> Dict:
-        """필터 성능 평가"""
-        
-        # 여기서는 간단한 평가만
-        # 실제로는 각 필터별로 상세 평가 필요
-        
+        """필터 성능 평가 (실측 미연동 - 임시 기본값).
+
+        [주의] 아래 값은 실제 통과율/제외율이 아니라 임시 기본값이다(실측 데이터 미연동).
+        과거에는 이 하드코딩 더미가 should_update_filters/check_need_adjustment 판단을 좌우했다
+        (CLAUDE.md 더미데이터 금지 위반 소지). 값을 '정상 범위'로 두어 자동 조정을 트리거하지 않으며,
+        미연동 상태를 warning으로 표면화한다. 실측 통과율/당첨번호 제외율 연동은 별도 작업 필요.
+        """
+        logging.warning("[IntelligentCache] _evaluate_filter_performance 실측 미연동 - 임시 기본값 사용(자동 조정 보류)")
         return {
-            'pass_rate': 15.0,  # 현재 통과율
-            'winning_excluded_rate': 20.0,  # 당첨번호 제외율
-            'pattern_changes': []  # 패턴 변화
+            'pass_rate': 15.0,             # 임시 기본값(실측 아님)
+            'winning_excluded_rate': 20.0, # 임시 기본값(실측 아님)
+            'pattern_changes': []
         }
     
     def update_with_new_round(self, new_round: int, new_numbers: List[int]):
@@ -328,9 +359,20 @@ class IntelligentCacheManager:
         top_patterns = [p for p, _ in pattern_counts.most_common(5)]
         new_criteria['odd_even'] = {'patterns': top_patterns}
         
-        # config 업데이트
-        self.db_manager.config['filters']['criteria'].update(new_criteria)
-        
+        # adaptive_filter_config.yaml을 직접 수정하는 방식으로 필터 기준 업데이트
+        # DatabaseManager에는 config 속성이 없으므로 직접 설정 파일에 저장
+        try:
+            config_path = Path(self._ADAPTIVE_CONFIG_PATH)
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    adaptive_config = yaml.safe_load(f) or {}
+                dynamic_criteria = adaptive_config.setdefault('dynamic_criteria', {})
+                dynamic_criteria.update(new_criteria)
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(adaptive_config, f, allow_unicode=True, default_flow_style=False)
+        except Exception as e:
+            logging.warning(f"필터 기준 저장 실패: {e}")
+
         logging.info(f"필터 기준 업데이트 완료: {new_criteria}")
     
     def _incremental_ml_update(self, new_round: int, new_numbers: List[int]):

@@ -97,9 +97,10 @@ class FilterValidator:
                             filtered_result = filter_obj.apply(combination_list, round_num)
                             passed = len(filtered_result) > 0  # 필터를 통과하면 결과가 있음
                         except Exception as e:
-                            # 에러 발생 시 상세 로깅
-                            self.logger.debug(f"필터 {filter_name} 적용 중 예외: {e}")
-                            passed = True  # 에러 시 통과로 처리 (안전모드)
+                            # 예외 시 통과(보존)로 처리하되, 통과율 지표를 부풀릴 수 있으므로
+                            # debug가 아닌 warning으로 올려 은폐를 줄인다. (청크 예외 보존 정책과 일관)
+                            self.logger.warning(f"필터 {filter_name} 적용 중 예외 - 통과(보존) 처리: {e}")
+                            passed = True  # 에러 시 통과로 처리 (필터 미적용=보존)
                         
                         if not passed:
                             result['passed_all_filters'] = False

@@ -167,9 +167,11 @@ class ThresholdManager:
             # Decimal로 변환 (소수점 2자리 반올림)
             new_value = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            # 범위 검증
-            if not (Decimal("0.3") <= new_value <= Decimal("3.0")):
-                logging.warning(f"[ThresholdManager] 임계값 범위 초과 무시: {new_value} (허용: 0.3~3.0)")
+            # 범위 검증 (YAML adaptive_options.min/max_threshold 연동; 미로드 시 0.3~3.0 기본)
+            _min = getattr(self, '_min_threshold', Decimal("0.3"))
+            _max = getattr(self, '_max_threshold', Decimal("3.0"))
+            if not (_min <= new_value <= _max):
+                logging.warning(f"[ThresholdManager] 임계값 범위 초과 무시: {new_value} (허용: {_min}~{_max})")
                 return
 
             # 변경 감지
@@ -406,6 +408,17 @@ class ThresholdManager:
             with open(path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
 
+            # 임계값 허용 범위를 YAML(adaptive_options.min/max_threshold)에서 먼저 로드하여
+            # set_threshold 검증에 반영한다 (단일 소스 - 과거 0.3~3.0 하드코딩으로 YAML 무시되던 문제 수정)
+            adaptive_options = config.get('adaptive_options', {})
+            try:
+                if 'min_threshold' in adaptive_options:
+                    self._min_threshold = Decimal(str(adaptive_options['min_threshold']))
+                if 'max_threshold' in adaptive_options:
+                    self._max_threshold = Decimal(str(adaptive_options['max_threshold']))
+            except (ValueError, TypeError) as _e:
+                logging.warning(f"[ThresholdManager] min/max_threshold 파싱 실패, 기본값(0.3~3.0) 유지: {_e}")
+
             # 설정값 로드 (source="config"로 명시)
             if 'global_probability_threshold' in config:
                 self.set_threshold(config['global_probability_threshold'], source="config")
@@ -447,7 +460,7 @@ class ThresholdManager:
             else:
                 config = {}
 
-            # ✅ 임계값 업데이트 (정밀도 보존)
+            # [O] 임계값 업데이트 (정밀도 보존)
             # Decimal → float 변환 시 정밀도 손실 방지:
             # 1.5 (Decimal) → 1.4000000000000001 (float) 현상 방지
             with self._value_lock:
@@ -461,14 +474,28 @@ class ThresholdManager:
                 config['ml_integration']['ml_bypass_filters'] = self._ml_bypass_filters
                 config['ml_integration']['ml_weight'] = round(float(self._ml_weight), 2)
 
-            # 파일 저장 (백업 생성)
+            # 파일 저장 (백업 생성 - configs/backup/ 하위에 최근 N개만 유지하여 디스크 누수 방지.
+            # 이전: 매 저장마다 configs/ 루트에 타임스탬프 백업을 무제한 생성 -> 수백 개 누적)
             if os.path.exists(path):
-                backup_path = f"{path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 import shutil
+                backup_dir = os.path.join(os.path.dirname(path) or '.', 'backup')
+                os.makedirs(backup_dir, exist_ok=True)
+                base = os.path.basename(path)
+                backup_path = os.path.join(backup_dir, f"{base}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
                 shutil.copy(path, backup_path)
+                # retention: 동일 파일 백업을 최근 10개만 유지
+                try:
+                    backups = sorted(f for f in os.listdir(backup_dir) if f.startswith(f"{base}.backup_"))
+                    for old in backups[:-10]:
+                        try:
+                            os.remove(os.path.join(backup_dir, old))
+                        except OSError:
+                            pass
+                except OSError:
+                    pass
                 logging.debug(f"[ThresholdManager] 설정 백업: {backup_path}")
 
-            # ✅ YAML 저장 시 float 정밀도 제어
+            # [O] YAML 저장 시 float 정밀도 제어
             with open(path, 'w', encoding='utf-8') as f:
                 yaml.safe_dump(
                     config,

@@ -263,7 +263,10 @@ class FilterCache(IFilterCache):
             True if 메모리 압박 상태
         """
         try:
-            memory_mb = psutil.virtual_memory().used / 1024 / 1024
+            # 프로세스 자체 RSS(MB) 기준으로 압박 판정한다.
+            # 이전: psutil.virtual_memory().used(시스템 전체 사용량, 수십 GB)를 프로세스 제한(MB)과
+            #       비교해 사실상 항상 True -> 증분 조합 로드가 첫 배치 후 조기 중단되어 풀이 잘리는 버그.
+            memory_mb = self.get_memory_usage()
             return memory_mb > self.memory_limit_mb
         except Exception:
             return False

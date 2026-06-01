@@ -143,6 +143,19 @@ class FilteredPoolEnsemblePredictor:
         self.combination_to_label = {combo: idx for idx, combo in enumerate(unique_combinations)}
         self.label_to_combination = {idx: combo for idx, combo in enumerate(unique_combinations)}
 
+        # 유사도 레이블 탐색용 샘플 (무작위 폴백 대신 최대 교집합 근사에 사용; 고정 시드로 재현성).
+        # 풀이 수백만 개일 수 있어 전수 탐색은 비현실적 -> 고정 샘플(<=100K)에서 numpy 벡터화로 탐색.
+        if unique_combinations:
+            n_sample = min(100_000, len(unique_combinations))
+            rng = np.random.RandomState(42)
+            sample_idx = rng.choice(len(unique_combinations), size=n_sample, replace=False)
+            self._similar_sample_labels = sample_idx.astype(np.int64)
+            self._similar_sample_pool = np.array(
+                [unique_combinations[i] for i in sample_idx], dtype=np.int8)
+        else:
+            self._similar_sample_labels = np.array([], dtype=np.int64)
+            self._similar_sample_pool = np.empty((0, 6), dtype=np.int8)
+
         logging.info(f"필터링된 풀 설정 완료: {self.pool_size}개 조합, {len(unique_combinations)}개 고유 조합")
 
     def extract_combination_features(self, combination: List[int]) -> Dict[str, float]:
@@ -275,17 +288,28 @@ class FilteredPoolEnsemblePredictor:
         features_df = pd.DataFrame(features_list)
         features_df = features_df.fillna(0)  # NaN 값 처리
 
+        # 학습에 사용한 feature 컬럼 순서를 보존 -> 예측 시 동일 순서로 reindex (차원/순서 불일치 방지)
+        # extract_sequence_features는 분기(target_index<5 등)마다 키 집합이 달라질 수 있어 필수.
+        self.feature_columns = list(features_df.columns)
+
         return features_df.values, np.array(labels)
 
     def _find_similar_combination_label(self, combo: List[int]) -> int:
-        """가장 유사한 조합의 레이블 찾기 - O(1) 랜덤 선택
+        """입력 조합과 교집합이 가장 큰 풀 조합의 레이블 반환 (벡터화 최대 교집합).
 
-        참고: 역사적 당첨번호가 168K 필터링 풀에 포함될 확률은 매우 낮으므로
-        (8.14M 중 168K = 2%) 유사도 탐색 대신 랜덤 레이블 반환으로 처리.
-        이 방식이 O(168K) 루프보다 실질적 학습 품질 차이가 없음.
+        과거 당첨번호가 필터링 풀에 정확히 없을 때(대부분) 사용한다. 과거에는 무작위 인덱스를
+        반환했으나, 이는 (특징 X, 레이블 y) 쌍에서 y를 노이즈로 만들어 학습 신호를 약화시켰다.
+        풀 전체 선형 탐색은 비현실적이므로 set_filtered_pool에서 만든 고정 샘플(<=100K)에서
+        numpy 벡터 연산으로 최대 교집합 조합을 찾는다(무작위보다 학습 신호가 의미 있음).
         """
-        all_labels = list(self.combination_to_label.values())
-        return int(np.random.choice(all_labels)) if all_labels else 0
+        sample = getattr(self, '_similar_sample_pool', None)
+        if sample is None or len(sample) == 0:
+            all_labels = list(self.combination_to_label.values())
+            return int(all_labels[0]) if all_labels else 0
+        target = np.array(sorted({int(x) for x in combo}), dtype=np.int8)
+        overlap = np.isin(sample, target).sum(axis=1)  # 각 샘플 조합과의 교집합 크기
+        best = int(np.argmax(overlap))
+        return int(self._similar_sample_labels[best])
 
     def train_with_filtered_pool(self, historical_combinations: List[List[int]],
                                 filtered_combinations: List[List[int]],
@@ -340,6 +364,7 @@ class FilteredPoolEnsemblePredictor:
 
         # 각 모델 학습
         results = {}
+        self._eval_reliable = True  # 정상 평가 가정 (아래 더미 폴백 시 False)
 
         # 테스트 세트에서 학습 세트에 없는 클래스 필터링 (Invalid classes 에러 방지)
         train_classes = set(y_train)
@@ -348,10 +373,13 @@ class FilteredPoolEnsemblePredictor:
         y_test_filtered = y_test[test_mask]
 
         if len(y_test_filtered) == 0:
-            # 모든 테스트 클래스가 학습에 없음 - 전체 데이터로 학습만 진행
-            logging.warning("테스트 세트에 학습 클래스가 없어 평가 건너뜀. 전체 데이터로 학습합니다.")
+            # 모든 테스트 클래스가 학습에 없음 - 전체 데이터로 학습만 진행(검증 불가).
+            # 아래의 임시 평가셋은 학습 데이터 일부를 재사용하므로 accuracy는 신뢰할 수 없다 -> eval_reliable=False.
+            logging.warning("테스트 세트에 학습 클래스가 없어 평가를 건너뜀(검증 불가). 전체 데이터로 학습합니다. "
+                            "(이 경우 accuracy는 신뢰 불가로 표시됨)")
             X_train, y_train = X_scaled, y
-            X_test_filtered, y_test_filtered = X_scaled[:10], y[:10]  # 더미 평가용
+            X_test_filtered, y_test_filtered = X_scaled[:10], y[:10]  # 평가 코드 동작용 임시(신뢰 불가)
+            self._eval_reliable = False
         elif len(y_test_filtered) < len(y_test):
             skipped = len(y_test) - len(y_test_filtered)
             logging.debug(f"테스트 세트에서 {skipped}개 샘플 제외 (학습에 없는 클래스)")
@@ -361,6 +389,9 @@ class FilteredPoolEnsemblePredictor:
         # XGBoost는 연속적인 레이블 [0,1,2,3...]을 요구함
         train_label_encoder = LabelEncoder()
         y_train_continuous = train_label_encoder.fit_transform(y_train)
+        # 모델이 실제 학습되는 레이블 공간(E2). 예측 시 model.classes_(E2) -> E1 -> pool index
+        # 순으로 정확히 역변환하기 위해 보존한다. (과거: 예측 시 E1로 잘못 역변환 -> 확률 오배치)
+        self.scalers['train_label_encoder'] = train_label_encoder
 
         # y_test_filtered도 같은 인코더로 변환 (학습에 있는 클래스만 포함됨이 보장됨)
         try:
@@ -418,6 +449,15 @@ class FilteredPoolEnsemblePredictor:
             # 실패 시 None으로 설정하여 다음 예측에서 스킵
             self.models['nn'] = None
 
+        # 평가가 신뢰 불가(더미 평가셋)였으면 accuracy를 None으로 표시하여 오해를 방지
+        if not getattr(self, '_eval_reliable', True):
+            for _m in results.values():
+                if isinstance(_m, dict) and 'accuracy' in _m:
+                    _m['accuracy'] = None
+            results['eval_reliable'] = False
+        else:
+            results['eval_reliable'] = True
+
         self.is_trained = True
 
         # 모델 저장
@@ -444,9 +484,14 @@ class FilteredPoolEnsemblePredictor:
         combo_features = self.extract_combination_features(latest_combo)
         seq_features = self.extract_sequence_features(historical_combinations, len(historical_combinations)-1)
 
-        # 특징 결합
+        # 특징 결합 후, 학습 시 컬럼 순서로 reindex하여 차원/순서 불일치 방지
+        # (extract_sequence_features의 분기에 따라 키 집합이 달라질 수 있으므로 필수)
         combined_features = {**combo_features, **seq_features}
-        feature_vector = np.array([list(combined_features.values())])
+        if getattr(self, 'feature_columns', None):
+            row = pd.DataFrame([combined_features]).reindex(columns=self.feature_columns, fill_value=0)
+            feature_vector = row.fillna(0).values
+        else:
+            feature_vector = np.array([list(combined_features.values())])
 
         # 스케일링
         if hasattr(self.scalers['features'], 'mean_'):
@@ -486,8 +531,10 @@ class FilteredPoolEnsemblePredictor:
         """앙상블 확률 예측"""
         ensemble_proba = np.zeros(len(self.label_to_combination))
 
-        # 레이블 인코더가 있으면 원본 레이블로 역변환 필요
-        label_encoder = self.scalers.get('label_encoder')
+        # 레이블 역변환: 모델 출력은 E2(train_label_encoder) 공간 -> E1(label_encoder, 풀 인코딩)
+        # -> 원본 pool index(label_to_combination 키) 순으로 정확히 역변환해야 한다.
+        pool_encoder = self.scalers.get('label_encoder')          # E1
+        train_encoder = self.scalers.get('train_label_encoder')   # E2 (모델이 실제 학습된 공간)
 
         total_weight = 0
         for model_name, model in self.models.items():
@@ -500,16 +547,22 @@ class FilteredPoolEnsemblePredictor:
                 classes = model.classes_
 
                 for i, encoded_label in enumerate(classes):
-                    # 인코딩된 레이블을 원본 레이블로 역변환
-                    if label_encoder is not None:
+                    lbl = encoded_label
+                    # 1) 모델 출력(E2 연속 레이블) -> E1 공간(전체 풀 인코딩 레이블)
+                    if train_encoder is not None:
                         try:
-                            original_label = label_encoder.inverse_transform([encoded_label])[0]
+                            lbl = train_encoder.inverse_transform([int(lbl)])[0]
                         except (ValueError, IndexError):
-                            original_label = encoded_label
-                    else:
-                        original_label = encoded_label
+                            pass
+                    # 2) E1 공간 -> 원본 pool index (label_to_combination 키)
+                    if pool_encoder is not None:
+                        try:
+                            lbl = pool_encoder.inverse_transform([int(lbl)])[0]
+                        except (ValueError, IndexError):
+                            pass
+                    original_label = int(lbl)
 
-                    if original_label < len(full_proba):
+                    if 0 <= original_label < len(full_proba):
                         full_proba[original_label] = proba[i]
 
                 weight = self.ensemble_weights.get(model_name, 0)
@@ -698,7 +751,8 @@ class FilteredPoolEnsemblePredictor:
             return None
 
         except Exception as e:
-            logging.error(f"Backward compatibility train() 실패: {e}")
+            # 스택 트레이스 포함 기록 (조용한 은폐 방지)
+            logging.exception(f"Backward compatibility train() 실패: {e}")
             return None
 
     def predict_next_numbers(self, winning_numbers: List[str],
@@ -752,7 +806,8 @@ class FilteredPoolEnsemblePredictor:
             )
 
         except Exception as e:
-            logging.error(f"Backward compatibility predict_next_numbers() 실패: {e}")
+            # 스택 트레이스 포함 기록 (조용한 은폐 방지). 빈 리스트 반환은 NO FAKE DATA 정책 유지.
+            logging.exception(f"Backward compatibility predict_next_numbers() 실패: {e}")
             return []  # 빈 리스트 반환 (NO FAKE DATA 정책, caller가 처리)
 
 

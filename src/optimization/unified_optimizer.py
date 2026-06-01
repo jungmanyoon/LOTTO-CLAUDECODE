@@ -42,6 +42,7 @@ class UnifiedOptimizer:
         self._stop_flag: Dict = {'stop': False}
         self._thread: Optional[threading.Thread] = None
         self._running = False
+        self._stop_join_done = False  # stop() 멱등성: join 1회만 수행 (이중 종료 호출 대비)
 
     # ------------------------------------------------------------------
     # 공개 인터페이스
@@ -87,15 +88,23 @@ class UnifiedOptimizer:
         }
 
     def stop(self):
-        """백그라운드 최적화 중지"""
+        """백그라운드 최적화 중지 (멱등 - 이중 호출 안전)
+
+        main.py의 Phase3 종료와 signal/atexit graceful_shutdown이 모두 stop()을 호출하므로,
+        join을 한 번만 수행하여 30초 대기가 중복(최대 60초)되는 것을 방지한다.
+        """
         self._stop_flag['stop'] = True
         self._running = False
+        if self._stop_join_done:
+            self.logger.debug("[UnifiedOptimizer] stop() 재호출 - 이미 종료 처리됨(추가 join 생략)")
+            return
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=30)
             if self._thread.is_alive():
                 self.logger.warning("[UnifiedOptimizer] 스레드가 30초 내에 종료되지 않음 (daemon으로 강제 종료)")
             else:
                 self.logger.info("[UnifiedOptimizer] 스레드 정상 종료 완료")
+        self._stop_join_done = True
         self.logger.info("[UnifiedOptimizer] 최적화 중지")
 
     # ------------------------------------------------------------------
@@ -219,6 +228,9 @@ class UnifiedOptimizer:
         try:
             from src.core.pool_optimizer import PoolOptimizer
             optimizer = PoolOptimizer(self.db_manager, target_K=_POOL_TARGET_K)
+            # 종료 플래그 전파: optimize() 내부 Optuna 루프가 trial 경계마다 stop을 확인하도록 함
+            # (threshold 경로의 set_shutdown_flag와 동일 패턴 - 30초 미종료/강제종료 방지)
+            optimizer.set_shutdown_flag(self._stop_flag)
         except Exception as e:
             self.logger.error(f"[UnifiedOptimizer] PoolOptimizer 초기화 실패 - 최적화 비활성(예측은 정상): {e}")
             self._running = False
@@ -244,6 +256,14 @@ class UnifiedOptimizer:
                     break
                 # ---- 1. PoolOptimizer 최적화 사이클 (10 trials 누적) ----
                 result = optimizer.optimize(n_trials=10, study_name="pool_optimization_v6")
+
+                # [종료 가드] optimize()가 길게 블로킹되는 동안 stop이 켜졌거나 사이클이
+                # 취소(완료 trial 0개)된 경우, 저장/예측/피드백 등 모든 후처리를 생략하고 종료한다.
+                # 종료 중 0.000 백테스팅이 DB에 기록되는 문제의 핵심 차단점이다.
+                if self._stop_flag.get('stop', False) or result.get('cancelled'):
+                    self.logger.info("[UnifiedOptimizer] 종료/취소 감지 - pool 사이클 후처리 생략")
+                    break
+
                 cycle_count += 1
                 best_val = result.get('best_value', 0)
                 auc = result.get('auc_separation', 0)
@@ -260,6 +280,9 @@ class UnifiedOptimizer:
                 self._opt_db.set_state('last_best_score', best_val)
                 self._opt_db.set_state('total_cycles_pool', cycle_count)
 
+                # 예측 생성 직전 종료 재확인
+                if self._stop_flag.get('stop', False):
+                    break
                 # 사이클 완료 시 예측 5세트 생성
                 self._generate_predictions_after_cycle(cycle_count)
 
@@ -267,6 +290,9 @@ class UnifiedOptimizer:
                 now = datetime.now()
                 if (last_feedback_time is None or
                         (now - last_feedback_time).total_seconds() >= _FEEDBACK_INTERVAL_MINUTES * 60):
+                    # 피드백(백테스팅) 진입 직전 종료 재확인 - 종료 중 백테스팅 실행/기록 차단
+                    if self._stop_flag.get('stop', False):
+                        break
                     self._run_feedback_cycle()
                     last_feedback_time = datetime.now()
 
@@ -285,9 +311,22 @@ class UnifiedOptimizer:
         피드백 루프 실행 (구 SmartAutoLearning.run_learning() 대체).
         EnhancedFeedbackLoop 없으면 기본 백테스팅으로 대체.
         """
+        # [종료 가드 2차 방어] 종료 중이면 피드백(백테스팅) 자체를 시작하지 않는다.
+        # 호출자(_worker_pool)의 가드와 별개로 함수 입구에서도 막아 어떤 경로로 들어와도 안전.
+        if self._stop_flag.get('stop', False):
+            self.logger.info("[UnifiedOptimizer] 종료 중 - 피드백 루프 생략")
+            return
         try:
             from src.optimization.enhanced_feedback_loop import EnhancedFeedbackLoop
             enhanced_feedback = EnhancedFeedbackLoop(db_manager=self.db_manager)
+            # 백테스팅 싱글톤에 종료 플래그 전파 (run_backtest 내부 조기중단 + 0.000 저장 차단)
+            try:
+                from src.backtesting.optimized_backtesting_framework import OptimizedBacktestingFramework
+                _bt = OptimizedBacktestingFramework.get_instance()
+                if _bt:
+                    _bt.set_shutdown_flag(self._stop_flag)
+            except Exception:
+                pass
             latest_round = self.db_manager.get_latest_round()
             if latest_round is None:
                 self.logger.warning("[UnifiedOptimizer] 피드백: DB에서 회차 정보 조회 불가")
@@ -301,11 +340,11 @@ class UnifiedOptimizer:
                 max_iterations=1
             )
 
-            if improvement_result and improvement_result.get('improved', False):
-                self.logger.info(
-                    f"[UnifiedOptimizer] 피드백 개선 완료: "
-                    f"{improvement_result.get('improvement_rate', 0):.2%}"
-                )
+            # run_improvement_cycle 반환에는 'improved'/'improvement_rate' 키가 없고
+            # 'total_improvements'(개선 적용 건수)가 존재 → 이 값으로 개선 여부 판정
+            _improvements = improvement_result.get('total_improvements', 0) if improvement_result else 0
+            if _improvements > 0:
+                self.logger.info(f"[UnifiedOptimizer] 피드백 개선 완료: {_improvements}건 적용")
             else:
                 self.logger.info("[UnifiedOptimizer] 피드백: 현재 최적 상태 유지")
 

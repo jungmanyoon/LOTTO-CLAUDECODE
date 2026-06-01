@@ -56,7 +56,7 @@ class ResultChecker:
             bonus_number = all_numbers[6] if len(all_numbers) > 6 else 0
             
             self.logger.info(f"\n{'='*60}")
-            self.logger.info(f"📊 {round_num}회차 전체 예측 대조 시작")
+            self.logger.info(f"[STAT] {round_num}회차 전체 예측 대조 시작")
             self.logger.info(f"당첨번호: {sorted(actual_numbers)} + 보너스 [{bonus_number}]")
             self.logger.info(f"대조할 예측 수: {len(predictions)}세트")
             self.logger.info(f"{'='*60}")
@@ -100,7 +100,7 @@ class ResultChecker:
                     
                 # 당첨 시 로그 출력
                 if rank > 0:
-                    rank_emoji = {1: "🏆", 2: "🥈", 3: "🥉", 4: "⭐", 5: "✅"}
+                    rank_emoji = {1: "[BEST]", 2: "[2nd]", 3: "[3rd]", 4: "[STAR]", 5: "[O]"}
                     self.logger.info(f"  {rank_emoji.get(rank, '')} 세트 {pred['set_number']}: "
                                    f"{sorted(pred['numbers'])} → {match_count}개 일치, {rank}등 당첨!")
                 
@@ -115,7 +115,7 @@ class ResultChecker:
             
             # 최종 결과 로그
             self.logger.info(f"\n{'='*60}")
-            self.logger.info(f"📈 대조 결과 요약")
+            self.logger.info(f"[UP] 대조 결과 요약")
             self.logger.info(f"{'='*60}")
             self.logger.info(f"총 예측: {len(predictions)}세트")
             self.logger.info(f"당첨: {total_wins}세트 ({win_rate:.1f}%)")
@@ -185,87 +185,7 @@ class ResultChecker:
             round_num = unchecked['round']
             # 모든 누적된 예측을 대조하도록 변경
             return self.check_all_predictions_for_round(round_num)
-            
-            # 실제 당첨번호 조회
-            actual_data = self.db_manager.get_numbers_by_round(round_num)
-            if not actual_data:
-                self.logger.info(f"{round_num}회차 당첨번호가 아직 발표되지 않았습니다.")
-                return {'status': 'waiting', 'round': round_num}
-            
-            # actual_data는 (round, numbers_str, date) 튜플
-            numbers_str = actual_data[1]
-            # 번호 문자열을 리스트로 변환 (마지막 번호가 보너스)
-            all_numbers = [int(n) for n in numbers_str.split(',')]
-            actual_numbers = all_numbers[:6]
-            bonus_number = all_numbers[6] if len(all_numbers) > 6 else 0
-            
-            # 각 예측과 비교
-            results = []
-            best_rank = 0
-            total_prize = 0
-            total_matches = 0
-            rank_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-            
-            for pred in predictions:
-                # 일치 개수 계산
-                match_count = len(set(pred['numbers']) & set(actual_numbers))
-                bonus_match = bonus_number in pred['numbers']
-                
-                # 등수 계산
-                rank = self.calculate_rank(match_count, bonus_match)
-                
-                # 당첨금 추정
-                prize = self.estimate_prize(rank)
-                
-                # 결과 저장
-                result = {
-                    'prediction_id': pred['id'],
-                    'set_number': pred['set_number'],
-                    'predicted_numbers': pred['numbers'],
-                    'match_count': match_count,
-                    'bonus_match': bonus_match,
-                    'rank': rank,
-                    'prize': prize
-                }
-                results.append(result)
-                
-                # 통계 업데이트
-                if rank > 0:
-                    rank_counts[rank] += 1
-                    if rank > best_rank or best_rank == 0:
-                        best_rank = rank
-                    total_prize += prize
-                
-                total_matches += match_count
-                
-                # DB에 결과 저장
-                self._save_result_to_db(round_num, pred['id'], actual_numbers, 
-                                       bonus_number, match_count, bonus_match, rank, prize)
-            
-            # 주간 성과 업데이트
-            accuracy_rate = total_matches / len(predictions) if predictions else 0
-            self._update_weekly_performance(round_num, best_rank, rank_counts, 
-                                           total_prize, accuracy_rate)
-            
-            # JSON 결과 업데이트
-            self._update_json_result(round_num, actual_numbers, bonus_number, results)
-            
-            # 결과 보고서 생성
-            report = self.generate_report(round_num, actual_numbers, bonus_number, 
-                                        results, rank_counts, total_prize)
-            
-            return {
-                'status': 'checked',
-                'round': round_num,
-                'actual_numbers': actual_numbers,
-                'bonus_number': bonus_number,
-                'results': results,
-                'best_rank': best_rank,
-                'total_prize': total_prize,
-                'accuracy_rate': accuracy_rate,
-                'report': report
-            }
-            
+
         except Exception as e:
             self.logger.error(f"결과 확인 실패: {e}")
             return {'status': 'error', 'message': str(e)}
@@ -324,10 +244,20 @@ class ResultChecker:
             with sqlite3.connect(self.prediction_tracker.db_path) as conn:
                 cursor = conn.cursor()
                 
+                # 중복 방지: 동일 (round, prediction_id) 결과가 이미 있으면 스킵.
+                # (주석은 '중복 스킵'이었으나 실제로는 무조건 INSERT라 재실행 시 결과가 중복 누적되던 문제 수정)
+                cursor.execute(
+                    "SELECT 1 FROM prediction_results WHERE round = ? AND prediction_id = ? LIMIT 1",
+                    (round_num, prediction_id)
+                )
+                if cursor.fetchone():
+                    self.logger.debug(f"결과 중복 스킵: round={round_num}, prediction_id={prediction_id}")
+                    return
+
                 numbers_str = ','.join(map(str, actual_numbers))
                 cursor.execute("""
                     INSERT INTO prediction_results
-                    (round, prediction_id, actual_numbers, bonus_number, 
+                    (round, prediction_id, actual_numbers, bonus_number,
                      match_count, bonus_match, rank, prize_amount)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (round_num, prediction_id, numbers_str, bonus_number,
@@ -436,7 +366,7 @@ class ResultChecker:
         """
         report = []
         report.append("=" * 60)
-        report.append(f"📊 {round_num}회차 전체 예측 대조 결과")
+        report.append(f"[STAT] {round_num}회차 전체 예측 대조 결과")
         report.append("=" * 60)
         report.append(f"당첨번호: {sorted(actual_numbers)} + 보너스 [{bonus_number}]")
         report.append(f"총 예측 수: {len(results)}세트")
@@ -445,7 +375,7 @@ class ResultChecker:
         # 당첨 예측 먼저 표시
         winning_predictions = [r for r in results if r['rank'] > 0]
         if winning_predictions:
-            report.append("🎊 당첨 예측")
+            report.append("[BEST] 당첨 예측")
             report.append("-" * 60)
             for result in sorted(winning_predictions, key=lambda x: x['rank']):
                 set_num = result['set_number']
@@ -456,15 +386,15 @@ class ResultChecker:
                 source = result['source']
                 confidence = result['confidence']
                 
-                rank_emoji = {1: "🏆", 2: "🥈", 3: "🥉", 4: "⭐", 5: "✅"}
+                rank_emoji = {1: "[BEST]", 2: "[2nd]", 3: "[3rd]", 4: "[STAR]", 5: "[O]"}
                 report.append(f"{rank_emoji.get(rank, '')} [{set_num}세트] {numbers}")
-                report.append(f"   → {match_count}개 일치, {rank}등 당첨! 💰 {prize:,}원")
+                report.append(f"   -> {match_count}개 일치, {rank}등 당첨! [PRIZE] {prize:,}원")
                 report.append(f"   → 출처: {source} (신뢰도: {confidence:.1%})")
                 report.append("")
         
         # 통계 요약
         report.append("-" * 60)
-        report.append("📈 통계 요약")
+        report.append("[UP] 통계 요약")
         report.append("-" * 60)
         
         total_wins = sum(rank_distribution.values())
@@ -527,7 +457,7 @@ class ResultChecker:
         """
         report = []
         report.append("=" * 52)
-        report.append(f"📊 예측 결과 확인 - {round_num}회차")
+        report.append(f"[STAT] 예측 결과 확인 - {round_num}회차")
         report.append("=" * 52)
         report.append(f"실제 당첨번호: {sorted(actual_numbers)} + 보너스 [{bonus_number}]")
         report.append("")
@@ -543,15 +473,15 @@ class ResultChecker:
             report.append(f"[예측 {set_num}세트] {numbers}")
             
             if rank > 0:
-                rank_emoji = {1: "🏆", 2: "🥈", 3: "🥉", 4: "⭐", 5: "✅"}
-                report.append(f"  {rank_emoji.get(rank, '')} {match_count}개 일치 → {rank}등 당첨! 💰 {prize:,}원")
+                rank_emoji = {1: "[BEST]", 2: "[2nd]", 3: "[3rd]", 4: "[STAR]", 5: "[O]"}
+                report.append(f"  {rank_emoji.get(rank, '')} {match_count}개 일치 -> {rank}등 당첨! [PRIZE] {prize:,}원")
             else:
-                report.append(f"  ❌ {match_count}개 일치 → 미당첨")
+                report.append(f"  [X] {match_count}개 일치 -> 미당첨")
             report.append("")
         
         # 전체 성과
         report.append("-" * 52)
-        report.append("📈 이번 회차 성과")
+        report.append("[UP] 이번 회차 성과")
         
         total_wins = sum(rank_counts.values())
         win_rate = (total_wins / 5) * 100 if total_wins > 0 else 0
@@ -571,7 +501,7 @@ class ResultChecker:
         performance = self.prediction_tracker.get_performance_summary()
         if performance['total_rounds'] > 0:
             report.append("")
-            report.append(f"📊 누적 성과 (최근 {performance['total_rounds']}회)")
+            report.append(f"[STAT] 누적 성과 (최근 {performance['total_rounds']}회)")
             report.append(f"- 총 {performance['total_predictions']}세트 중 {performance['total_wins']}세트 당첨")
             report.append(f"- 누적 당첨금: {performance['total_prize']:,}원")
             report.append(f"- 평균 정확도: {performance['avg_accuracy']:.2f}개")

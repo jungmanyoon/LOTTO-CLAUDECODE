@@ -254,6 +254,10 @@ class IntegratedFilterManager:
                 break
 
         # 연속 번호
+        # [주의] 여기서 consecutive는 '인접쌍 개수'(연속 쌍의 수)이다. low_prob_patterns['consecutive']가
+        #        '최대 연속 길이'로 채워진다면 의미가 불일치하여 이 항목이 거의 매치되지 않을 수 있다.
+        #        현재 _is_low_probability는 'checks >= 3' 보수적 조건이라 안전 측면 영향은 작으나,
+        #        low_prob_patterns 생성부와의 의미 정합은 별도 검증이 필요하다(섣부른 변경은 필터 동작 변화).
         consecutive = 0
         for i in range(len(numbers) - 1):
             if numbers[i+1] - numbers[i] == 1:

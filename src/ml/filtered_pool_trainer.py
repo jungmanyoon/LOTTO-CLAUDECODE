@@ -167,11 +167,10 @@ class FilteredPoolTrainer:
         if combinations:
             logging.debug(f"[generate_labels] 첫 번째 조합 타입: {type(combinations[0])}, 값: {combinations[0]}")
 
-        # 당첨번호를 집합으로 변환
-        winning_sets = []
+        # 당첨번호 파싱
+        winning_parsed = []
         parse_errors = 0
         for wn in winning_numbers:
-            # 문자열, 튜플, 리스트 모두 지원
             if isinstance(wn, str):
                 try:
                     numbers = [int(n.strip()) for n in wn.split(',')]
@@ -185,41 +184,49 @@ class FilteredPoolTrainer:
             else:
                 logging.warning(f"지원하지 않는 당첨번호 형식: {type(wn)}")
                 continue
-            winning_sets.append(set(numbers[:6]))  # 보너스 번호 제외
+            winning_parsed.append(numbers[:6])  # 보너스 번호 제외
 
         if parse_errors > 3:
             logging.warning(f"당첨번호 파싱 오류 총 {parse_errors}건")
 
-        # winning_sets 검증
-        if not winning_sets:
-            logging.error(f"[generate_labels] winning_sets가 비어있습니다! 당첨번호 형식을 확인하세요.")
+        if not winning_parsed:
+            logging.error("[generate_labels] winning_parsed가 비어있습니다! 당첨번호 형식을 확인하세요.")
             return np.zeros(len(combinations))
 
-        labels = []
+        # numpy 원-핫 행렬 방식으로 유사도 벡터화 계산 (Python 루프 O(N×M) 제거)
+        # winning_hot: (M, 45) - 당첨번호 원-핫 벡터
+        # combos_hot:  (N, 45) - 조합 원-핫 벡터
+        # intersection_counts = combos_hot @ winning_hot.T → (N, M)
+        winning_hot = np.zeros((len(winning_parsed), 45), dtype=np.int8)
+        for i, nums in enumerate(winning_parsed):
+            for n in nums:
+                if 1 <= n <= 45:
+                    winning_hot[i, n - 1] = 1
 
+        combos_list = []
         for combo in combinations:
-            combo_set = set(combo)
+            if isinstance(combo, str):
+                nums = [int(x.strip()) for x in combo.split(',')]
+            else:
+                nums = [int(x) for x in combo]
+            combos_list.append(nums)
 
-            # 모든 당첨번호와의 유사도 계산
-            similarities = []
-            for winning_set in winning_sets:
-                # Jaccard 유사도
-                intersection = len(combo_set & winning_set)
-                union = len(combo_set | winning_set)
-                jaccard = intersection / union if union > 0 else 0
+        combos_hot = np.zeros((len(combos_list), 45), dtype=np.int8)
+        for i, nums in enumerate(combos_list):
+            for n in nums:
+                if 1 <= n <= 45:
+                    combos_hot[i, n - 1] = 1
 
-                # 매칭 개수 기반 점수 (0-6개 매칭)
-                match_score = intersection / 6
+        # (N, M) intersection counts via matrix multiplication
+        intersection_counts = combos_hot.astype(np.float32) @ winning_hot.astype(np.float32).T  # (N, M)
+        union_counts = np.maximum(12 - intersection_counts, 1)  # 6+6-intersection, avoid /0
+        jaccard_scores = intersection_counts / union_counts       # (N, M)
+        match_scores = intersection_counts / 6.0                  # (N, M)
+        similarities = 0.4 * jaccard_scores + 0.6 * match_scores  # (N, M)
 
-                # 가중 평균 (Jaccard 40%, Match 60%)
-                similarity = 0.4 * jaccard + 0.6 * match_score
-                similarities.append(similarity)
+        # 각 조합의 최대 유사도를 레이블로 사용
+        labels_array = np.max(similarities, axis=1)  # (N,)
 
-            # 최대 유사도를 레이블로 사용
-            max_similarity = max(similarities) if similarities else 0
-            labels.append(max_similarity)
-
-        labels_array = np.array(labels)
         logging.info(f"레이블 생성 완료: 평균 유사도 {labels_array.mean():.3f}, "
                     f"최대 {labels_array.max():.3f}, 최소 {labels_array.min():.3f}")
 
@@ -256,12 +263,19 @@ class FilteredPoolTrainer:
             logging.info("\n[Fine-tuning] 필터링된 조합 풀에서 샘플링 중...")
             latest_round = len(winning_numbers)
 
-            # filter_manager에서 필터링된 조합 가져오기
             try:
-                # 필터링된 조합 샘플링
-                filtered_combinations = self._sample_filtered_pool(
-                    filter_manager, latest_round, self.pool_sample_size
-                )
+                # 우선순위 1: 모델에 이미 filtered_pool이 설정되어 있으면 재사용 (DB 재로드 불필요)
+                if hasattr(model, 'filtered_pool') and model.filtered_pool:
+                    pool = model.filtered_pool
+                    n_sample = min(self.pool_sample_size, len(pool))
+                    indices = np.random.choice(len(pool), n_sample, replace=False)
+                    filtered_combinations = [list(pool[i]) for i in indices]
+                    logging.info(f"  - 모델 기존 풀에서 샘플링: {len(filtered_combinations):,}개 / {len(pool):,}개")
+                else:
+                    # 우선순위 2: filter_manager에서 가져오기 (느림)
+                    filtered_combinations = self._sample_filtered_pool(
+                        filter_manager, latest_round, self.pool_sample_size
+                    )
 
                 if not filtered_combinations:
                     logging.warning("필터링된 조합을 가져올 수 없습니다. 미세조정 건너뜀")
@@ -298,6 +312,15 @@ class FilteredPoolTrainer:
             if model_type in ('EnsemblePredictor', 'FilteredPoolEnsemblePredictor'):
                 # EnsemblePredictor 또는 FilteredPoolEnsemblePredictor 모두 지원
                 model = self._fine_tune_ensemble(model, pool_features_scaled, pool_labels)
+
+                # FilteredPoolEnsemblePredictor의 filtered_pool 설정
+                # predict_next_numbers()가 filtered_pool 비어있으면 []를 반환하므로 반드시 설정
+                if model_type == 'FilteredPoolEnsemblePredictor' and hasattr(model, 'filtered_pool'):
+                    if not model.filtered_pool:
+                        logging.info("    - filtered_pool 설정 중 (미세조정에서 사용한 조합 적용)...")
+                        model.set_filtered_pool(filtered_combinations)
+                        logging.info(f"    - filtered_pool 설정 완료: {len(model.filtered_pool)}개 조합")
+
             elif model_type == 'LSTMPredictor':
                 model = self._fine_tune_lstm(model, filtered_combinations, winning_numbers)
             else:
@@ -335,22 +358,13 @@ class FilteredPoolTrainer:
             logging.info(f"    - 유사도 통계: 중앙값={median_similarity:.4f}, "
                         f"좋은조합={np.sum(binary_labels)}개, 나쁜조합={len(binary_labels)-np.sum(binary_labels)}개")
 
-            # 45차원 이진 레이블 생성 (각 번호에 대해 동일한 이진 값)
-            y_train = np.zeros((len(labels), 45), dtype=int)
-            for i, label in enumerate(binary_labels):
-                y_train[i, :] = label  # 모든 번호에 동일한 이진 레이블
+            # RF 미세조정 - 스킵 (이진 레이블로 재학습하면 multi-class 구조 파괴)
+            # train_with_filtered_pool()에서 168K 클래스 분류기로 학습된 RF를
+            # multi-output binary (N×45)로 재학습하면 predict_proba()가
+            # list of 45 arrays를 반환해 _ensemble_predict_proba() 완전 실패 → 예측 0개
+            logging.info("    - RF 미세조정은 모델 구조 보호를 위해 스킵 (multi-class 분류기 유지)")
 
-            # Random Forest 미세조정
-            if 'rf' in ensemble_model.models and ensemble_model.models['rf'] is not None:
-                try:
-                    logging.info("    - Random Forest 미세조정 중...")
-                    ensemble_model.models['rf'].fit(features_scaled, y_train)
-                    logging.info("    - RF 미세조정 완료")
-                except Exception as e:
-                    logging.warning(f"    - RF 미세조정 실패: {e}")
-
-            # XGBoost 미세조정 - 다중 클래스(45개) 분류기와 이진 레이블 불일치로 스킵
-            # 원래 모델이 multi:softprob (45 클래스)로 학습되어 이진 레이블로 미세조정 불가
+            # XGBoost 미세조정 - 스킵 (same reason)
             logging.info("    - XGBoost 미세조정은 클래스 불일치 방지를 위해 스킵")
 
             # Neural Network는 과적합 위험이 높아 스킵
@@ -542,8 +556,13 @@ class FilteredPoolTrainer:
             if pool_features.empty or len(pool_labels) == 0:
                 return {'error': '특징 또는 레이블 추출 실패'}
 
-            # 스케일링
-            pool_features_scaled = self.scaler.transform(pool_features)
+            # 스케일링 (scaler가 아직 fit되지 않았으면 NotFittedError -> 안전하게 fit_transform 폴백)
+            from sklearn.exceptions import NotFittedError
+            try:
+                pool_features_scaled = self.scaler.transform(pool_features)
+            except NotFittedError:
+                logging.warning("[evaluate_pool_coverage] scaler 미학습 상태 - fit_transform으로 폴백")
+                pool_features_scaled = self.scaler.fit_transform(pool_features)
 
             # 예측
             model_type = type(model).__name__

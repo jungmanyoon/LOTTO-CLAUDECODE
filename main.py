@@ -2475,7 +2475,10 @@ def main():
     import atexit
 
     def graceful_shutdown(signum=None, frame=None):
-        """우아한 종료 처리"""
+        """우아한 종료 처리 (재진입 안전: signal + atexit + Phase3 finally 중복 호출 방지)"""
+        if getattr(graceful_shutdown, '_done', False):
+            return
+        graceful_shutdown._done = True
         try:
             logging.info("\n프로그램 종료 신호 감지...")
 
@@ -3223,13 +3226,17 @@ def main():
         
         # 필터 검증 실행 (신규)
         if not args.skip_validation:
+            _v_start = max(1, latest_round - 100)
+            _v_count = latest_round - _v_start + 1
             logging.info("\n" + "="*60)
-            logging.info("[필터 검증] 과거 당첨번호 기반 필터 검증 시작...")
+            # 검증A(보존율): 최근 N회 당첨번호가 필터를 통과(보존)하는지 — 참고 지표.
+            # (적응형 최적화 단계의 검증B와 모수/목적이 다르므로 라벨로 구분)
+            logging.info(f"[필터 검증A/보존율] 최근 {_v_count}회 당첨번호 필터 통과(보존) 검증 시작 - 참고 지표...")
             logging.info("="*60)
-            
+
             filter_validator = FilterValidator(filter_manager, db_manager)
             validation_results = filter_validator.validate(
-                start_round=max(1, latest_round - 100),
+                start_round=_v_start,
                 end_round=latest_round
             )
             
@@ -3238,19 +3245,19 @@ def main():
                 validation_results, target_pass_rate=95
             )
             
-            # [O] 실제로 필터 조정 적용 (수정됨)
-            from src.core.filter_auto_adjuster import FilterAutoAdjuster
-            auto_adjuster = FilterAutoAdjuster(db_manager, filter_manager)
-
-            if auto_adjuster.check_need_adjustment(validation_results):
-                logging.info("\n[ADJ] 필터 자동 조정이 필요합니다...")
-                if auto_adjuster.apply_optimized_criteria(optimized_criteria, validation_results):
-                    logging.info("[O] 필터가 자동으로 조정되었습니다!")
-                    logging.info(auto_adjuster.get_adjustment_summary())
-                else:
-                    logging.warning("[!] 필터 자동 조정 실패")
-            else:
-                logging.info("[O] 모든 필터가 정상 범위입니다.")
+            # [전략 정합 2026-06-01] 사용자 확정 전략(MEMORY: user-strategy-final-decision):
+            #   "통과율 95%를 강제 목표/제약으로 두지 않는다." 통과율 하락을 이유로 필터 기준을
+            #   자동 완화하면 "출현율 낮은 극단 패턴 최대 제거" 목표와 정면 충돌한다.
+            #   따라서 통과율 기반 필터 자동 조정을 비활성화하고, 통과율은 '참고 지표'로만 표시한다.
+            #   제거 강도(임계값) 조정은 Optuna(극단성 풀) 단일 진입점에 위임한다.
+            if isinstance(validation_results, dict):
+                _pr = validation_results.get('pass_rate', validation_results.get('overall_pass_rate'))
+                try:
+                    if _pr is not None:
+                        logging.info(f"[참고] 당첨번호 필터 통과율: {float(_pr):.2f}% (참고 지표 - 자동 조정하지 않음)")
+                except (TypeError, ValueError):
+                    pass
+            logging.info("[전략] 통과율 기반 필터 자동 완화 비활성화 (사용자 확정: 통과율 제약 제거)")
         else:
             logging.info("\n[필터 검증] 건너뛰기")
         

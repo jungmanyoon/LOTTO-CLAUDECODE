@@ -91,7 +91,8 @@ class ConsecutiveFilter(BaseFilter):
 
         except Exception as e:
             logging.error(f"청크 처리 중 오류 발생: {str(e)}")
-            return []
+            # 오류 시 입력 조합 보존하여 청크 전체 손실 방지 (필터 간 예외 정책 통일)
+            return combinations_chunk
 
     # @deprecated - 분석 목적으로만 유지됨. 실제 필터링에는 _process_chunk 사용
     def _get_max_consecutive(self, numbers: List[int]) -> int:

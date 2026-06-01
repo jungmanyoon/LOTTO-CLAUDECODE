@@ -820,6 +820,8 @@ class AdaptiveProbabilityFilter:
     def _analyze_match(self, winning_numbers: List[str]) -> Dict:
         """매치 패턴 분석 - 랜덤 조합 vs 과거 당첨번호 시뮬레이션 (MatchFilter와 동일 방식)"""
         import random
+        # 고정 시드 RNG: 실행마다 match 필터 기준(max_match)이 달라지는 비결정성 제거(재현성 확보)
+        rng = random.Random(42)
 
         # 과거 당첨번호를 set 리스트로 변환
         winning_sets = [set(map(int, nums_str.split(','))) for nums_str in winning_numbers]
@@ -827,12 +829,12 @@ class AdaptiveProbabilityFilter:
         if not winning_sets:
             return {i: 0.0 for i in range(7)}
 
-        # 랜덤 조합 1000개를 생성하여 과거 당첨번호와 최대 일치 수 시뮬레이션
+        # 랜덤 조합을 생성하여 과거 당첨번호와 최대 일치 수 시뮬레이션 (고정 시드로 결정적)
         num_simulations = 1000
         match_distribution = {i: 0 for i in range(7)}  # 0개~6개 일치
 
         for _ in range(num_simulations):
-            sample = set(random.sample(range(1, 46), 6))
+            sample = set(rng.sample(range(1, 46), 6))
             # 모든 과거 당첨번호와 비교하여 최대 일치 수 산출
             max_match = max(len(sample & win_set) for win_set in winning_sets)
             match_distribution[max_match] = match_distribution.get(max_match, 0) + 1

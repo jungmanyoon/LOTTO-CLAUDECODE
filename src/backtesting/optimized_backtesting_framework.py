@@ -10,29 +10,46 @@ import gc  # Phase 2.5: 명시적 가비지 컬렉션
 import sys
 
 # Windows 백그라운드 스레드 tqdm 호환성: sys.stderr를 안전한 래퍼로 교체
+_original_stderr = sys.stderr  # 원본 stderr 보존
+
 class _SafeStderr:
     """Windows 백그라운드 스레드에서 sys.stderr.flush() 오류 방지 래퍼"""
     def write(self, s):
         try:
-            sys.stdout.write(s)
-        except Exception:
-            pass
+            _original_stderr.write(s)
+        except (OSError, ValueError):
+            # Windows 백그라운드 스레드에서 stderr 접근 실패 시 stdout으로 fallback
+            try:
+                sys.stdout.write(s)
+            except Exception:
+                pass
     def flush(self):
         try:
-            sys.stdout.flush()
-        except Exception:
+            _original_stderr.flush()
+        except (OSError, ValueError):
             pass
     def isatty(self):
         return False
     def fileno(self):
         import io
         raise io.UnsupportedOperation("fileno")
-    def encoding(self):
-        return 'utf-8'
+    encoding = 'utf-8'
 
-# tqdm 4.66+은 file=sys.stdout이어도 status_printer에서 sys.stderr.flush()를 항상 호출함
-# sys.stderr를 SafeStderr로 교체
-sys.stderr = _SafeStderr()
+_safe_stderr_installed = False
+
+def install_safe_stderr():
+    """백테스팅 실행 시에만 SafeStderr를 설치 (전역 부작용 방지)"""
+    global _safe_stderr_installed
+    if _safe_stderr_installed:
+        return
+    sys.stderr = _SafeStderr()
+    _safe_stderr_installed = True
+
+def restore_stderr():
+    """원본 stderr 복원"""
+    global _safe_stderr_installed
+    sys.stderr = _original_stderr
+    _safe_stderr_installed = False
 
 # tqdm status_printer monkey-patch: sys.stderr/stdout.flush() 오류를 안전하게 처리
 # tqdm 4.66+은 file=sys.stdout이어도 status_printer에서 sys.stderr.flush()를 항상 호출하므로 패치 필요
@@ -216,9 +233,12 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         if hasattr(self, '_initialized'):
             return
 
+        # Windows 백그라운드 스레드 tqdm 호환성 (백테스팅 실행 시에만 설치)
+        install_safe_stderr()
+
         self.db_manager = db_manager or DatabaseManager()
 
-        # ✅ FIX: 백테스팅 설정 로드
+        # [FIX] 백테스팅 설정 로드
         self.config = config or {}
         backtesting_config = self.config.get('backtesting', {})
         self.validation_window = backtesting_config.get('validation_window', 300)  # 51 → 300
@@ -275,6 +295,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         # Jackpot tracking for systematic contamination detection
         self._jackpot_count = 0
         self._jackpot_threshold = 2  # Flag systematic contamination after 2+ jackpots
+        self._stats_lock = threading.Lock()  # 잭팟 카운터 스레드 안전 보호용 Lock
 
         # 전역 종료 플래그 (외부에서 설정하여 백테스팅 조기 중단)
         self._shutdown_flag = None  # dict 참조: {'stop': True/False}
@@ -383,7 +404,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             self.ml_weight = ml_weight
 
         # ============================================================
-        # 🚀 PERFORMANCE OPTIMIZATION: 캐시만 초기화 (패턴 재분석 없음)
+        # [PERF] PERFORMANCE OPTIMIZATION: 캐시만 초기화 (패턴 재분석 없음)
         # ============================================================
         if hasattr(self, 'prediction_cache'):
             self.prediction_cache.clear()
@@ -403,7 +424,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         gc.collect()
 
         # ============================================================
-        # 🔧 FIX: 파라미터 변경 시 백테스팅 상태 파일 삭제
+        # [FIX] 파라미터 변경 시 백테스팅 상태 파일 삭제
         # 이유: 파라미터가 다르면 이전 캐시된 결과 사용 불가
         # ============================================================
         if hasattr(self, 'state_file') and os.path.exists(self.state_file):
@@ -425,7 +446,10 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         
         # 카운터 초기화
         self.counter_manager.reset_all()
-        
+        # [FIX] jackpot 카운터 초기화 - run_backtest() 재호출 시 이전 카운트 누적 방지
+        with self._stats_lock:
+            self._jackpot_count = 0
+
         results = {
             'start_round': start_round,
             'end_round': end_round,
@@ -453,6 +477,12 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                     
                     if start_round > end_round:
                         logging.info("이미 모든 회차가 완료되었습니다.")
+                        # 저장된 성능 지표 복원 (없으면 predictions로 재계산)
+                        saved_metrics = saved_state.get('performance_metrics', {})
+                        if saved_metrics:
+                            results['performance_metrics'] = saved_metrics
+                        elif results['predictions']:
+                            results['performance_metrics'] = self._calculate_performance_metrics(results['predictions'])
                         return results
             else:
                 logging.info("[RESET] 설정이 변경되어 새로운 백테스팅을 시작합니다.")
@@ -523,7 +553,8 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                         prediction_result['actual_numbers'] = actual_numbers
                         prediction_result['bonus_number'] = bonus_number
                         prediction_result['matches'] = self._calculate_matches(
-                            prediction_result.get('predictions', {}), actual_numbers, bonus_number
+                            prediction_result.get('predictions', {}), actual_numbers, bonus_number,
+                            round_num=test_round
                         )
 
                         # 결과 저장
@@ -548,9 +579,31 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             }
             self.save_state(current_state)
 
+        # [SHUTDOWN 가드] 종료 플래그로 배치 루프가 조기 break되었거나 예측이 0건이면
+        # 메트릭 계산/상태저장/DB저장을 모두 생략한다. (예: 프로그램 종료 중 피드백 백테스팅이
+        # 0건 결과를 0.000 성능으로 DB에 기록해 성능 통계를 오염시키는 문제 차단)
+        # cancelled 플래그로 호출자(enhanced_feedback_loop 등)가 취소를 인지하도록 한다.
+        if self._is_shutting_down() or not results['predictions']:
+            logging.info("[SHUTDOWN] 종료 플래그 감지 또는 빈 결과 - 메트릭 계산 및 저장 생략(데이터 오염 방지)")
+            results['cancelled'] = True
+            results['performance_metrics'] = {}
+            return results
+
         # 성능 지표 계산
         results['performance_metrics'] = self._calculate_performance_metrics(results['predictions'])
-        
+
+        # 최종 상태 저장 (performance_metrics 포함 - 다음 실행 시 "이미 완료" 복원용)
+        final_state = {
+            'start_round': results['start_round'],
+            'end_round': results['end_round'],
+            'window_size': results['window_size'],
+            'last_processed_round': results['end_round'],
+            'predictions': results['predictions'],
+            'performance_metrics': results['performance_metrics'],
+            'timestamp': datetime.now().isoformat()
+        }
+        self.save_state(final_state)
+
         # 결과 저장
         self._save_backtest_results(results)  # JSON 파일 저장
         self._save_to_database(results)       # DB 저장 (BUG FIX: 누락된 호출 추가)
@@ -597,7 +650,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             logging.debug(f"캐시된 예측 사용: 회차 {round_num}")
             cached_result = self.prediction_cache[cache_key]
 
-            # 🔧 CRITICAL FIX: 캐시된 결과에 대해서도 filter validation 재수행
+            # [FIX] CRITICAL: 캐시된 결과에 대해서도 filter validation 재수행
             # (필터 설정이 변경될 수 있으므로 매번 다시 검증 필요)
             if 'predictions' in cached_result and cached_result['predictions']:
                 self._validate_predictions_with_filter(cached_result, round_num)
@@ -771,9 +824,12 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             
             if cached_model:
                 self.ensemble_predictor = cached_model
+                # [FIX] 캐시된 모델은 학습 완료 상태 보장 (clear_cache에서 is_trained=False로 초기화된 경우 복구)
+                self.ensemble_predictor.is_trained = True
                 # 캐시된 모델의 scaler 상태 확인
                 if not hasattr(self.ensemble_predictor.scalers['features'], 'mean_'):
                     logging.warning("캐시된 ensemble 모델의 scaler가 손상됨. 재학습 필요.")
+                    self.ensemble_predictor.is_trained = False
                     cached_model = None  # 재학습 강제
 
             if not cached_model:
@@ -1035,7 +1091,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                     # Only warn if DB pool data exists for this round
                     if pool_inclusion_rate < 20 and self._round_has_db_pool(round_num):
                         logging.warning(
-                            f"⚠️ {model_name} 예측이 필터링 풀에 거의 포함되지 않음: {pool_inclusion_rate:.1f}%"
+                            f"[WARN] {model_name} 예측이 필터링 풀에 거의 포함되지 않음: {pool_inclusion_rate:.1f}%"
                         )
                     elif pool_inclusion_rate < 20:
                         logging.debug(
@@ -1065,7 +1121,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                     # Known issue: ML-Filter disconnect (CLAUDE.md:115-125) with automatic mitigation
                     if overall_pool_rate < 5 and not hasattr(self, '_ml_pool_warning_shown'):
                         logging.warning(
-                            f"🚨 ML 예측의 DB 풀 포함률이 매우 낮음: {overall_pool_rate:.1f}%"
+                            f"[!!] ML 예측의 DB 풀 포함률이 매우 낮음: {overall_pool_rate:.1f}%"
                         )
                         logging.info("→ ML-필터 통합 개선이 권장됨 (자동 완화 로직 활성: relaxed threshold, similar matching)")
                         self._ml_pool_warning_shown = True
@@ -1089,7 +1145,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             result['filter_pass_rate'] = 0
             result['filtered_pool_inclusion_rate'] = 0
     
-    def _calculate_matches(self, predictions: Dict[str, List[List[int]]], actual: List[int], bonus: Optional[int] = None) -> Dict[str, Any]:
+    def _calculate_matches(self, predictions: Dict[str, List[List[int]]], actual: List[int], bonus: Optional[int] = None, round_num: Optional[int] = None) -> Dict[str, Any]:
         """예측과 실제 당첨번호 비교 (보너스 번호 포함)"""
         matches = {}
         actual_set = set(actual)
@@ -1114,22 +1170,24 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                         # 전체 백테스팅에서 5개 이상 일치가 전체의 1% 미만이면 성과로 판단
                         if match_count == 5:
                             # 5개 일치는 드물지만 가능한 우수 성과
-                            logging.info(f"🎯 [모델: {model_name}] 우수한 예측 성과! {match_count}개 일치 (예측: {pred}, 실제: {actual})")
+                            logging.info(f"[TARGET] [모델: {model_name}] 우수한 예측 성과! {match_count}개 일치 (예측: {pred}, 실제: {actual})")
                         elif match_count == 6:
                             # 6개 완전 일치는 통계적 이상치 (1 in 8.14M, 0.0000123%)
                             # Single jackpot: Flag for review (legitimate possibility)
                             # Multiple jackpots: Systematic contamination (abort)
-                            self._jackpot_count += 1
-                            logging.warning(f"🎰 JACKPOT! [모델: {model_name}] 6/6 완전 일치 감지 (#{self._jackpot_count})")
+                            with self._stats_lock:  # 레이스 컨디션 방지: ThreadPoolExecutor 내 원자적 카운터 증가
+                                self._jackpot_count += 1
+                                current_count = self._jackpot_count
+                            logging.warning(f"JACKPOT! [모델: {model_name}] 6/6 완전 일치 감지 (#{current_count})")
                             logging.warning(f"   예측: {pred}, 실제: {actual}")
                             logging.warning(f"   확률: 1 in 8,145,060 (0.0000123%) - 검토 필요")
 
                             # Only abort on systematic contamination (multiple jackpots)
-                            if self._jackpot_count >= self._jackpot_threshold:
+                            if current_count >= self._jackpot_threshold:
                                 contaminated = True
                                 raise ValueError(
-                                    f"❌ Systematic data contamination detected!\n"
-                                    f"   Multiple jackpots ({self._jackpot_count}) exceed threshold ({self._jackpot_threshold}).\n"
+                                    f"[X] Systematic data contamination detected!\n"
+                                    f"   Multiple jackpots ({current_count}) exceed threshold ({self._jackpot_threshold}).\n"
                                     f"   Latest: Model={model_name}, Prediction={pred}, Actual={actual}\n"
                                     f"   This indicates systematic access to future information."
                                 )
@@ -1214,7 +1272,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                 # 필터 검증 결과 수집
                 filter_validation = pred_result.get('filter_validation', {})
 
-                # 🔍 DEBUG: filter_validation 확인
+                # [DEBUG] filter_validation 확인
                 if not filter_validation:
                     logging.debug(f"[DEBUG] pred_result에 filter_validation 없음: keys={pred_result.keys()}")
 
@@ -1261,11 +1319,11 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                 model_metrics['filter_pass_rate'] = 0
                 model_metrics['avg_matches'] = 0.0
                 model_metrics['accuracy_3plus'] = 0.0
-                logging.warning(f"⚠️ 모델 {model}의 예측 수가 0입니다! 백테스팅 결과를 확인하세요.")
+                logging.warning(f"[WARN] 모델 {model}의 예측 수가 0입니다! 백테스팅 결과를 확인하세요.")
 
             metrics['model_performance'][model] = model_metrics
 
-        # ✅ FIX: 전체 필터 통과율 계산 (continuous_improvement_engine이 필요로 함)
+        # [FIX] 전체 필터 통과율 계산 (continuous_improvement_engine이 필요로 함)
         # 모든 모델의 필터 통과율을 집계하여 overall_filter_pass_rate 계산
         total_predictions_all_models = 0
         total_passed_all_models = 0
@@ -1328,6 +1386,10 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
     def _validate_results(self, metrics: Dict[str, Any], model_name: str):
         """백테스팅 결과 오염 검증
 
+        NOTE: 현재 호출처 없음(보존용 유틸). 임계값은 PerformanceMetrics.CONTAMINATION_CRITICAL(3.0)과
+              동일하게 맞춰 프로젝트 표준(avg_matches>3 = 데이터 오염)과 정합. 과거 1.5는 정상
+              상한(0.8~1.5)과 겹쳐 정상 결과를 오염으로 오판할 위험이 있었음.
+
         Args:
             metrics: 백테스팅 메트릭 딕셔너리
             model_name: 검증할 모델 이름
@@ -1336,23 +1398,23 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             ValueError: 오염이 감지된 경우
         """
         if model_name not in metrics.get('model_performance', {}):
-            logging.warning(f"⚠️ 모델 {model_name}의 메트릭을 찾을 수 없습니다.")
+            logging.warning(f"[WARN] 모델 {model_name}의 메트릭을 찾을 수 없습니다.")
             return
 
         model_metrics = metrics['model_performance'][model_name]
         avg_matches = model_metrics.get('avg_matches', 0)
         total_predictions = model_metrics.get('total_predictions', 0)
 
-        # 보수적 임계값: 1.5 (정상 범위: 0.8-1.5)
-        contamination_threshold = 1.5
+        # 오염 임계값: 3.0 (PerformanceMetrics.CONTAMINATION_CRITICAL과 동일, CLAUDE.md: avg_matches>3 = 오염)
+        contamination_threshold = 3.0
 
         if total_predictions == 0:
-            logging.warning(f"⚠️ 모델 {model_name}의 예측 수가 0입니다.")
+            logging.warning(f"[WARN] 모델 {model_name}의 예측 수가 0입니다.")
             return
 
         if avg_matches > contamination_threshold:
             error_msg = (
-                f"❌ Data contamination detected in {model_name}!\n"
+                f"[X] Data contamination detected in {model_name}!\n"
                 f"   Average matches: {avg_matches:.2f} (threshold: {contamination_threshold})\n"
                 f"   Expected range: 0.8-1.5\n"
                 f"   Total predictions: {total_predictions}\n"
@@ -1365,7 +1427,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             logging.error(error_msg)
             raise ValueError(error_msg)
 
-        logging.info(f"✅ Contamination check passed for {model_name}: avg_matches={avg_matches:.2f}")
+        logging.info(f"[O] Contamination check passed for {model_name}: avg_matches={avg_matches:.2f}")
 
     def _save_to_database(self, results: Dict[str, Any]):
         """백테스팅 결과를 데이터베이스에 저장"""
@@ -1418,10 +1480,17 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             # 예측 결과와 매치 결과를 결합
             predictions = pred_result.get('predictions', {})
             matches = pred_result.get('matches', {})
-            
+            # 필터 통과 정보: per-prediction 추적이 없으므로 모델 단위 filter_validation에서 파생.
+            # 정보가 없으면 None(미상)으로 두고, 하드코딩 True는 사용하지 않는다(정합성 왜곡 방지).
+            filter_validation = pred_result.get('filter_validation', {})
+            if not isinstance(filter_validation, dict):
+                filter_validation = {}
+
             for model_name in predictions.keys():
                 model_matches = []
-                
+                fv = filter_validation.get(model_name, {})
+                model_filter_passed = (fv.get('passed', 0) > 0) if isinstance(fv, dict) and fv else None
+
                 if model_name in matches:
                     # 기존 매치 정보 사용
                     for match_info in matches[model_name]:
@@ -1429,7 +1498,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                             'predicted_numbers': match_info.get('prediction', []),
                             'match_count': match_info.get('match_count', 0),
                             'contaminated': match_info.get('contaminated', False),
-                            'filter_passed': True  # 기본값
+                            'filter_passed': model_filter_passed
                         })
                 else:
                     # 예측만 있고 매치 정보가 없는 경우
@@ -1438,9 +1507,9 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                             'predicted_numbers': pred,
                             'match_count': 0,
                             'contaminated': False,
-                            'filter_passed': True
+                            'filter_passed': model_filter_passed
                         })
-                
+
                 formatted_pred['matches'][model_name] = model_matches
             
             formatted_predictions.append(formatted_pred)
@@ -1475,7 +1544,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
 
             # 오염된 데이터 표시
             if model_metrics.get('contaminated_count', 0) > 0:
-                logging.warning(f"- ⚠️ 데이터 오염 감지: {model_metrics['contaminated_count']}개 (6개 완전 일치)")
+                logging.warning(f"- [WARN] 데이터 오염 감지: {model_metrics['contaminated_count']}개 (6개 완전 일치)")
 
             logging.info("- 일치 개수 분포:")
             for i in range(7):

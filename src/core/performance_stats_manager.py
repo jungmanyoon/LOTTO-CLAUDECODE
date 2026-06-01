@@ -5,13 +5,27 @@
 import sqlite3
 import json
 import logging
+import threading
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import os
 
 class PerformanceStatsManager:
-    """백테스팅 성능 통계 관리"""
-    
+    """백테스팅 성능 통계 관리 (Singleton Pattern)"""
+
+    # 싱글톤 패턴 클래스 변수
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls, db_path: str = "data/performance_stats.db") -> "PerformanceStatsManager":
+        """싱글톤 인스턴스 반환 (thread-safe)"""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls(db_path)
+        return cls._instance
+
     def __init__(self, db_path: str = "data/performance_stats.db"):
         self.db_path = db_path
         self.logger = logging.getLogger(__name__)
@@ -210,6 +224,13 @@ class PerformanceStatsManager:
 
     def save_backtest_results(self, backtest_results: Dict[str, Any]) -> int:
         """백테스팅 결과를 데이터베이스에 저장"""
+        # [데이터 오염 방지 최종 방어선] 취소되었거나(종료 중 조기중단) 0건인 결과는 저장하지 않는다.
+        # 종료 시퀀스에서 0건 백테스팅이 0.000 성능으로 DB에 기록되어 성능 통계/최적화 판단을
+        # 오염시키는 문제를 차단한다. (1차 차단은 run_backtest의 SHUTDOWN 가드)
+        perf = backtest_results.get('performance_metrics', {})
+        if backtest_results.get('cancelled') or perf.get('total_rounds', 0) == 0:
+            self.logger.debug("[저장 생략] 취소되었거나 0건(total_rounds=0) 백테스팅 결과 - DB 저장 거부")
+            return -1
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -503,22 +524,23 @@ class PerformanceStatsManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
-                # 30일 이전 데이터 삭제
+                # 30일 이전 데이터 삭제 - 파라미터화 쿼리로 SQL 인젝션 방지
                 cursor.execute("""
-                    DELETE FROM prediction_details 
-                    WHERE created_at < datetime('now', '-{} days')
-                """.format(keep_days))
-                
+                    DELETE FROM prediction_details
+                    WHERE created_at < datetime('now', ? || ' days')
+                """, (f'-{keep_days}',))
+
                 deleted_details = cursor.rowcount
-                
+
                 # 상세 데이터가 없는 세션의 성능 데이터도 정리 (선택적)
+                # 성능 데이터는 더 오래 보관 (keep_days * 2)
                 cursor.execute("""
-                    DELETE FROM model_performance 
-                    WHERE created_at < datetime('now', '-{} days')
+                    DELETE FROM model_performance
+                    WHERE created_at < datetime('now', ? || ' days')
                     AND session_id NOT IN (
                         SELECT DISTINCT session_id FROM prediction_details
                     )
-                """.format(keep_days * 2))  # 성능 데이터는 더 오래 보관
+                """, (f'-{keep_days * 2}',))
                 
                 deleted_performance = cursor.rowcount
                 
