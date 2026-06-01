@@ -3,7 +3,12 @@
 > 다음 세션 AI는 이 문서 + 메모리(MEMORY.md) + CLAUDE.md를 먼저 읽고 이어갈 것.
 > 메모리 핵심: [[extremeness-pool-architecture-2026-05-31]], [[user-strategy-final-decision]],
 > [[test-isolation-order-dependent-fix]], [[deep-pattern-hunt-negative-2026-06-01]],
-> [[user-prefers-simple-explanations]]
+> [[user-prefers-simple-explanations]], [[log-audit-fixes-2026-06-01]]
+
+> **로그 진단·수정(2026-06-01)**: [[log-audit-fixes-2026-06-01]] — 필터 63분 낭비 제거(구 증분필터
+> 0개제거 조기탈출 가드) + 대시보드 rate limit 상향 + 통과율 자동롤백 제거 + np.float_/status 버그.
+> FilterValidator 3개·DiversitySelector 2개 = 동명 별개 클래스(통합 부적절, docstring 구분 명시).
+> 보류(다음): fast-extremeness-only 기본전환(ML 필터풀 의존성 확인 필요), FilterValidator rename(13곳).
 
 ## 0. 이번 세션 요약 (2026-06-01 업데이트 4) ★최신
 
