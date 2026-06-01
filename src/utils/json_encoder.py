@@ -25,7 +25,7 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return int(obj)
         
         # NumPy 부동소수점 타입 처리
-        elif isinstance(obj, (np.floating, np.float_, np.float16, np.float32, np.float64)):
+        elif isinstance(obj, (np.floating, np.float16, np.float32, np.float64)):
             return float(obj)
         
         # NumPy 배열 처리
@@ -105,7 +105,7 @@ def convert_numpy_to_python(obj):
         return obj.tolist()
     elif isinstance(obj, (np.integer, np.int_, np.int8, np.int16, np.int32, np.int64)):
         return int(obj)
-    elif isinstance(obj, (np.floating, np.float_, np.float16, np.float32, np.float64)):
+    elif isinstance(obj, (np.floating, np.float16, np.float32, np.float64)):
         return float(obj)
     elif isinstance(obj, np.bool_):
         return bool(obj)

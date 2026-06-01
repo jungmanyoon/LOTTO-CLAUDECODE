@@ -2857,9 +2857,11 @@ def main():
                 # threshold가 비결정적 진동 → 통과율 15.69%p 급락/자동 롤백 4회의 근본 원인.
                 # 객체는 상태 조회/graceful shutdown용으로 유지하되 자동 조정 스케줄러는 끔.
                 ENABLE_CONTINUOUS_IMPROVEMENT_SCHEDULER = False  # UnifiedOptimizer가 단일 진입점
+                # 스케줄러 활성화 여부와 무관하게 상태를 먼저 조회(역대 최고 성능 로그용).
+                # 이전엔 status가 if 블록 안에서만 할당돼 스케줄러 비활성 시 UnboundLocalError 발생했음.
+                status = continuous_improvement.get_status()
                 if ENABLE_CONTINUOUS_IMPROVEMENT_SCHEDULER:
                     continuous_improvement.start_continuous_improvement()
-                    status = continuous_improvement.get_status()
                     logging.info("[CONTINUOUS IMPROVEMENT] 지속적 개선 시스템 활성화 완료")
                     logging.info(f"  - 시스템 상태: {status['status']}")
                     logging.info(f"  - 자동 최적화: 매일 21:00 (토요일은 20:30)")
@@ -2869,7 +2871,7 @@ def main():
                     logging.info("  - threshold/criteria 최적화는 UnifiedOptimizer(Optuna)가 전담")
                     logging.info("  - 객체는 상태 조회/종료 정리 용도로만 유지")
 
-                if status['best_performance_ever']:
+                if status.get('best_performance_ever'):
                     logging.info(f"  - 역대 최고 성능: {status['best_performance_ever']['avg_matches']:.3f}")
                     logging.info(f"  - 최적 임계값: {status['best_performance_ever']['threshold']}")
 
