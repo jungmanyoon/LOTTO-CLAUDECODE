@@ -1,8 +1,27 @@
-# 다음 세션 핸드오프 (2026-06-01 업데이트 3)
+# 다음 세션 핸드오프 (2026-06-01 업데이트 4)
 
 > 다음 세션 AI는 이 문서 + 메모리(MEMORY.md) + CLAUDE.md를 먼저 읽고 이어갈 것.
 > 메모리 핵심: [[extremeness-pool-architecture-2026-05-31]], [[user-strategy-final-decision]],
-> [[test-isolation-order-dependent-fix]]
+> [[test-isolation-order-dependent-fix]], [[deep-pattern-hunt-negative-2026-06-01]],
+> [[user-prefers-simple-explanations]]
+
+## 0. 이번 세션 요약 (2026-06-01 업데이트 4) ★최신
+
+[작업] 휠링 검토 + 극단패턴 심층발굴 + 극단성풀 미래검증. (사용자: 모든 보고에 쉬운 설명 필수 — [[user-prefers-simple-explanations]])
+
+- **휠링 기각**: hold-out 100회 실측 — 휠(좁은 N개 covering)은 1cover 5장에 전 구간 열위
+  (avg 0.93~1.5 vs 1.81). 사용자 사용모델: 5장=동행복권 1용지 단위(제약 아님), 그때그때
+  N세트 추천 → 공유자가 골라 구매. wheeling_system.py 보존(연결 안 함).
+- **무작위 vs 다양성(참고)**: 20장 규모선 무작위(풀내)가 다양성 제어를 근소 우위(다양성은 5장에서만 유효).
+  단 사용자 "무작위 말고 데이터 기반" 요구 → 극단 발굴로 전환.
+- **★극단패턴 추가발굴 = 음성(중요)**: [[deep-pattern-hunt-negative-2026-06-01]]. 6전문가
+  워크플로우(26에이전트)+적대검증. 20규칙 발굴 → 진짜 쓸 규칙 0개(다중비교/표본부족 착시,
+  기존필터 중복 15/20). "역사상 0회 극단→제거" 추가발굴 **재시도 금지**.
+- **★극단성풀 walk-forward 미래검증 = 견고**: 5시점(800~1150) 미래 lift 평균 1.10(범위
+  0.97~1.29), 최근일수록 우위(1100→1.29). 위험한 과적합 없음 → 극단풀+5장다양성 그대로 유지.
+- 신규 스크립트 5개(git 추적): evaluate_wheel_vs_cover / evaluate_selection_boost /
+  analyze_extreme_patterns / analyze_deep_patterns / validate_pool_walkforward. 결과 results/*.json.
+- [미완/선택] (a) mean_reversion 연결(콜드→다양성 가중치, 신호 약함) (b) diversity_selector 일원화.
 
 ---
 
