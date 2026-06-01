@@ -51,7 +51,7 @@ class FilterValidator:
         self.config_manager = ConfigManager()
         self.validation_results = {}
 
-        # ✅ FIX: 백테스팅 설정 로드
+        # [O] FIX: 백테스팅 설정 로드
         if config is None:
             config = self.config_manager.config
         backtesting_config = config.get('backtesting', {})
@@ -136,7 +136,7 @@ class FilterValidator:
         # 시작 시 실행이면 데이터 준비 상태 확인
         if is_startup:
             if not self._check_filter_data_ready():
-                logging.info("ℹ️ 필터 데이터가 아직 준비되지 않았습니다. 검증을 건너뜁니다.")
+                logging.info("[INFO] 필터 데이터가 아직 준비되지 않았습니다. 검증을 건너뜁니다.")
                 logging.info("   (첫 필터링 실행 후 데이터가 생성됩니다)")
                 return {
                     'total_rounds': 0,
@@ -164,7 +164,7 @@ class FilterValidator:
         if end_round is None:
             end_round = len(all_winning_numbers)
 
-        # ✅ FIX: 검증 윈도우 적용 (최근 N회차만 검증)
+        # [O] FIX: 검증 윈도우 적용 (최근 N회차만 검증)
         # validation_window = 300인 경우, 최근 300회차만 검증
         adjusted_start_round = max(1, end_round - self.validation_window + 1)
         if start_round < adjusted_start_round:
@@ -272,7 +272,7 @@ class FilterValidator:
         self.validation_results = results
         self._save_validation_results(results)
 
-        # ✅ FIX: 데이터베이스에도 필터 통과율 저장 (핵심!)
+        # [O] FIX: 데이터베이스에도 필터 통과율 저장 (핵심!)
         self._save_to_performance_tracker(results)
 
         # 결과 출력
@@ -428,7 +428,7 @@ class FilterValidator:
         logging.info("\n[필터별 통과율]")
         for filter_name, filter_result in results['filter_results'].items():
             pass_rate = filter_result['pass_rate']
-            status = "⚠️" if pass_rate < 90 else "✅"
+            status = "[WARN]" if pass_rate < 90 else "[O]"
             logging.info(f"{status} {filter_name}: {pass_rate:.2f}% ({filter_result['pass_count']}/{results['total_rounds']})")
         
         # 실패한 필터 상세 정보
@@ -438,7 +438,7 @@ class FilterValidator:
                 logging.info(f"\n{i+1}. {detail['round']}회차: {detail['numbers']}")
                 logging.info(f"   실패 필터: {', '.join(detail['failed_filters'])}")
         
-        # ✅ NEW: 최고 필터 통과율 확인 및 보호
+        # [O] NEW: 최고 필터 통과율 확인 및 보호
         try:
             from ..core.continuous_improvement_engine import PerformanceTracker
             tracker = PerformanceTracker()
@@ -448,32 +448,19 @@ class FilterValidator:
                 best_pass_rate = best_pass_rate_perf.filter_pass_rate
                 current_pass_rate = results['overall_pass_rate']
 
-                logging.info(f"\n📊 필터 통과율 비교:")
+                logging.info(f"\n[STAT] 필터 통과율 비교:")
                 logging.info(f"   현재 통과율: {current_pass_rate:.2f}%")
                 logging.info(f"   역대 최고 통과율: {best_pass_rate:.2f}%")
 
-                # ✅ PROTECTION: 역대 최고 통과율보다 낮으면 경고 및 롤백 제안
+                # [O] PROTECTION: 역대 최고 통과율보다 낮으면 경고 및 롤백 제안
                 if current_pass_rate < best_pass_rate:
                     drop_amount = best_pass_rate - current_pass_rate
-                    logging.warning(f"\n🚨 필터 통과율 하락 감지!")
-                    logging.warning(f"   하락폭: -{drop_amount:.2f}%p")
-                    logging.warning(f"   역대 최고 통과율({best_pass_rate:.2f}%)보다 낮습니다!")
-                    logging.warning(f"   최고 성능 설정으로 롤백을 권장합니다.")
-
-                    # 5%p 이상 하락 시 자동 롤백 트리거
-                    if drop_amount >= 5.0:
-                        logging.error(f"🔴 심각한 통과율 하락 감지! (>{drop_amount:.1f}%p)")
-                        logging.error(f"   자동 롤백을 실행합니다...")
-                        try:
-                            from ..core.continuous_improvement_engine import ContinuousImprovementEngine
-                            engine = ContinuousImprovementEngine(db_manager=self.db_manager)
-                            success = engine.rollback_to_best_pass_rate()
-                            if success:
-                                logging.info(f"   ✅ 최고 성능 설정으로 롤백 완료")
-                            else:
-                                logging.error(f"   ❌ 롤백 실패")
-                        except Exception as e:
-                            logging.error(f"   롤백 실패: {e}")
+                    logging.warning(f"[STAT] (참고) 필터 통과율 하락: -{drop_amount:.2f}%p "
+                                    f"(역대 최고 {best_pass_rate:.2f}% 대비)")
+                    # [전략 정합 2026-06-01] 통과율은 '참고 지표'일 뿐 강제 제약이 아님.
+                    # (사용자 확정 전략: 역사적 극단을 최대한 제거하는 것이 우선, 통과율 95% 제약 제거.)
+                    # 따라서 통과율 하락으로 인한 '자동 롤백'을 제거한다 - 하락은 참고용으로만 표시하고,
+                    # 제거 강도(임계값)는 사용자 또는 Optuna 최적화가 조절한다.
 
         except ImportError:
             pass  # PerformanceTracker 없으면 스킵
@@ -484,7 +471,7 @@ class FilterValidator:
         if results['overall_pass_rate'] < 90:
             # FIX: Removed \n prefix to avoid empty WARNING lines + Added range info
             logging.warning(
-                f"⚠️ 주의: 전체 통과율이 {results['overall_pass_rate']:.2f}%로 낮습니다! "
+                f"[WARN] 주의: 전체 통과율이 {results['overall_pass_rate']:.2f}%로 낮습니다! "
                 f"(검증: {results['total_rounds']}개 회차, {results['overall_pass_count']}개 통과)"
             )
             logging.warning("필터 기준을 재조정해야 합니다.")
@@ -492,7 +479,7 @@ class FilterValidator:
             # 85% 미만이면 자동 조정 실행
             if results['overall_pass_rate'] < 85:
                 # FIX: Removed \n prefix to avoid empty WARNING lines
-                logging.warning("🔄 필터 자동 조정을 시작합니다...")
+                logging.warning("[SYNC] 필터 자동 조정을 시작합니다...")
                 self._trigger_auto_adjustment(results)
     
     def suggest_optimized_criteria(self, validation_results: Dict[str, Any], target_pass_rate: float = 95) -> Dict[str, Any]:
@@ -616,7 +603,7 @@ class FilterValidator:
 
             # 조정 필요성 확인
             if auto_adjuster.check_need_adjustment(validation_results):
-                logging.info("🔧 필터 자동 조정 시스템을 실행합니다...")
+                logging.info("[FIX] 필터 자동 조정 시스템을 실행합니다...")
 
                 # 최적화 기준 생성
                 optimized_criteria = self.suggest_optimized_criteria(validation_results, target_pass_rate=95)
@@ -627,15 +614,15 @@ class FilterValidator:
                     # 조정 요약 출력
                     summary = auto_adjuster.get_adjustment_summary()
                     if summary:
-                        logging.info("✅ 필터 자동 조정이 완료되었습니다.")
-                        logging.info("⚠️ 변경사항이 적용되려면 프로그램을 재시작해야 합니다.")
+                        logging.info("[O] 필터 자동 조정이 완료되었습니다.")
+                        logging.info("[WARN] 변경사항이 적용되려면 프로그램을 재시작해야 합니다.")
                         logging.info(summary)
                     else:
-                        logging.info("✅ 현재 필터 설정이 적절하여 조정이 필요하지 않습니다.")
+                        logging.info("[O] 현재 필터 설정이 적절하여 조정이 필요하지 않습니다.")
                 else:
-                    logging.error("❌ 필터 자동 조정 중 오류가 발생했습니다.")
+                    logging.error("[X] 필터 자동 조정 중 오류가 발생했습니다.")
             else:
-                logging.info("ℹ️ 현재 필터 상태로는 자동 조정이 불필요합니다.")
+                logging.info("[INFO] 현재 필터 상태로는 자동 조정이 불필요합니다.")
 
         except Exception as e:
             logging.error(f"필터 자동 조정 중 오류 발생: {e}")
@@ -675,7 +662,7 @@ class FilterValidator:
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
             
-            logging.info("\n✅ config.yaml에 최적화된 필터 설정이 자동 반영되었습니다.")
+            logging.info("\n[O] config.yaml에 최적화된 필터 설정이 자동 반영되었습니다.")
             return True
             
         except Exception as e:
@@ -685,48 +672,20 @@ class FilterValidator:
     def _save_to_performance_tracker(self, results: Dict[str, Any]):
         """검증 결과를 PerformanceTracker 데이터베이스에 저장
 
-        이 메서드가 핵심입니다!
-        FilterValidator는 82.35%를 계산하지만 JSON에만 저장했습니다.
-        이제 데이터베이스에도 저장하여 프로그램 재시작 시에도 유지됩니다.
+        [FIX] avg_matches=0, threshold=0으로 쓰레기 레코드를 생성하는 문제 수정.
+        FilterValidator는 avg_matches를 계산할 수 없으므로 (백테스팅 미수행)
+        성능 히스토리 DB에 저장하지 않는다.
+        필터 통과율 로그는 INFO 레벨 로그로만 기록한다.
 
         Args:
             results: 검증 결과 딕셔너리 (overall_pass_rate 포함)
         """
-        try:
-            # 모듈 레벨 PerformanceTracker 사용 (패치 가능)
-            from ..core.continuous_improvement_engine import PerformanceMetrics
-            from datetime import datetime
-
-            tracker = PerformanceTracker()
-
-            # PerformanceMetrics 객체 생성
-            metrics = PerformanceMetrics(
-                avg_matches=0,  # FilterValidator에서는 매치 수 계산 안 함
-                best_match=0,
-                accuracy_3plus=0,
-                ml_inclusion_rate=0,
-                combination_count=0,
-                threshold=0,
-                ml_bypass_filters=0,
-                ml_weight=0,
-                filter_pass_rate=results['overall_pass_rate'],  # ✅ 핵심: 계산된 통과율
-                timestamp=datetime.now(),
-                session_id=None
-            )
-
-            # 데이터베이스에 저장
-            tracker.save_performance_result(
-                metrics=metrics,
-                round_number=None,  # 특정 회차가 아님
-                is_baseline=False
-            )
-
-            logging.info(f"✅ [DB 저장 완료] 필터 통과율 {results['overall_pass_rate']:.2f}% → continuous_improvement.db")
-
-        except Exception as e:
-            logging.error(f"❌ [DB 저장 실패] 필터 통과율 저장 중 오류: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
+        # avg_matches=0, threshold=0 쓰레기 데이터 생성 방지
+        # 필터 통과율만 알고 있고 avg_matches를 모르는 상태에서 DB 저장 금지
+        logging.info(
+            f"[필터 검증] 통과율: {results.get('overall_pass_rate', 0):.2f}% "
+            f"(avg_matches 미계산 - 백테스팅 미수행, DB 저장 생략)"
+        )
 
 
 def main():
