@@ -54,6 +54,9 @@ class FilteredPoolEnsemblePredictor:
         self.label_to_combination = {}  # 레이블 -> 조합 매핑
         self.filtered_pool = []         # 필터링된 조합 풀
         self.pool_size = 0
+        # [P2-1 2026-06-03] 학습에 사용한 feature 컬럼 순서. 예측 시 단일 조합 특징(예 81차원)을
+        # 학습 차원(예 131차원)으로 reindex하는 데 필요. train에서 채워지고 save/load로 영속화한다.
+        self.feature_columns = None
 
         # 앙상블 가중치
         self.ensemble_weights = {
@@ -643,7 +646,10 @@ class FilteredPoolEnsemblePredictor:
             'feature_config': self.feature_config,
             'is_trained': self.is_trained,
             'pool_size': self.pool_size,
-            'trained_round': getattr(self, 'trained_round', None)  # [재시작 최적화 2026-06-01] 학습 회차 도장
+            'trained_round': getattr(self, 'trained_round', None),  # [재시작 최적화 2026-06-01] 학습 회차 도장
+            # [P2-1 2026-06-03] 예측 reindex용 학습 컬럼 순서 영속화. 미저장 시 재사용 경로에서
+            # scaler 차원 불일치(예 81 vs 131)로 예측이 사일런트 0개가 된다.
+            'feature_columns': getattr(self, 'feature_columns', None)
         }
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
@@ -663,6 +669,16 @@ class FilteredPoolEnsemblePredictor:
                     self.is_trained = config.get('is_trained', False)
                     self.pool_size = config.get('pool_size', 0)
                     self.trained_round = config.get('trained_round', None)  # [재시작 최적화 2026-06-01] 학습 회차
+                    # [P2-1 2026-06-03] 예측 시 81->131 reindex에 필요한 학습 컬럼 순서 복원.
+                    # 구버전 캐시(feature_columns 미저장)는 reindex가 비활성화되어 예측이 사일런트 0개가 되므로,
+                    # is_trained을 내려 재학습(self-heal)을 유도하고 명시 경고를 남긴다(조용한 실패 금지).
+                    self.feature_columns = config.get('feature_columns', None)
+                    if self.is_trained and not self.feature_columns:
+                        logging.warning(
+                            "앙상블 캐시에 feature_columns가 없습니다(구버전 캐시). 예측 차원 불일치"
+                            "(예: 81 vs 131)로 사일런트 0개가 발생하므로 재학습을 유도합니다(self-heal)."
+                        )
+                        self.is_trained = False
 
             # 매핑 정보 로드
             mapping_path = os.path.join(self.model_dir, 'pool_mapping.pkl')

@@ -4,10 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🚀 Quick Start (TL;DR)
 ```bash
-python main.py              # Run everything (F5) - Dashboard at http://127.0.0.1:5001
+python main.py              # ONE full cycle then EXIT (~4min): data/filter/ML/backtest/predict + dashboard(5001)
+python main.py --24h        # PERSISTENT service: stays resident (scheduled predictions + continuous optimization)
 python -m pytest tests/     # Run all tests (70% coverage minimum)
 python src/scripts/clear_model_cache.py  # Fix most cache/model errors
 ```
+
+> NOTE (런타임 검증 2026-06-03): plain `python main.py`는 한 사이클을 수행한 뒤 **자체 종료**합니다(약 4분).
+> 대시보드(5001)와 백그라운드 최적화는 **daemon 스레드**라 프로세스 종료와 함께 멈춥니다.
+> "무한 상주(대시보드 상시 + 무한 백그라운드 최적화)"가 필요하면 **`--24h`** 플래그를 쓰세요.
+> 아래 문서의 "무한 반복/상주" 표현은 `--24h` 상주 모드 기준입니다.
 
 **Key Files**: `config.yaml` (workers/batch), `configs/adaptive_filter_config.yaml` (thresholds)
 **Key APIs**: `db.get_numbers_with_bonus()` (NOT `get_all_rounds()`), `ThresholdManager.get_instance()`
@@ -231,15 +237,17 @@ Korean lottery (로또) prediction system using ML/AI to analyze historical patt
 ## Common Commands
 ```bash
 # Main Program Execution (All-in-One)
-python main.py                           # ⚡ Run EVERYTHING automatically (F5 in IDE)
+python main.py                           # ⚡ Run EVERYTHING ONCE then EXIT (~4min, F5 in IDE)
                                          #    ✅ Data collection & auto-update on new rounds
                                          #    ✅ Pattern analysis & filter updates
                                          #    ✅ ML/AI predictions
-                                         #    ✅ Dashboard (http://127.0.0.1:5001)
-                                         #    ✅ Background optimization (무한 반복)
+                                         #    ✅ Dashboard (http://127.0.0.1:5001, daemon - 프로세스 종료 시 함께 종료)
+                                         #    ✅ Background optimization (daemon, 사이클 동안만 - 무한 상주는 --24h)
                                          #    ✅ New round auto-detection
+                                         #    [!] plain 모드는 1사이클 후 자체 종료. 상주는 아래 --24h.
 
-# Optional Flags (선택사항)
+# Persistent / Optional Flags (선택사항)
+python main.py --24h                     # 상주 모드: 새 회차 감지 + 예약 예측 + 무한 백그라운드 최적화 (Ctrl+C로 종료)
 python main.py --skip-fetch              # Skip data collection
 python main.py --ml-only                 # ML/AI analysis only
 python main.py --no-parallel             # Disable parallel processing
@@ -295,6 +303,11 @@ python src/scripts/analyze_lotto_statistics.py      # Analyze historical pattern
 ### Complete Automation System (F5 실행으로 모든 것 자동화)
 
 **Main Execution (`python main.py` 또는 F5)에서 자동 실행되는 모든 기능**:
+
+> [중요/런타임 검증 2026-06-03] 아래 "무한 반복/상주" 동작은 **`--24h` 상주 모드** 기준이다.
+> plain `python main.py`는 데이터수집->필터링->ML->백테스팅->최종예측 **1사이클을 수행한 뒤 종료**하며,
+> 백그라운드 최적화/대시보드는 daemon 스레드라 그 사이클 동안에만 동작한다(plain 모드 실측 약 2분).
+> 무한 상주 최적화 + 상시 대시보드 + 새 회차 자동 감지/예약 예측을 원하면 `python main.py --24h`로 실행한다.
 
 1. **데이터 수집 & 자동 업데이트**
    - 동행복권 사이트에서 최신 당첨번호 자동 수집
