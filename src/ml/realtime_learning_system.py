@@ -90,13 +90,19 @@ class RealtimeLearningSystem:
             'monte_carlo': deque([0.04], maxlen=self.learning_config.get('monte_carlo', {}).get('performance_window', 8))
         }
         
-        # 모델 상태
+        # 모델 상태 (consecutive_skips: 데드락 방지용 연속 스킵 카운터 - P2-2)
         self.model_states = {
-            'lstm': {'last_update': None, 'update_count': 0},
-            'ensemble': {'last_update': None, 'update_count': 0},
-            'monte_carlo': {'last_update': None, 'update_count': 0}
+            'lstm': {'last_update': None, 'update_count': 0, 'consecutive_skips': 0},
+            'ensemble': {'last_update': None, 'update_count': 0, 'consecutive_skips': 0},
+            'monte_carlo': {'last_update': None, 'update_count': 0, 'consecutive_skips': 0}
         }
-        
+        # [P2-2] 적응형 게이트가 연속으로 막은 횟수가 이 값에 도달하면 강제 1회 업데이트(영구 정체 방지)
+        self.MAX_CONSECUTIVE_SKIPS = 3
+        # [P2-3] 온라인 업데이트가 이 일수(일) 이상 정체되면 (추세 하락이 아니어도) 강제 1회 통과시켜
+        # 영구 동결을 끊는다. monte_carlo(buffer 80, freq 3 -> 80%3=2)처럼 버퍼가 maxlen에 도달해
+        # 주기 모듈로와 영구히 어긋나 추세와 무관하게 동결되는 경우를 차단하기 위함.
+        self.MAX_STALE_DAYS = 30
+
         # 저장된 상태 로드
         self._load_state()
         
@@ -177,6 +183,17 @@ class RealtimeLearningSystem:
         
         self.learning_buffers[model_type].append(new_result)
     
+    def _days_since_last_update(self, model_type: str) -> Optional[float]:
+        """마지막 온라인 업데이트 이후 경과일(일) 반환.
+
+        [P2-3] 정체 가시화/강제 통과 판단에 사용. 한 번도 업데이트된 적이 없으면 None.
+        """
+        state = self.model_states.get(model_type, {})
+        last_update = state.get('last_update')
+        if not last_update:
+            return None
+        return (datetime.now() - last_update).total_seconds() / 86400.0
+
     def _should_update(self, model_type: str) -> bool:
         """모델 업데이트 여부 결정 (모델별 개별 설정 사용)"""
         # 모델별 설정 가져오기
@@ -195,7 +212,7 @@ class RealtimeLearningSystem:
         
         # 모델 상태가 없으면 초기화
         if model_type not in self.model_states:
-            self.model_states[model_type] = {'last_update': None, 'update_count': 0}
+            self.model_states[model_type] = {'last_update': None, 'update_count': 0, 'consecutive_skips': 0}
         
         # 세션당 최대 업데이트 횟수 체크 (None이면 무제한)
         max_updates = config.get('max_updates_per_session')
@@ -203,33 +220,80 @@ class RealtimeLearningSystem:
             logging.info(f"{model_type}: 세션 최대 업데이트 횟수 도달 ({self.model_states[model_type]['update_count']})")
             return False
         
-        # 적응형 업데이트: 성능이 좋아지고 있을 때만 업데이트
+        # 적응형 업데이트: 성능이 추세적으로 하락 중일 때만 잠시 쉬되, 영구 정체(데드락)는 방지
+        # [P2-2 수정] (1) 단발 비교 -> 최근값 vs 직전 평균(추세) 비교로 노이즈 완화
+        #            (2) 연속 N회 막히면 강제 1회 통과시켜 영구 정체(데드락) 방지
         if config.get('adaptive_update', False):
             # performance_history가 없으면 초기화
             if model_type not in self.performance_history:
                 self.performance_history[model_type] = deque(maxlen=config.get('performance_window', 10))
-                recent_performance = [0]
+                recent_performance = []
             else:
-                recent_performance = list(self.performance_history[model_type])[-3:] if len(self.performance_history[model_type]) >= 3 else [0]
+                # 추세 비교를 위해 최근 최대 4개를 본다 (단발 1스텝 비교의 노이즈 취약성 보완)
+                recent_performance = list(self.performance_history[model_type])[-4:]
             # ENSEMBLE 모델은 더 관대한 기준 적용
             if model_type == 'ensemble':
                 threshold = config.get('min_improvement', 0.01) * 0.5  # 더 낮은 임계값
             else:
                 threshold = config.get('min_improvement', 0.01)
-            
+
             if len(recent_performance) >= 2:
-                improvement = recent_performance[-1] - recent_performance[-2]
-                if improvement < -threshold:  # 성능 저하가 임계값보다 클 때만 건너뜀
-                    logging.info(f"{model_type}: 성능 저하 감지 ({improvement:.4f}), 업데이트 건너뜀")
-                    return False
+                # 최근값과 직전 값들의 평균을 비교 -> 단발 노이즈(0/6 한 번) 한 번에 막히지 않음
+                latest = recent_performance[-1]
+                prior_avg = float(np.mean(recent_performance[:-1]))
+                improvement = latest - prior_avg
+                if improvement < -threshold:  # 추세적으로 임계값 이상 하락 중
+                    skips = self.model_states[model_type].get('consecutive_skips', 0) + 1
+                    self.model_states[model_type]['consecutive_skips'] = skips
+                    if skips >= self.MAX_CONSECUTIVE_SKIPS:
+                        # 데드락 방지: 연속 N회 막히면 강제로 1회 업데이트 (카운터 리셋)
+                        # [P2-2 보강] 주기 확인(buffer_size % update_frequency)에 위임하면
+                        # monte_carlo(buffer 80, freq 3 -> 80%3=2)처럼 버퍼가 maxlen에 도달해
+                        # 주기와 영구히 어긋난 경우 강제통과가 무력화되어 데드락이 재발한다.
+                        # 따라서 즉시 return True로 강제 업데이트를 보장한다(주기 조건 우회).
+                        logging.info(
+                            f"{model_type}: 연속 {skips}회 스킵 -> 영구 정체 방지 위해 강제 1회 업데이트 "
+                            f"(추세 {improvement:.4f})"
+                        )
+                        self.model_states[model_type]['consecutive_skips'] = 0
+                        return True
+                    else:
+                        logging.info(
+                            f"{model_type}: 성능 추세 하락 감지 ({improvement:.4f}), 업데이트 건너뜀 "
+                            f"(연속 {skips}/{self.MAX_CONSECUTIVE_SKIPS})"
+                        )
+                        return False
+                else:
+                    # 추세 회복/유지 -> 스킵 카운터 리셋
+                    self.model_states[model_type]['consecutive_skips'] = 0
         
+        # [P2-3] 장기 정체(동결) 강제 통과: 추세 하락 가드를 통과했는데도(즉 추세는 정상)
+        # monte_carlo(buffer 80, freq 3 -> 80%3=2)처럼 버퍼가 maxlen에 도달해 주기 모듈로와
+        # 영구히 어긋나면 아래 주기 조건에서 영원히 False가 되어 수개월 동결된다.
+        # 마지막 업데이트가 MAX_STALE_DAYS 이상 정체면 주기와 무관하게 1회 강제 통과시킨다.
+        stale_days = self._days_since_last_update(model_type)
+        if stale_days is not None and stale_days >= self.MAX_STALE_DAYS:
+            logging.warning(
+                f"{model_type}: 온라인 업데이트가 {stale_days:.0f}일 정체 "
+                f"(>= {self.MAX_STALE_DAYS}일) -> 영구 동결 방지 위해 강제 1회 업데이트"
+            )
+            return True
+
         # 업데이트 주기 확인 - 모델별 개별 주기 사용
         # update_frequency마다 업데이트 (예: LSTM은 2회차, ENSEMBLE은 1회차마다)
         update_frequency = config.get('update_frequency', 1)
         if buffer_size % update_frequency == 0:
             logging.info(f"{model_type}: 업데이트 조건 충족 (버퍼: {buffer_size})")
             return True
-        
+
+        # [P2-3] 주기 모듈로로 막힌 경우 정체 경과일을 가시화(수개월 동결을 조용히 넘기지 않도록)
+        if stale_days is not None and stale_days >= 7:
+            logging.warning(
+                f"{model_type}: 주기 미일치로 이번 업데이트 건너뜀 "
+                f"(버퍼 {buffer_size} mod 주기 {update_frequency} != 0), "
+                f"마지막 업데이트 {stale_days:.0f}일 전"
+            )
+
         return False
     
     def _update_lstm(self, lstm_model: LSTMPredictor) -> Dict[str, Any]:
@@ -309,15 +373,17 @@ class RealtimeLearningSystem:
         # 새로운 성능 평가
         new_performance = self._evaluate_model_performance(lstm_model, recent_data)
         
-        # 성능 기록
+        # 성능 기록 ([P2-2] 평가 실패(None)는 추세 오염 방지 위해 기록하지 않음)
         if 'lstm' not in self.performance_history:
             self.performance_history['lstm'] = deque(maxlen=config.get('performance_window', 10))
-        self.performance_history['lstm'].append(new_performance)
-        
+        if new_performance is not None:
+            self.performance_history['lstm'].append(new_performance)
+
+        improvement = (new_performance - old_performance) if (new_performance is not None and old_performance is not None) else 0.0
         return {
             'old_performance': old_performance,
             'new_performance': new_performance,
-            'improvement': new_performance - old_performance,
+            'improvement': improvement,
             'learning_rate': current_lr
         }
     
@@ -399,17 +465,19 @@ class RealtimeLearningSystem:
         # 새로운 성능 평가
         new_performance = self._evaluate_model_performance(ensemble_model, recent_data)
 
-        # 성능 기록
+        # 성능 기록 ([P2-2] 평가 실패(None)는 추세 오염 방지 위해 기록하지 않음)
         if 'ensemble' not in self.performance_history:
             self.performance_history['ensemble'] = deque(maxlen=config.get('performance_window', 10))
-        self.performance_history['ensemble'].append(new_performance)
+        if new_performance is not None:
+            self.performance_history['ensemble'].append(new_performance)
 
+        improvement = (new_performance - old_performance) if (new_performance is not None and old_performance is not None) else 0.0
         return {
             'updated': True,
             'updated_models': updated_models,
             'old_performance': old_performance,
             'new_performance': new_performance,
-            'improvement': new_performance - old_performance
+            'improvement': improvement
         }
     
     def _update_monte_carlo(self, mc_model: MonteCarloSimulator) -> Dict[str, Any]:
@@ -451,23 +519,30 @@ class RealtimeLearningSystem:
         # 새로운 성능 평가
         new_performance = self._evaluate_model_performance(mc_model, recent_data)
         
-        # 성능 기록
+        # 성능 기록 ([P2-2] 평가 실패(None)는 추세 오염 방지 위해 기록하지 않음)
         if 'monte_carlo' not in self.performance_history:
             self.performance_history['monte_carlo'] = deque(maxlen=config.get('performance_window', 10))
-        self.performance_history['monte_carlo'].append(new_performance)
-        
+        if new_performance is not None:
+            self.performance_history['monte_carlo'].append(new_performance)
+
+        improvement = (new_performance - old_performance) if (new_performance is not None and old_performance is not None) else 0.0
         return {
             'old_performance': old_performance,
             'new_performance': new_performance,
-            'improvement': new_performance - old_performance,
+            'improvement': improvement,
             'patterns': recent_patterns
         }
     
-    def _evaluate_model_performance(self, model: Any, test_data: List[Dict]) -> float:
-        """모델 성능 평가 (최적화됨)"""
+    def _evaluate_model_performance(self, model: Any, test_data: List[Dict]) -> Optional[float]:
+        """모델 성능 평가 (최적화됨)
+
+        [P2-2] 반환 의미:
+          - float(0.0~1.0): 유효한 평가 결과 (0.0 = 실제 0매치, 정상 신호)
+          - None: 평가 불가(데이터 부족/예측 생성 실패/예외) -> 호출부에서 history에 기록하지 않음
+        """
         if len(test_data) < 1:
-            logging.debug("성능 평가: 데이터 부족, 기본 성능값 반환")
-            return 0.05  # 데이터 부족시 최소 기본값 반환 (0.0 대신)
+            logging.debug("성능 평가: 데이터 부족, 평가 불가(None)")
+            return None  # [P2-2] 평가 불가 -> None (실제 0매치 0.0과 구분, history 미기록)
         
         total_score = 0
         count = 0
@@ -498,8 +573,8 @@ class RealtimeLearningSystem:
                     predictions = model.predict_next_numbers(winning_numbers[-min(sequence_length, len(winning_numbers)):],
                                                             num_predictions=1)
                 else:
-                    # 데이터 부족 시 평가 스킵
-                    return 0.05
+                    # 데이터 부족 시 평가 스킵 -> 평가 불가(None)
+                    return None  # [P2-2]
                 if predictions and len(predictions) > 0:
                     prediction = predictions[0].get('numbers', [])
                     # 간단한 점수: 예측이 유효하면 기본 점수 부여
@@ -544,8 +619,8 @@ class RealtimeLearningSystem:
                         predictions = model.predict_next_numbers(winning_numbers[-min(sequence_length, len(winning_numbers)):],
                                                                 num_predictions=1)
                     else:
-                        # 데이터 부족 시 평가 스킵
-                        return 0.05
+                        # 데이터 부족 시 평가 스킵 -> 평가 불가(None)
+                        return None  # [P2-2]
                     if predictions and len(predictions) > 0:
                         prediction = predictions[0].get('numbers', [])
                         if prediction:
@@ -556,8 +631,10 @@ class RealtimeLearningSystem:
                             
         except Exception as e:
             logging.debug(f"성능 평가 중 오류: {e}")
-            
-        return total_score / count if count > 0 else 0.05  # 최소 기본 점수
+            return None  # [P2-2] 평가 중 예외 -> 평가 불가(None), history 미기록
+
+        # [P2-2] count==0(예측 생성 실패)=평가 불가(None), count>0면 실제 매치율(0.0=실제 0매치 포함)
+        return total_score / count if count > 0 else None
     
     def _analyze_recent_patterns(self, recent_data: List[Dict]) -> Dict[str, float]:
         """최근 데이터의 패턴 분석"""
@@ -626,6 +703,8 @@ class RealtimeLearningSystem:
                         for model_type, model_state in state['model_states'].items():
                             if model_type in self.model_states:
                                 self.model_states[model_type]['update_count'] = model_state.get('update_count', 0)
+                                # [P2-2] 연속 스킵 카운터 복원 (구버전 상태파일엔 없으므로 0 기본)
+                                self.model_states[model_type]['consecutive_skips'] = model_state.get('consecutive_skips', 0)
                                 # last_update는 datetime으로 변환
                                 last_update_str = model_state.get('last_update')
                                 if last_update_str:
@@ -678,7 +757,8 @@ class RealtimeLearningSystem:
         for model_type, state_info in self.model_states.items():
             model_states_serializable[model_type] = {
                 'last_update': state_info['last_update'].isoformat() if state_info['last_update'] else None,
-                'update_count': state_info['update_count']
+                'update_count': state_info['update_count'],
+                'consecutive_skips': state_info.get('consecutive_skips', 0)  # [P2-2] 연속 스킵 영속화
             }
         
         state = {
@@ -796,7 +876,8 @@ class RealtimeLearningSystem:
             # 모델 상태 초기화
             self.model_states[model_type]['last_update'] = datetime.now()
             self.model_states[model_type]['update_count'] = 0
-            
+            self.model_states[model_type]['consecutive_skips'] = 0  # [P2-2] 재시작 시 스킵 카운터도 리셋
+
             # 성능 기록 초기화 (기본값으로)
             config = self.learning_config.get(model_type, self.default_config)
             if model_type == 'lstm':

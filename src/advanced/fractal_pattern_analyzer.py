@@ -585,8 +585,12 @@ class FractalPatternAnalyzer:
             # 예측 신뢰도
             confidence = self._calculate_fractal_confidence(numbers)
             
+            # numpy 정수형(np.int64 등)이 로그/반환에 노출되지 않도록 순수 python int 리스트로 캐스팅
+            # (값/순서는 불변, 표기만 다른 모델과 동일하게 [int, ...] 형태로 정리)
+            clean_numbers = sorted(int(x) for x in numbers)
+
             predictions.append({
-                'numbers': sorted(numbers),
+                'numbers': clean_numbers,
                 'confidence': confidence,
                 'fractal_dimension': self.fractal_dimensions.get('sums_higuchi', 1.5),
                 'chaos_level': self.chaos_metrics.get('sums_lyapunov', 0.0)

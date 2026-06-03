@@ -3292,6 +3292,15 @@ def main():
                             )
 
                         logging.info(f"  - 앙상블 예측 완료: {len(ensemble_predictions)}개 조합")
+                        # [가시화 2026-06-03] 학습은 성공했는데 예측이 0개면 사일런트 실패(scaler 입력
+                        # feature 차원 불일치 학습 vs 예측, 또는 샘플링 전수 제외) 가능성이 높다.
+                        # INFO로만 묻히지 않게 WARNING으로 원인 진단을 유도한다.
+                        # (최종 5세트는 극단성 풀이 생성하므로 결과엔 영향 없음 - ML 보조신호만 결손.)
+                        if not ensemble_predictions:
+                            logging.warning(
+                                "  - [진단] 앙상블 예측 0개 - 학습 성공했으나 예측이 비었음. "
+                                "scaler feature 차원 불일치 또는 샘플링 전수 제외 가능성 -> 원인 점검 필요. "
+                                "최종 5세트는 극단성 풀이 생성하므로 결과엔 영향 없음(ML 보조신호만 결손).")
                         for i, pred in enumerate(ensemble_predictions[:3], 1):
                             logging.info(f"    {i}. {pred['numbers']} (신뢰도: {pred['confidence']:.2%})")
 

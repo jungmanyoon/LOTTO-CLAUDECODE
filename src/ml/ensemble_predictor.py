@@ -894,9 +894,20 @@ class EnsemblePredictor:
         
         # 최신 데이터 사용
         latest_features = features.iloc[-1:].values
-        
+
         # 스케일링
         if hasattr(self.scalers['features'], 'mean_'):
+            # [가시화 2026-06-03] scaler 학습 차원 vs 현재 입력 차원이 다르면 transform이 ValueError를
+            # 던지고 상위 broad except에 삼켜져 앙상블이 거짓 정상(0개)처럼 보일 수 있다.
+            # 동작/반환은 바꾸지 않고(불일치 시 그대로 raise) 차원만 명시 로깅한다.
+            expected_dim = getattr(self.scalers['features'], 'n_features_in_', None)
+            actual_dim = latest_features.shape[1] if latest_features.ndim == 2 else None
+            if expected_dim is not None and actual_dim is not None and expected_dim != actual_dim:
+                logging.warning(
+                    f"앙상블 scaler 입력 차원 불일치 - 원인 진단 필요: "
+                    f"expected={expected_dim}, actual={actual_dim}. "
+                    f"학습 feature 수와 예측 feature 수가 달라 예측이 실패할 수 있습니다."
+                )
             latest_features = self.scalers['features'].transform(latest_features)
         
         # 예측
@@ -960,6 +971,16 @@ class EnsemblePredictor:
                 'model_predictions': model_predictions
             })
         
+        # [가시화 2026-06-03] 정상 진입(학습됨/확률 유효)했는데도 최종 결과가 0개면
+        # 루프 내 검증(개수/범위/중복)에서 모든 조합이 스킵된 것이므로 거짓 정상으로
+        # 보이지 않도록 종합 경고를 남긴다. 반환값(빈 리스트) 자체는 변경하지 않는다.
+        if not predictions:
+            logging.warning(
+                f"앙상블 예측 0개 - 원인 진단 필요: 확률 벡터는 유효하나 "
+                f"{num_predictions}회 샘플링이 모두 검증에서 제외됨 "
+                f"(prob_sum={probabilities.sum():.4f}, prob_max={probabilities.max():.4f})"
+            )
+
         # 신뢰도 순으로 정렬
         predictions.sort(key=lambda x: x['confidence'], reverse=True)
 
