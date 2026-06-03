@@ -48,7 +48,7 @@ class StatisticalValidator:
         print(f"자유도: {dof}")
         
         independence = p_value > 0.05
-        print(f"\n결론: {'독립적' if independence else '종속적'} (α=0.05)")
+        print(f"\n결론: {'독립적' if independence else '종속적'} (a=0.05)")
         print("해석: 과거 번호는 미래 번호와 통계적으로 독립적입니다." if independence 
               else "해석: 데이터에 문제가 있을 수 있습니다.")
         
@@ -86,7 +86,7 @@ class StatisticalValidator:
         print(f"p-value: {p_value:.4f}")
         
         is_random = p_value > 0.05
-        print(f"\n결론: {'균등 분포' if is_random else '편향된 분포'} (α=0.05)")
+        print(f"\n결론: {'균등 분포' if is_random else '편향된 분포'} (a=0.05)")
         
         # 가장 많이/적게 나온 번호
         most_common = np.argmax(frequency) + 1
@@ -162,7 +162,7 @@ class StatisticalValidator:
         print(f"  p-value: {p_value:.4f}")
         
         significant = p_value < 0.05
-        print(f"\n결론: {'유의미한 차이' if significant else '차이 없음'} (α=0.05)")
+        print(f"\n결론: {'유의미한 차이' if significant else '차이 없음'} (a=0.05)")
         
         # 분포 시각화
         plt.figure(figsize=(10, 6))
@@ -233,7 +233,7 @@ class StatisticalValidator:
         print(f"  시작: {total_combinations:,}개")
         print(f"  종료: {remaining_after_all:,}개")
         print(f"  제거율: {reduction*100:.1f}%")
-        print(f"\n문제점: 86.5%가 여전히 남아있음 → 필터 효과 미미")
+        print(f"\n문제점: 86.5%가 여전히 남아있음 -> 필터 효과 미미")
         
         return filter_stats
     
@@ -244,10 +244,10 @@ class StatisticalValidator:
         print("="*60)
         
         print("""
-1. 독립성: ✅ 과거와 미래는 독립적
-2. 무작위성: ✅ 번호 분포는 균등
-3. 예측 성능: ❌ AI와 무작위 차이 없음
-4. 필터 효과: ⚠️ 일부만 통계적 근거 있음
+1. 독립성: [O] 과거와 미래는 독립적
+2. 무작위성: [O] 번호 분포는 균등
+3. 예측 성능: [X] AI와 무작위 차이 없음
+4. 필터 효과: [WARN] 일부만 통계적 근거 있음
 
 결론: 
 - 이 시스템의 복잡한 알고리즘은 기술적으로 훌륭하지만
@@ -263,7 +263,7 @@ class StatisticalValidator:
 
 def main():
     """메인 실행 함수"""
-    print("🔬 로또 예측 시스템 통계학적 검증")
+    print("[ANALYSIS] 로또 예측 시스템 통계학적 검증")
     print("="*60)
     
     validator = StatisticalValidator()

@@ -80,14 +80,14 @@ def analyze_historical_fixed_steps():
             print(f"    {round_num}회: [{nums_str}] (연속 {count}개)")
     
     print("\n" + "="*60)
-    print("💡 분석 결과:")
+    print("[TIP] 분석 결과:")
     print("="*60)
     
     if total_with_fixed_step / len(results) < 0.1:
-        print("✅ 고정 간격 패턴은 실제로 매우 드물게 나타남 (10% 미만)")
+        print("[O] 고정 간격 패턴은 실제로 매우 드물게 나타남 (10% 미만)")
         print("   → fixed_step 필터 설정이 너무 엄격함!")
     else:
-        print(f"📊 고정 간격 패턴이 {total_with_fixed_step/len(results)*100:.1f}% 나타남")
+        print(f"[STAT] 고정 간격 패턴이 {total_with_fixed_step/len(results)*100:.1f}% 나타남")
     
     # 권장 설정
     print("\n권장 설정:")

@@ -145,7 +145,7 @@ def main():
     # 3. 데이터베이스 락 초기화
     reset_db_locks()
     
-    print("\n✅ 데이터베이스 락 해제 완료!")
+    print("\n[O] 데이터베이스 락 해제 완료!")
     print("\n이제 프로그램을 다시 실행해보세요.")
 
 if __name__ == "__main__":

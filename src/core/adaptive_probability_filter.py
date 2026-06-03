@@ -251,14 +251,17 @@ class AdaptiveProbabilityFilter:
             criteria['odd_even'] = yaml_fallback.get('odd_even', {'excluded_counts': [0, 6]})
 
         # 2. 연속번호 필터 - 1% 이하만 제외
+        # [adaptive-threshold-4 FIX] dict 순회 순서에 의존하던 break 제거.
+        # 기존: 첫 저확률 길이에서 break -> dict 삽입 순서에 따라 결과가 달라지는 비결정성.
+        # 수정: match 필터와 동일하게 전체 길이를 검사해 '가장 작은 저확률 길이'를 채택.
+        # (작은 연속 길이가 제외되면 그보다 긴 연속도 당연히 제외되므로 min이 타당)
         max_consecutive = 6
         consecutive_stats = self.pattern_statistics.get('consecutive', {})
         if consecutive_stats:
-            for length, rate in consecutive_stats.items():
-                if rate < self.probability_threshold:
+            for length in sorted(consecutive_stats):
+                if consecutive_stats[length] < self.probability_threshold:
                     max_consecutive = min(max_consecutive, length)
-                    break
-        
+
         criteria['consecutive'] = {
             'max_consecutive': max_consecutive,
             'min_gap': 1,
@@ -450,42 +453,49 @@ class AdaptiveProbabilityFilter:
         }
         
         # 12. 등차수열 필터 - 1% 이하 패턴 제외
+        # [adaptive-threshold-2 FIX] 출력 키를 'exclude_lengths'로 통일.
+        # ArithmeticSequenceFilter가 실제로 소비하는 키는 'exclude_lengths'(d 없음)인데,
+        # 이전에는 'excluded_lengths'(d 있음)로 내보내 _update_individual_filters에서
+        # 매칭되지 못하고 하드코딩 기본값으로 폴백되어 동적 계산이 조용히 무시되던 버그.
         arith_dist = self.pattern_statistics.get('arithmetic_sequence', {})
-        excluded_lengths = []
+        exclude_lengths = []
         min_sequence = 3  # 기본값
-        
+
         for seq_len in [6, 5, 4]:
             if seq_len in arith_dist and arith_dist[seq_len] <= self.probability_threshold:
-                excluded_lengths.append(seq_len)
+                exclude_lengths.append(seq_len)
                 logging.info(f"[등차수열 필터] {seq_len}개 수열이 {arith_dist[seq_len]:.2f}% (임계값 {self.probability_threshold}% 이하)이므로 제외")
-        
+
         # 최소 수열 길이 설정
-        if excluded_lengths:
-            min_sequence = min(excluded_lengths)
-        
+        if exclude_lengths:
+            min_sequence = min(exclude_lengths)
+
         criteria['arithmetic_sequence'] = {
-            'excluded_lengths': excluded_lengths,
+            'exclude_lengths': exclude_lengths,
             'min_sequence': min_sequence,
             'distribution': arith_dist,
             'reason': f"{self.probability_threshold}% 이하 수열 패턴 제외"
         }
         
         # 13. 등비수열 필터 - 1% 이하 패턴 제외
+        # [adaptive-threshold-2 FIX] 출력 키를 'exclude_lengths'로 통일.
+        # GeometricSequenceFilter가 실제로 소비하는 키는 'exclude_lengths'(d 없음)인데,
+        # 이전에는 'excluded_lengths'(d 있음)로 내보내 동적 계산이 조용히 무시되던 버그.
         geom_dist = self.pattern_statistics.get('geometric_sequence', {})
-        excluded_geom_lengths = []
+        exclude_geom_lengths = []
         min_geom_sequence = 3  # 기본값
-        
+
         for seq_len in [6, 5, 4]:
             if seq_len in geom_dist and geom_dist[seq_len] <= self.probability_threshold:
-                excluded_geom_lengths.append(seq_len)
+                exclude_geom_lengths.append(seq_len)
                 logging.info(f"[등비수열 필터] {seq_len}개 수열이 {geom_dist[seq_len]:.2f}% (임계값 {self.probability_threshold}% 이하)이므로 제외")
-        
+
         # 최소 수열 길이 설정
-        if excluded_geom_lengths:
-            min_geom_sequence = min(excluded_geom_lengths)
-        
+        if exclude_geom_lengths:
+            min_geom_sequence = min(exclude_geom_lengths)
+
         criteria['geometric_sequence'] = {
-            'excluded_lengths': excluded_geom_lengths,
+            'exclude_lengths': exclude_geom_lengths,
             'min_sequence': min_geom_sequence,
             'distribution': geom_dist,
             'reason': f"{self.probability_threshold}% 이하 수열 패턴 제외"

@@ -57,7 +57,7 @@ def main():
 
             if updated:
                 new_last_round = db_manager.get_last_round()
-                logging.info(f"✅ 업데이트 완료! 최신 회차: {new_last_round}회")
+                logging.info(f"[O] 업데이트 완료! 최신 회차: {new_last_round}회")
 
                 # 최신 회차 정보 표시
                 if new_last_round > current_last_round:

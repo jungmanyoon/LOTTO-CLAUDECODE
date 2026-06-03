@@ -34,7 +34,15 @@ class SumRangeFilter(BaseFilter):
                 max_sum=self.criteria['max_sum']
             )
         except Exception as e:
+            # [filters-16-7] 필터가 예외로 "비활성화됨"을 상위 통계에서 구분할 수 있도록 신호 설정.
+            # 이 플래그가 True면 아래 전체 통과 반환은 "정상 제거 0건"이 아니라 "필터 예외로 무력화"를 의미한다.
+            # 안전상 전체 통과 폴백은 유지한다(청크 전체 손실 방지).
+            self._apply_failed = True
             logging.error(f"합계 범위 필터링 중 오류 발생: {str(e)}")
+            logging.warning(
+                f"[FILTER-DISABLED] {self.get_filter_name()} 필터가 예외로 비활성화됨 "
+                f"(전체 {len(combinations):,}개 통과 폴백): {str(e)}"
+            )
             return combinations
 
     @staticmethod
@@ -63,5 +71,6 @@ class SumRangeFilter(BaseFilter):
             return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid_mask[i]]
 
         except Exception as e:
-            logging.error(f"청크 처리 중 오류 발생: {str(e)}")
-            return []
+            logging.error(f"청크 처리 중 오류 발생: {str(e)}", exc_info=True)
+            # 오류 발생 시 입력 조합을 그대로 반환하여 청크 전체 손실 방지
+            return combinations_chunk

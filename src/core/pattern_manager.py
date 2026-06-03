@@ -24,7 +24,7 @@ class PatternManager:
         self.winning_numbers = []  # 빈 리스트로 초기화
 
         # ============================================================
-        # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 캐싱 (크기 제한 적용)
+        # [START] PERFORMANCE OPTIMIZATION: 패턴 분석 캐싱 (크기 제한 적용)
         # ============================================================
         # FIX CRITICAL-12: OrderedDict로 변경하여 LRU 퇴출 지원
         self._pattern_cache = OrderedDict()  # data_hash -> {'data': patterns, 'timestamp': time}
@@ -202,7 +202,7 @@ class PatternManager:
         """전체 패턴 분석 수행 (캐싱 지원)"""
         try:
             logging.info("\n" + "="*60)
-            logging.info("🔍 [패턴 분석 시스템] 분석 시작")
+            logging.info("[SEARCH] [패턴 분석 시스템] 분석 시작")
             logging.info("="*60)
 
             if round_num is None:
@@ -218,17 +218,17 @@ class PatternManager:
                 return False
 
             # ============================================================
-            # 🚀 PERFORMANCE OPTIMIZATION: 캐시 확인 (FIX CRITICAL-12: 크기 제한 적용)
+            # [START] PERFORMANCE OPTIMIZATION: 캐시 확인 (FIX CRITICAL-12: 크기 제한 적용)
             # ============================================================
             data_hash = self._get_data_hash(winning_numbers)
             cached_patterns = self._get_cached_patterns(data_hash)
             if data_hash == self._last_data_hash and cached_patterns is not None:
-                logging.info(f"✅ 캐시된 패턴 분석 결과 사용 (hash: {data_hash[:8]}...)")
+                logging.info(f"[O] 캐시된 패턴 분석 결과 사용 (hash: {data_hash[:8]}...)")
                 self.db_manager.save_pattern_analysis(round_num, cached_patterns)
                 return True
 
-            logging.info(f"✅ 분석 대상: {round_num}회차")
-            logging.info(f"✅ 분석할 데이터: {len(winning_numbers)}개 회차")
+            logging.info(f"[O] 분석 대상: {round_num}회차")
+            logging.info(f"[O] 분석할 데이터: {len(winning_numbers)}개 회차")
 
             patterns = {}
             successful_patterns = []
@@ -254,7 +254,7 @@ class PatternManager:
                 ('sum_multiple', self._analyze_sum_multiple_patterns)                 # 합계 배수 패턴 분석 추가
             ]
             
-            logging.info(f"\n📊 총 {len(pattern_analyses) + 1}개 패턴 분석 진행:")
+            logging.info(f"\n[STAT] 총 {len(pattern_analyses) + 1}개 패턴 분석 진행:")
             
             for pattern_name, analysis_func in pattern_analyses:
                 try:
@@ -262,7 +262,7 @@ class PatternManager:
                     patterns[pattern_name] = analysis_func(winning_numbers)
                     successful_patterns.append(pattern_name)
                 except Exception as e:
-                    logging.error(f"    ❌ {pattern_name} 패턴 분석 실패: {str(e)}")
+                    logging.error(f"    [X] {pattern_name} 패턴 분석 실패: {str(e)}")
                     patterns[pattern_name] = {}
                     failed_patterns.append(pattern_name)
             
@@ -272,11 +272,11 @@ class PatternManager:
                 patterns['dispersion'] = self._analyze_dispersion_patterns(winning_numbers)
                 successful_patterns.append('dispersion')
             except Exception as e:
-                logging.error(f"    ❌ dispersion 패턴 분석 실패: {str(e)}")
+                logging.error(f"    [X] dispersion 패턴 분석 실패: {str(e)}")
                 patterns['dispersion'] = {}
                 failed_patterns.append('dispersion')
             
-            logging.info(f"\n📈 분석 결과 요약:")
+            logging.info(f"\n[UP] 분석 결과 요약:")
             logging.info(f"  - 성공: {len(successful_patterns)}개")
             logging.info(f"  - 실패: {len(failed_patterns)}개")
             
@@ -285,12 +285,12 @@ class PatternManager:
 
             if any(patterns.values()):
                 # ============================================================
-                # 🚀 PERFORMANCE OPTIMIZATION: 패턴 분석 결과 캐싱 (FIX CRITICAL-12: 크기 제한 적용)
+                # [START] PERFORMANCE OPTIMIZATION: 패턴 분석 결과 캐싱 (FIX CRITICAL-12: 크기 제한 적용)
                 # ============================================================
                 self._set_cached_patterns(data_hash, patterns)
                 self._last_data_hash = data_hash
                 cache_stats = self.get_cache_stats()
-                logging.info(f"✅ 패턴 분석 결과 캐시 저장 (hash: {data_hash[:8]}..., 항목: {cache_stats['total_entries']}/{cache_stats['max_entries']})")
+                logging.info(f"[O] 패턴 분석 결과 캐시 저장 (hash: {data_hash[:8]}..., 항목: {cache_stats['total_entries']}/{cache_stats['max_entries']})")
 
                 self.db_manager.save_pattern_analysis(round_num, patterns)
                 self._log_pattern_analysis(patterns)

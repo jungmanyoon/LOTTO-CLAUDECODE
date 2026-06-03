@@ -20,7 +20,6 @@ from src.core.performance_stats_manager import PerformanceStatsManager
 from src.backtesting.optimized_backtesting_framework import OptimizedBacktestingFramework
 from src.core.db_manager import DatabaseManager
 from src.core.integrated_filter_manager import IntegratedFilterManager
-from src.core.optimization_checkpoint_manager import get_checkpoint_manager
 from src.core.threshold_manager import get_threshold_manager
 try:
     from src.utils.logging_setup import setup_logging
@@ -47,7 +46,6 @@ class AutoThresholdOptimizer:
         self.optimizer = ThresholdOptimizer()
         self.stats_manager = PerformanceStatsManager()
         self.db_manager = DatabaseManager()
-        self.checkpoint_manager = get_checkpoint_manager()  # 체크포인트 관리자 추가
         self.config_path = "configs/adaptive_filter_config.yaml"  # 설정 파일 경로
 
         # 최적화 설정
@@ -126,7 +124,7 @@ class AutoThresholdOptimizer:
             self.logger.info(f"  ML Weight: {ml_weight:.2f} (ThresholdManager 적용)")
 
             # ============================================================
-            # 🚀 PERFORMANCE FIX: 싱글톤 재사용 (재초기화 제거)
+            # [START] PERFORMANCE FIX: 싱글톤 재사용 (재초기화 제거)
             # ============================================================
             # 기존 싱글톤 인스턴스 재사용 (백테스팅 프레임워크는 한 번만 초기화)
             from src.backtesting.optimized_backtesting_framework import OptimizedBacktestingFramework
@@ -143,7 +141,7 @@ class AutoThresholdOptimizer:
                 self.logger.info("[싱글톤] 기존 백테스팅 프레임워크 재사용")
 
             # ============================================================
-            # 🔍 CRITICAL: 파라미터만 업데이트 (재초기화 없음)
+            # [SEARCH] CRITICAL: 파라미터만 업데이트 (재초기화 없음)
             # ============================================================
             # update_parameters 메서드로 파라미터만 변경
             framework.update_parameters(
@@ -170,13 +168,18 @@ class AutoThresholdOptimizer:
                 #   검증  -> (latest - 2*window) ~ (latest - window - 1)  <- 이 범위 사용
                 #   테스트 -> (latest - window) ~ (latest - 1)            <- hold-out (미사용)
                 try:
-                    all_numbers = self.db_manager.get_all_winning_numbers()
-                    if all_numbers:
-                        latest = max(r for r, _ in all_numbers)
-                    else:
-                        latest = 1186  # DB 조회 실패 시 보수적 폴백
+                    # [db-1 FIX] get_all_winning_numbers()는 회차 번호가 아닌 당첨번호 문자열 List[str]를
+                    #            반환하므로 회차 계산에 쓰면 안 됨. 마지막 회차는 get_last_round()로 직접 조회.
+                    latest = self.db_manager.get_last_round()
+                    if not latest or latest <= 0:
+                        # DB가 비었거나 조회 실패(0 반환) 시: get_numbers_with_bonus()의 마지막 회차로 폴백
+                        numbers_with_bonus = self.db_manager.get_numbers_with_bonus()
+                        if numbers_with_bonus:
+                            latest = numbers_with_bonus[-1][0]
+                        else:
+                            raise ValueError("DB에서 회차 정보를 가져올 수 없음")
                 except Exception:
-                    latest = 1186
+                    latest = 1186  # 최종 폴백: DB 조회 완전 실패 시 보수적 기본값
                 window = 100
                 test_set_start = max(1, latest - window)
                 validation_end = max(1, test_set_start - 1)
@@ -228,7 +231,7 @@ class AutoThresholdOptimizer:
             performance_metrics = backtest_results.get('performance_metrics', {})
             model_performances = performance_metrics.get('model_performance', {})
 
-            # ✅ DEBUG: 실제 백테스팅 결과 구조 로깅
+            # [O] DEBUG: 실제 백테스팅 결과 구조 로깅
             self.logger.info(f"[METRICS DEBUG] 모델 수: {len(model_performances)}")
 
             # 전체 평균 매칭 계산
@@ -245,11 +248,11 @@ class AutoThresholdOptimizer:
                 total_matches += avg_matches * predictions
                 total_predictions += predictions
 
-                # ✅ DEBUG: 각 모델별 상세 로깅
+                # [O] DEBUG: 각 모델별 상세 로깅
                 self.logger.debug(f"[MODEL] {model_name}: avg={avg_matches:.3f}, pred={predictions}, filter_passed={filter_passed}")
 
                 # ML 모델 포함률 계산 (모든 모델 포함)
-                # ✅ FIX: 모든 모델의 filter_passed_count 사용 (ML 모델만 아님)
+                # [O] FIX: 모든 모델의 filter_passed_count 사용 (ML 모델만 아님)
                 if 'filter_passed_count' in model_metrics:
                     ml_total_count += predictions
                     ml_included_count += filter_passed
@@ -266,7 +269,7 @@ class AutoThresholdOptimizer:
             avg_matches = total_matches / total_predictions if total_predictions > 0 else 0
             ml_inclusion_rate = ml_included_count / ml_total_count if ml_total_count > 0 else 0
 
-            # ✅ DEBUG: 최종 계산 결과 로깅
+            # [O] DEBUG: 최종 계산 결과 로깅
             self.logger.info(f"[METRICS RESULT] avg_matches={avg_matches:.4f}, ml_inclusion={ml_inclusion_rate:.4f} ({ml_inclusion_rate*100:.1f}%)")
 
             # 필터링된 조합 수 추출
@@ -314,7 +317,7 @@ class AutoThresholdOptimizer:
             self.logger.debug(f"[Recent avg inclusion] {len(self.recent_inclusion_rates)} trials: {avg:.3f}")
             return avg
         else:
-            # ✅ FIX: 실제 ML 포함률 8.5% 사용 (기존 93%는 잘못된 값)
+            # [O] FIX: 실제 ML 포함률 8.5% 사용 (기존 93%는 잘못된 값)
             # 이 값은 ML 예측이 필터를 통과하는 실제 비율
             default_rate = 0.085
             self.logger.debug(f"[Default inclusion] Using default: {default_rate:.3f}")
@@ -335,9 +338,9 @@ class AutoThresholdOptimizer:
             - ml_weight: 0.3~0.8 (기존 0.6 고정에서 확대)
         """
         self.logger.info("=" * 60)
-        self.logger.info(f"🔬 Optuna TPE 기반 최적화 시작 - {datetime.now()}")
+        self.logger.info(f"[ANALYSIS] Optuna TPE 기반 최적화 시작 - {datetime.now()}")
         if infinite_mode:
-            self.logger.info(f"⚡ 무한 반복 모드 활성화 - {n_trials}회 trial 후 자동 재시작")
+            self.logger.info(f"[FAST] 무한 반복 모드 활성화 - {n_trials}회 trial 후 자동 재시작")
         self.logger.info("=" * 60)
 
         try:
@@ -382,7 +385,7 @@ class AutoThresholdOptimizer:
 
             # 무한 모드이면 계속 진행
             if infinite_mode:
-                self.logger.info(f"♻️ 무한 반복 모드: {n_trials}회 trial 완료, 다음 사이클 시작...")
+                self.logger.info(f"[SYNC] 무한 반복 모드: {n_trials}회 trial 완료, 다음 사이클 시작...")
                 return {
                     'status': 'cycle_completed',
                     'best_params': result['best_params'],
@@ -404,148 +407,6 @@ class AutoThresholdOptimizer:
             self.logger.error(traceback.format_exc())
             return {'status': 'error', 'error': str(e)}
 
-    def optimize_with_checkpoint(self, infinite_mode: bool = False):
-        """
-        체크포인트를 사용한 점진적 최적화 (DEPRECATED - Grid Search 방식)
-
-        ⚠️ 이 메서드는 Grid Search 방식이며 deprecated 되었습니다.
-        대신 optimize_with_optuna()를 사용하세요.
-
-        Args:
-            infinite_mode: True이면 140개 조합 완료 후 자동으로 재시작 (무한 반복)
-        """
-        self.logger.warning("⚠️ optimize_with_checkpoint()는 Grid Search 방식이며 deprecated 되었습니다.")
-        self.logger.warning("   대신 optimize_with_optuna()를 사용하세요.")
-        self.logger.info("=" * 60)
-        self.logger.info(f"체크포인트 기반 최적화 시작 (Grid Search) - {datetime.now()}")
-        if infinite_mode:
-            self.logger.info("⚡ 무한 반복 모드 활성화 - 140개 조합 완료 후 자동 재시작")
-        self.logger.info("=" * 60)
-
-        try:
-            # 현재 로또 회차 확인
-            all_numbers = self.db_manager.get_all_winning_numbers()
-            if all_numbers:
-                # get_all_winning_numbers returns List[Tuple[round_num, numbers]]
-                current_round = max(item[0] for item in all_numbers)
-            else:
-                current_round = 0
-
-            # 로또 회차 업데이트 확인
-            if self.checkpoint_manager.check_lottery_update(current_round):
-                self.logger.info(f"🔄 로또 회차 {current_round}로 업데이트됨. 최적화 초기화.")
-                self.checkpoint_manager.reset_optimization_progress()
-
-            # 세션 시작
-            if not self.checkpoint_manager.checkpoint['current_optimization']['session_id']:
-                session_id = self.checkpoint_manager.start_optimization_session(current_round)
-                self.logger.info(f"새 최적화 세션 시작: {session_id}")
-
-            # 진행상황 리포트
-            self.logger.info(self.checkpoint_manager.get_optimization_report())
-
-            # 다음 조합 가져오기
-            next_combination = self.checkpoint_manager.get_next_combination()
-
-            if next_combination:
-                threshold, ml_bypass, ml_weight = next_combination
-
-                # 설정 생성
-                test_config = self.current_config.copy()
-                test_config['global_probability_threshold'] = threshold
-                test_config['ml_integration']['ml_bypass_filters'] = ml_bypass
-                test_config['ml_integration']['ml_weight'] = ml_weight
-
-                # 백테스팅 실행
-                self.logger.info(f"테스트 중: 임계값={threshold}, ML바이패스={ml_bypass}, ML가중치={ml_weight}")
-                result = self.run_backtesting_with_config(test_config)
-
-                # 점수 계산
-                score = self._calculate_optimization_score(result)
-                result['score'] = score
-
-                # 결과 저장
-                self.checkpoint_manager.mark_combination_complete(threshold, ml_bypass, ml_weight, result)
-
-                # 개선 확인
-                if score > 0:
-                    improvement = result.get('avg_matches', 0) - 0
-                    self.logger.info(f"개선: +{improvement:.3f}")
-
-                return {
-                    'status': 'in_progress',
-                    'current_combination': next_combination,
-                    'result': result,
-                    'progress': self.checkpoint_manager.get_progress_summary()
-                }
-            else:
-                self.logger.info("✅ 모든 조합 테스트 완료!")
-
-                # 최적 파라미터 적용
-                summary = self.checkpoint_manager.get_progress_summary()
-                if summary['best_params']:
-                    self._apply_best_params(summary['best_params'])
-
-                # 무한 모드이면 체크포인트 초기화하고 계속 진행
-                if infinite_mode:
-                    self.logger.info("♻️ 무한 반복 모드: 체크포인트 초기화하고 다음 사이클 시작...")
-                    # 최적 파라미터는 유지하되, 테스트 진행상황만 초기화
-                    best_params_backup = summary['best_params']
-                    best_score_backup = summary['best_score']
-
-                    self.checkpoint_manager.reset_optimization_progress()
-
-                    # 다음 사이클 시작
-                    session_id = self.checkpoint_manager.start_optimization_session(current_round)
-                    self.logger.info(f"🔄 새 사이클 시작: {session_id}")
-                    self.logger.info(f"📊 이전 사이클 최적 파라미터: {best_params_backup} (점수: {best_score_backup:.3f})")
-
-                    # 계속 진행 상태로 반환
-                    return {
-                        'status': 'cycle_completed',
-                        'best_params': best_params_backup,
-                        'best_score': best_score_backup,
-                        'message': 'Cycle completed, starting new cycle'
-                    }
-
-                return {
-                    'status': 'completed',
-                    'best_params': summary['best_params'],
-                    'best_score': summary['best_score']
-                }
-
-        except Exception as e:
-            self.logger.error(f"체크포인트 최적화 실패: {e}")
-            return {'status': 'error', 'error': str(e)}
-
-    def _calculate_optimization_score(self, result: Dict) -> float:
-        """최적화 점수 계산"""
-        avg_matches = result.get('avg_matches', 0)
-        ml_inclusion = result.get('ml_inclusion_rate', 0)
-        combination_count = result.get('combination_count', 300000)
-
-        # 평균 매칭 점수
-        if 0.8 <= avg_matches <= 1.5:
-            match_score = 1.0
-        elif avg_matches < 0.8:
-            match_score = avg_matches / 0.8
-        else:
-            match_score = max(0, 2.0 - avg_matches / 1.5)
-
-        # ML 포함률 점수
-        inclusion_score = min(1.0, ml_inclusion / 0.15)
-
-        # 조합 수 점수
-        if 200000 <= combination_count <= 400000:
-            combination_score = 1.0
-        elif combination_count < 200000:
-            combination_score = combination_count / 200000
-        else:
-            combination_score = max(0, 1.0 - (combination_count - 400000) / 400000)
-
-        # 가중 평균
-        return (match_score * 0.4 + inclusion_score * 0.3 + combination_score * 0.3)
-
     def _apply_best_params(self, params: Dict):
         """최적 파라미터 적용"""
         try:
@@ -560,7 +421,7 @@ class AutoThresholdOptimizer:
             if 'ml_integration' not in config:
                 config['ml_integration'] = {}
 
-            # ✅ PRECISION FIX: round()로 부동소수점 오차 제거
+            # [O] PRECISION FIX: round()로 부동소수점 오차 제거
             config['global_probability_threshold'] = round(params['threshold'], 2)
             config['ml_integration']['ml_bypass_filters'] = params['ml_bypass']
             config['ml_integration']['ml_weight'] = round(params['ml_weight'], 2)
@@ -572,12 +433,35 @@ class AutoThresholdOptimizer:
             with open(backup_path, 'w', encoding='utf-8') as f:
                 yaml.dump(backup_config, f, allow_unicode=True)
 
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+            # [FIX N-W24] 원자적 YAML 쓰기: tmp 파일 → os.replace()
+            import os as _os
+            tmp_path = self.config_path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, allow_unicode=True)
+            _os.replace(tmp_path, self.config_path)
+
+            # [FIX] YAML 파일 저장 후 ThresholdManager에도 동기화
+            # 이유: YAML은 디스크에 저장되지만 런타임 ThresholdManager는 여전히 이전 값 보유
+            #       → 다음 Optuna trial의 백테스팅에서 이전 threshold로 실행됨
+            threshold_val = round(params['threshold'], 2)
+            ml_bypass_val = params.get('ml_bypass', self.threshold_manager.get_ml_bypass_filters())
+            ml_weight_val = round(params.get('ml_weight', self.threshold_manager.get_ml_weight()), 2)
+            try:
+                self.threshold_manager.set_threshold(threshold_val, source="auto_threshold_optimizer_best")
+                if hasattr(self.threshold_manager, 'set_ml_bypass_filters'):
+                    self.threshold_manager.set_ml_bypass_filters(ml_bypass_val)
+                if hasattr(self.threshold_manager, 'set_ml_weight'):
+                    self.threshold_manager.set_ml_weight(ml_weight_val)
+                self.logger.info(
+                    f"[O] ThresholdManager 동기화: threshold={threshold_val}, "
+                    f"ml_bypass={ml_bypass_val}, ml_weight={ml_weight_val}"
+                )
+            except Exception as tm_err:
+                self.logger.warning(f"[!] ThresholdManager 동기화 실패 (YAML은 저장됨): {tm_err}")
 
             # 로그 출력 시 부동소수점 정리
             formatted_params = {k: round(v, 2) if isinstance(v, float) else v for k, v in params.items()}
-            self.logger.info(f"✅ 최적 파라미터 적용: {formatted_params}")
+            self.logger.info(f"[O] 최적 파라미터 적용: {formatted_params}")
 
         except Exception as e:
             self.logger.error(f"파라미터 적용 실패: {e}")
@@ -600,7 +484,7 @@ class AutoThresholdOptimizer:
             result = self.optimizer.reset_study(study_name=study_name)
 
             if result:
-                self.logger.info(f"🔄 [AutoThresholdOptimizer] Study '{study_name}' 초기화 완료")
+                self.logger.info(f"[SYNC] [AutoThresholdOptimizer] Study '{study_name}' 초기화 완료")
                 self.logger.info("   → 새 회차 데이터로 처음부터 최적화 시작")
 
                 # 내부 상태도 초기화
@@ -654,7 +538,7 @@ class AutoThresholdOptimizer:
                     success = self.optimizer.apply_best_params(validate=False)
 
                     if success:
-                        self.logger.info("✅ 새 파라미터 적용 완료")
+                        self.logger.info("[O] 새 파라미터 적용 완료")
                         self._send_notification(
                             f"임계값 최적화 완료: {optimization_results['best_params']['threshold']:.1f}%",
                             optimization_results
@@ -753,7 +637,7 @@ class AutoThresholdOptimizer:
     def _send_notification(self, title: str, data: Dict):
         """알림 전송 (추후 구현 가능)"""
         # 이메일, 슬랙, 텔레그램 등으로 알림 전송 가능
-        self.logger.info(f"📢 알림: {title}")
+        self.logger.info(f"[!] 알림: {title}")
 
     def schedule_optimization(self):
         """최적화 스케줄 설정"""
@@ -843,9 +727,9 @@ def main():
         # 롤백 실행
         success = optimizer.optimizer.rollback_params()
         if success:
-            print("✅ 파라미터 롤백 완료")
+            print("[O] 파라미터 롤백 완료")
         else:
-            print("❌ 파라미터 롤백 실패")
+            print("[X] 파라미터 롤백 실패")
     else:
         # 시도 횟수 설정
         optimizer.optimization_config['n_trials'] = args.trials

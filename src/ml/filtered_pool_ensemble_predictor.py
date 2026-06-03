@@ -504,8 +504,16 @@ class FilteredPoolEnsemblePredictor:
         predictions = []
         top_labels = np.argsort(predictions_prob)[::-1]  # 내림차순 정렬
 
-        for i in range(min(num_predictions, len(top_labels))):
-            label = top_labels[i]
+        # [log-analysis-1] 과거: 상위 num_predictions개 레이블만 검토 -> 그 레이블들이 현재 풀
+        # 매핑(label_to_combination)과 불일치하면 매핑 가능한 하위 레이블이 있어도 0개로 폴백.
+        # 개선: 전체 랭킹을 순회하며 매핑 가능한 레이블을 num_predictions개 모을 때까지 수집해
+        # 불필요한 랜덤 폴백을 줄이고, 0개일 때는 '왜 0인지'(풀 매핑 전부 불일치)를 진단 로깅한다.
+        considered = 0
+        unmapped = 0
+        for label in top_labels:
+            if len(predictions) >= num_predictions:
+                break
+            considered += 1
             if label in self.label_to_combination:
                 combination = list(self.label_to_combination[label])
                 confidence = float(predictions_prob[label])
@@ -516,10 +524,17 @@ class FilteredPoolEnsemblePredictor:
                     'pool_label': label,
                     'source': 'filtered_pool_ensemble'
                 })
+            else:
+                unmapped += 1
 
-        # 앙상블 확률 기반 선택 결과가 0개인 경우: 필터링된 풀에서 랜덤 선택 (실제 ML 풀, 더미 아님)
+        # 앙상블 확률 기반 선택 결과가 0개인 경우: 어느 경로에서 0이 났는지 진단 후
+        # 필터링된 풀에서 랜덤 선택으로 대체 (실제 ML 풀, 더미 아님)
         if len(predictions) == 0:
-            logging.warning("앙상블 확률 기반 선택 결과가 0개입니다. 필터링된 풀에서 랜덤 선택으로 대체합니다.")
+            logging.warning(
+                f"앙상블 확률 기반 선택 결과가 0개 - 모델 출력 레이블이 현재 풀 매핑과 전혀 일치하지 않음 "
+                f"(검토 {considered}개 전부 미매핑, label_to_combination 크기={len(self.label_to_combination)}). "
+                f"필터링된 풀에서 랜덤 선택으로 대체합니다."
+            )
             return self._random_predictions_from_pool(
                 [list(combo) for combo in self.filtered_pool],
                 num_predictions

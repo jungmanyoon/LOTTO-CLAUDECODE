@@ -116,7 +116,7 @@ class PerformanceDashboard(metaclass=SingletonMeta):
         
         # 자동 개선 실행
         if auto_improve:
-            logging.info("\n🔄 자동 개선 시스템 실행 중...")
+            logging.info("\n[SYNC] 자동 개선 시스템 실행 중...")
             improvement_results = self._execute_auto_improvement(report)
             report['auto_improvement'] = improvement_results
         
@@ -131,7 +131,9 @@ class PerformanceDashboard(metaclass=SingletonMeta):
     def _run_latest_backtest(self) -> Dict[str, Any]:
         """최신 백테스팅 실행"""
         # 최근 50회차 백테스팅
-        latest_round = self.db_manager.lotto_db.get_last_round()
+        # [FIX N-W13] 비공개 내부 API(lotto_db.get_last_round) 대신 공개 API 사용
+        winning_numbers = self.db_manager.get_numbers_with_bonus()
+        latest_round = winning_numbers[-1][0] if winning_numbers else 1
         start_round = max(1, latest_round - 49)
         end_round = latest_round
         
@@ -552,16 +554,18 @@ class PerformanceDashboard(metaclass=SingletonMeta):
                 score = analysis['performance_score']
                 status = "[GOOD]" if score > 50 else "[WARN]" if score > 30 else "[BAD]"
                 print(f"  {status} {model.upper()}: {score:.1f}점")
+                # 강점/약점 출력 (dashboard-monitoring-5): for 루프 안으로 이동.
+                # 기존엔 except 블록에 잘못 들어가 정상 출력 시 누락 + 마지막 analysis만 참조됐음.
+                # 이모지(✓/✗)는 CLAUDE.md 정책 위반 + UnicodeError 폴백에서 재오류 -> ASCII 교체.
+                if analysis.get('strengths'):
+                    print(f"    [+] 강점: {', '.join(analysis['strengths'])}")
+                if analysis.get('weaknesses'):
+                    print(f"    [-] 약점: {', '.join(analysis['weaknesses'])}")
         except UnicodeEncodeError:
-            # 인코딩 에러 발생 시 로깅만 수행
+            # 인코딩 에러 발생 시 로깅만 수행 (콘솔 인코딩 한계 폴백)
             logging.info("\n" + "="*80)
             logging.info("[Performance Report] 종합 성능 보고서 생성 완료")
             logging.info("="*80)
-            
-            if analysis['strengths']:
-                print(f"    ✓ 강점: {', '.join(analysis['strengths'])}")
-            if analysis['weaknesses']:
-                print(f"    ✗ 약점: {', '.join(analysis['weaknesses'])}")
         
         # 개선 추적
         tracking = report.get('improvement_tracking', {})

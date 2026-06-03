@@ -370,12 +370,10 @@ class IntegratedFilterManager:
 
         for filter_name, filter_criteria in criteria.items():
             try:
-                # 필터 이름 매핑 (동적 기준 → 필터 인스턴스 이름)
+                # [adaptive-threshold-2 FIX] 'arithmetic'->'arithmetic_sequence' 등 이름 매핑 제거.
+                # generate_dynamic_criteria()는 이미 'arithmetic_sequence'/'geometric_sequence'
+                # 키로 내보내므로 바로 매핑은 영원히 발동하지 않는 죽은 분기였음.
                 filter_instance_name = filter_name
-                if filter_name == 'arithmetic':
-                    filter_instance_name = 'arithmetic_sequence'
-                elif filter_name == 'geometric':
-                    filter_instance_name = 'geometric_sequence'
 
                 if filter_instance_name in self.filter_manager.filters:
                     # 기존 필터 업데이트

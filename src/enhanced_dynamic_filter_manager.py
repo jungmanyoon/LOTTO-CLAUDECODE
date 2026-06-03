@@ -18,51 +18,73 @@ except ImportError:
     from dynamic_filter_manager import DynamicFilterManager
 
 try:
-    from analyze_system.dynamic_filter_system import FilterPerformanceMonitor, BalancedStrategy
+    # [adaptive-threshold-1] 실제 구현은 src/scripts/dynamic_filter_system.py 에 있다.
+    # 과거 경로 'analyze_system.dynamic_filter_system'는 존재하지 않아 항상 ImportError ->
+    # 폴백 스텁(adjust_criteria/update_performance 결측)이 동작해 auto_adjust_all_filters가
+    # AttributeError로 깨졌다. 올바른 경로로 교정한다.
+    from src.scripts.dynamic_filter_system import FilterPerformanceMonitor, BalancedStrategy
 except ImportError:
-    # analyze_system이 없을 경우 대체 구현
-    class FilterPerformanceMonitor:
-        def __init__(self, window_size: int = 50):
-            self.metrics = {}
-            self.window_size = window_size
-            
-        def update_metric(self, filter_name: str, metric: str, value: float):
-            if filter_name not in self.metrics:
-                self.metrics[filter_name] = {}
-            self.metrics[filter_name][metric] = value
-            
-        def get_performance_summary(self) -> Dict:
-            return self.metrics
-        
-        def get_performance_metrics(self, filter_name: str) -> Dict[str, float]:
-            """필터 성능 메트릭 반환"""
-            # 해당 필터의 메트릭이 없으면 기본값 반환
-            if filter_name not in self.metrics:
+    try:
+        from scripts.dynamic_filter_system import FilterPerformanceMonitor, BalancedStrategy
+    except ImportError:
+        # 최후 폴백 스텁 (실제 모듈 import가 모두 실패한 경우에만 사용)
+        # 주의: 실제 클래스와 동일한 인터페이스(update_performance/adjust_criteria)를 제공해야
+        #       auto_adjust_all_filters에서 AttributeError가 발생하지 않는다.
+        class FilterPerformanceMonitor:
+            def __init__(self, window_size: int = 50):
+                self.metrics = {}
+                self.window_size = window_size
+
+            def update_metric(self, filter_name: str, metric: str, value: float):
+                if filter_name not in self.metrics:
+                    self.metrics[filter_name] = {}
+                self.metrics[filter_name][metric] = value
+
+            def update_performance(self, filter_name: str, pass_rate: float,
+                                   exclusion_rate: float, false_negative: bool):
+                """실제 FilterPerformanceMonitor와 동일한 인터페이스 (스텁)"""
+                self.metrics.setdefault(filter_name, {}).update({
+                    'avg_pass_rate': pass_rate,
+                    'avg_exclusion_rate': exclusion_rate,
+                    'false_negative_rate': 1.0 if false_negative else 0.0,
+                })
+
+            def get_performance_summary(self) -> Dict:
+                return self.metrics
+
+            def get_performance_metrics(self, filter_name: str) -> Dict[str, float]:
+                """필터 성능 메트릭 반환"""
+                # 해당 필터의 메트릭이 없으면 기본값 반환
+                if filter_name not in self.metrics:
+                    return {
+                        'avg_pass_rate': 1.0,
+                        'avg_exclusion_rate': 0.0,
+                        'false_negative_rate': 0.0,
+                        'stability': 1.0
+                    }
+
+                # 저장된 메트릭 반환 (기본값으로 채움)
+                metrics = self.metrics[filter_name]
                 return {
-                    'avg_pass_rate': 1.0,
-                    'avg_exclusion_rate': 0.0,
-                    'false_negative_rate': 0.0,
-                    'stability': 1.0
+                    'avg_pass_rate': metrics.get('avg_pass_rate', 1.0),
+                    'avg_exclusion_rate': metrics.get('avg_exclusion_rate', 0.0),
+                    'false_negative_rate': metrics.get('false_negative_rate', 0.0),
+                    'stability': metrics.get('stability', 1.0)
                 }
-            
-            # 저장된 메트릭 반환 (기본값으로 채움)
-            metrics = self.metrics[filter_name]
-            return {
-                'avg_pass_rate': metrics.get('avg_pass_rate', 1.0),
-                'avg_exclusion_rate': metrics.get('avg_exclusion_rate', 0.0),
-                'false_negative_rate': metrics.get('false_negative_rate', 0.0),
-                'stability': metrics.get('stability', 1.0)
-            }
-    
-    class BalancedStrategy:
-        def __init__(self):
-            pass
-            
-        def calculate_weights(self, performances: Dict) -> Dict[str, float]:
-            # 간단한 균등 가중치 반환
-            if not performances:
-                return {}
-            return {k: 1.0 / len(performances) for k in performances}
+
+        class BalancedStrategy:
+            def __init__(self):
+                pass
+
+            def adjust_criteria(self, current_criteria: Dict, performance_metrics: Dict) -> Dict:
+                """실제 BalancedStrategy와 동일한 인터페이스 (스텁: 조정 없이 그대로 반환)"""
+                return dict(current_criteria) if current_criteria else current_criteria
+
+            def calculate_weights(self, performances: Dict) -> Dict[str, float]:
+                # 간단한 균등 가중치 반환
+                if not performances:
+                    return {}
+                return {k: 1.0 / len(performances) for k in performances}
 
 class AdaptiveWeightManager:
     """적응형 가중치 관리자"""
@@ -528,7 +550,7 @@ def main():
     
     # 성능 보고서 내보내기
     enhanced_manager.export_performance_report()
-    print("\n✅ 성능 보고서가 filter_performance_report.json에 저장되었습니다.")
+    print("\n[O] 성능 보고서가 filter_performance_report.json에 저장되었습니다.")
     
     # 모니터링 중지
     enhanced_manager.stop_monitoring()

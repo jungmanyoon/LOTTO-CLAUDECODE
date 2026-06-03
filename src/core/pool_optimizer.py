@@ -153,13 +153,18 @@ class PoolOptimizer:
 
         # (2) hold-out lift (K-fold over holdout window)
         holdout_win = self._winning(train_until + 1, self.latest_round)
+        # 기본값(폴백): if 블록을 건너뛰면 lift도 계산되지 않으므로 사용되지 않음
         pool_ratio = self.target_K / TOTAL_COMBINATIONS
         lifts = []
         if len(holdout_win) >= self.n_folds:
             # 전수 채점으로 cutoff 산출 (가중 반영된 동일 scorer)
+            # all_combinations()는 params 무관 상수 배열로 ExtremenessScorer가 클래스 레벨
+            # 캐시 -> trial마다 49MB 배열 재생성/GC 압박 제거 (채점 결과는 scorer.score가 담당, 불변)
             combos = ExtremenessScorer.all_combinations()
             all_scores = scorer.score(combos)
             cutoff = ExtremenessScorer.cutoff_for_size(all_scores, self.target_K)
+            # 동점 견고성: 실제 풀비율을 cutoff 이하 실측값으로 보정 (lift 과대평가 방지)
+            pool_ratio = float((all_scores <= cutoff).mean())
             folds = np.array_split(holdout_win, self.n_folds)
             for fold in folds:
                 if len(fold) == 0:
@@ -243,8 +248,12 @@ class PoolOptimizer:
         return out
 
     def save_best(self, result: Dict, path: str = "configs/extremeness_weights.json"):
+        # 원자적 쓰기 (extremeness-pool-1): 임시파일에 쓴 뒤 os.replace로 교체.
+        # 백그라운드 최적화가 이 파일을 쓰는 동안 ExtremenessPoolPredictor가
+        # 부분 작성된 JSON을 읽어 캐시가 오염되는 것을 방지한다. (MEMORY #10 패턴)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump({
                 'target_K': self.target_K,
                 'continuous_features': self.cont_features,
@@ -252,4 +261,5 @@ class PoolOptimizer:
                 'best_params': result['best_params'],
                 'metrics': {k: result[k] for k in ('auc_separation', 'lift_mean', 'lift_lcb', 'best_value')},
             }, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
         self.logger.info(f"[PoolOpt] 가중치 저장: {path}")

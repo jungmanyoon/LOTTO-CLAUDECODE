@@ -206,9 +206,11 @@ class HyperparameterTuner:
             # 모델 업데이트
             ensemble_model.update_hyperparameters(rf_params, xgb_params, nn_params)
             
-            # 학습 및 평가
+            # 학습 및 평가 (train()이 None 반환할 수 있으므로 방어 처리)
             evaluation = ensemble_model.train(training_data, test_size=0.2)
-            
+            if evaluation is None:
+                return 0.0
+
             # 앙상블 성능 반환
             return evaluation.get('ensemble', {}).get('accuracy', 0)
         
@@ -231,18 +233,28 @@ class HyperparameterTuner:
             mc_model.update_parameters(params)
             
             # 검증을 위한 시뮬레이션
-            recent_numbers = self.db_manager.get_recent_numbers(20)
+            # get_numbers_with_bonus() 사용: List[Tuple[round, (n1,n2,n3,n4,n5,n6,bonus)]]
+            all_data = self.db_manager.get_numbers_with_bonus()
+            if not all_data or len(all_data) < 15:
+                return 0.0
+
+            # 최근 20회차 추출 (회차 내림차순 정렬)
+            all_data_sorted = sorted(all_data, key=lambda x: x[0], reverse=True)
+            recent_data = all_data_sorted[:20]
             score = 0
-            
+
             for i in range(10):
-                predictions = mc_model.simulate(n_predictions=5)
-                actual = recent_numbers[10 + i]
-                
-                # 상위 예측과 실제 번호 비교
-                for pred in predictions:
-                    matches = len(set(pred['numbers']) & set(actual))
+                # simulate_combinations() 사용 (simulate() 미존재)
+                sim_results = mc_model.simulate_combinations(n_simulations=50)
+                # 실제 당첨번호: 튜플의 두 번째 원소에서 앞 6개
+                _, nums_tuple = recent_data[10 + i]
+                actual_set = set(nums_tuple[:6])
+
+                # 상위 예측 최대 5개와 실제 번호 비교
+                for pred_combo, _score in sim_results[:5]:
+                    matches = len(set(pred_combo) & actual_set)
                     score += matches / 6.0
-            
+
             return score / (10 * 5)  # 평균 매칭 비율
         
         return objective

@@ -12,8 +12,16 @@ import os
 from collections import defaultdict
 from scipy import stats
 from scipy.special import comb
-import matplotlib.pyplot as plt
-import seaborn as sns
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # 헤드리스 서버 호환
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    plt = None
+    sns = None
+    MATPLOTLIB_AVAILABLE = False
 
 # numpy가 제대로 import되었는지 확인
 if 'np' not in globals():
@@ -529,16 +537,52 @@ class BayesianFilter:
             {'counts': number_counts},
             'number_frequency'
         )
-        
-        # 패턴 업데이트
+
+        # 패턴 사후분포 업데이트 (ml-probabilistic-3)
+        # 과거: update_beliefs(..., 'patterns.odd_even.{N}')가 평면 키로만 저장돼,
+        #   calculate_log_likelihood/visualize_beliefs가 읽는 중첩 posterior_beliefs['patterns']에는
+        #   전혀 반영되지 않아 패턴 우도가 영구 무시됐다(균등 prior에서는 평면 prior 키 부재 경고까지).
+        #   -> readers가 직접 읽는 중첩 구조로 사후분포를 구성해 통일한다.
         total_draws = len(recent_draws)
-        
-        # 홀짝 패턴 업데이트
+        alpha0 = self.model_params.get('alpha', 1.0)
+        beta0 = self.model_params.get('beta', 1.0)
+        prior_patterns = self.prior_beliefs.get('patterns', {})
+        if not isinstance(prior_patterns, dict):
+            prior_patterns = {}
+
+        patterns_posterior = {'odd_even': {}}
+
+        # 홀짝: 베타 켤레 업데이트 (균등 prior alpha/beta + 최근 관측 successes/failures)
         for odd_count, count in pattern_evidence['odd_even'].items():
-            self.update_beliefs(
-                {'successes': count, 'failures': total_draws - count},
-                f'patterns.odd_even.{odd_count}'
-            )
+            successes = count
+            failures = total_draws - count
+            patterns_posterior['odd_even'][odd_count] = {
+                'distribution': 'beta',
+                'params': (alpha0 + successes, beta0 + failures)
+            }
+
+        # 합계: 최근 관측(>=2)이면 정규분포 파라미터 갱신, 부족하면 prior의 sum_range 보존
+        sum_obs = pattern_evidence['sum_observations']
+        if len(sum_obs) >= 2:
+            patterns_posterior['sum_range'] = {
+                'distribution': 'normal',
+                'params': {
+                    'mean': float(np.mean(sum_obs)),
+                    'std': float(np.std(sum_obs)) or 1.0  # 0이면 logpdf 발산 방지
+                }
+            }
+        elif isinstance(prior_patterns.get('sum_range'), dict):
+            sr_params = prior_patterns['sum_range'].get('params', {})
+            patterns_posterior['sum_range'] = {
+                'distribution': 'normal',
+                'params': {
+                    'mean': sr_params.get('mean', 138.3),
+                    'std': sr_params.get('std', 30.8)
+                }
+            }
+
+        # readers가 기대하는 중첩 키로 저장 (평면 키 'patterns.odd_even.N' 방식 폐기)
+        self.posterior_beliefs['patterns'] = patterns_posterior
     
     def _sample_from_posterior(self) -> List[int]:
         """사후분포에서 번호 조합 샘플링

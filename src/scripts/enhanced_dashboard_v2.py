@@ -445,8 +445,15 @@ class EnhancedLottoDashboard:
                     numbers = [int(n) for n in numbers_str.split(',')]
                     
                     # 실제 보너스 번호 사용 (DB에서 조회)
-                    bonus = row[2] if row[2] is not None else random.choice([n for n in range(1, 46) if n not in numbers])
-                    
+                    # 데이터무결성: 보너스가 없으면 가짜로 생성하지 않고 None 유지
+                    # -> 2등(5+보너스) 판정은 자동 보류(데이터 없음)되며, 수집을 유도한다.
+                    bonus = row[2]
+                    if bonus is None:
+                        self.logger.warning(
+                            f"{actual_round}회차 보너스 번호 없음 -> 2등(5+보너스) 판정 보류. "
+                            f"수집하려면 'python src/scripts/complete_bonus_collection.py' 실행"
+                        )
+
                     return {
                         'numbers': numbers[:6],  # 첫 6개만 (보너스 제외)
                         'bonus': bonus,
@@ -1946,6 +1953,32 @@ HTML_TEMPLATE_V2 = """
         let currentRound = null;
         let allRounds = [];
 
+        // [dashboard-monitoring-7] HTML 이스케이프 헬퍼 (XSS/주입 방어).
+        // innerHTML 템플릿 리터럴에 서버/예측 데이터(pred.source 등)를 직접 삽입하면
+        // 특수문자(<, >, &, ", ')가 마크업으로 해석돼 주입 위험이 있다.
+        // 문자열을 받아 HTML 안전 문자열로 변환한다(비문자열은 빈 문자열 처리).
+        function escapeHtml(value) {
+            if (value === null || value === undefined) {
+                return '';
+            }
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // [dashboard-monitoring-2] 서버 config(YAML)의 실제 필터 기준값을 로드해 배지 검증에 사용.
+        // 과거: 클라이언트에 sum 60~230, max_consecutive>=4, gap>35를 하드코딩하고 "서버와 동일"이라
+        //       주석했으나 실제 YAML(sum 45~235, max_consecutive 5, max_gap 비활성)과 불일치했다.
+        // 폴백 기본값은 현재 YAML 값과 일치시킨다(fetch 실패 시에도 거짓 표시 최소화).
+        window.FILTER_CRITERIA = { sum_min: 45, sum_max: 235, max_consecutive: 5 };
+        fetch('/api/filter-criteria')
+            .then(r => r.json())
+            .then(d => { if (d && !d.error) window.FILTER_CRITERIA = d; })
+            .catch(() => {});
+
         // 필터 검증 함수
         function validatePredictionFilter(numbers, source) {
             const validation = {
@@ -1969,10 +2002,10 @@ HTML_TEMPLATE_V2 = """
                 validation.failedFilters.push('홀짝');
             }
 
-            // 2. 합계 범위 필터 (서버와 동일: 60~230)
+            // 2. 합계 범위 필터 (서버 config의 sum_range 사용 - /api/filter-criteria)
             const sum = numbers.reduce((a, b) => a + b, 0);
-            // [HOT] FIX: 서버와 동기화 (sum_range: 60~230)
-            if (sum < 60 || sum > 230) {
+            const _fc = window.FILTER_CRITERIA || {};
+            if (sum < (_fc.sum_min || 45) || sum > (_fc.sum_max || 235)) {
                 validation.failedFilters.push('합계');
             }
 
@@ -1988,20 +2021,13 @@ HTML_TEMPLATE_V2 = """
                     consecutiveCount = 0;
                 }
             }
-            // [HOT] FIX: 서버와 동기화 (max_consecutive >= 4)
-            if (maxConsecutive >= 4) {
+            // 서버 config의 consecutive.max_consecutive 초과 시 실패 (/api/filter-criteria)
+            if (maxConsecutive > (_fc.max_consecutive || 5)) {
                 validation.failedFilters.push('연속');
             }
 
-            // 4. 최대 간격 필터 (서버와 동일: 35 초과 시 실패)
-            let maxGap = 0;
-            for (let i = 0; i < sorted.length - 1; i++) {
-                maxGap = Math.max(maxGap, sorted[i + 1] - sorted[i]);
-            }
-            // [HOT] FIX: 서버와 동기화 (max_gap > 35)
-            if (maxGap > 35) {
-                validation.failedFilters.push('간격');
-            }
+            // 4. 최대 간격 필터: 서버 config에서 max_gap 필터가 비활성(false)이므로 배지에서도 제외.
+            //    (과거 하드코딩 maxGap>35는 서버 설정과 불일치한 거짓 표시였음)
 
             // 결과 판정
             if (validation.failedFilters.length === 0) {
@@ -2513,7 +2539,7 @@ HTML_TEMPLATE_V2 = """
                         <td>
                             <small>${(pred.confidence * 100).toFixed(1)}%</small>
                         </td>
-                        <td class="source-cell" title="${pred.source}"><small>${pred.source}</small></td>
+                        <td class="source-cell" title="${escapeHtml(pred.source)}"><small>${escapeHtml(pred.source)}</small></td>
                         <td>
                             ${data.winning_numbers ?
                                 `<span class="match-badge ${matchClass}">${matches}개</span>` : 
@@ -2630,7 +2656,7 @@ HTML_TEMPLATE_V2 = """
                             </div>
                             <small>${(pred.confidence * 100).toFixed(1)}%</small>
                         </td>
-                        <td class="source-cell" title="${pred.source}"><small>${pred.source}</small></td>
+                        <td class="source-cell" title="${escapeHtml(pred.source)}"><small>${escapeHtml(pred.source)}</small></td>
                         <td>
                             ${data.winning_numbers ?
                                 `<span class="match-badge ${matchClass}">${matches}개</span>` : 
@@ -3437,6 +3463,26 @@ def get_stats():
     stats = fresh_dashboard.get_statistics()
     return jsonify(stats)
 
+@app.route('/api/filter-criteria')
+def get_filter_criteria():
+    """[dashboard-monitoring-2] 클라이언트 검증 배지용 실제 필터 기준값 (config 단일 소스).
+
+    하드코딩 드리프트 방지: 서버가 로드한 sum_range/consecutive 값을 그대로 내려준다.
+    """
+    try:
+        fresh_dashboard = EnhancedLottoDashboard()
+        fc = fresh_dashboard.filter_criteria or {}
+        sr = fc.get('sum_range', {}) or {}
+        cons = fc.get('consecutive', {}) or {}
+        return jsonify({
+            'sum_min': sr.get('min_sum', 45),
+            'sum_max': sr.get('max_sum', 235),
+            'max_consecutive': cons.get('max_consecutive', 5),
+        })
+    except Exception as e:
+        logging.warning(f"[Dashboard] 필터 기준값 조회 실패: {e}")
+        return jsonify({'error': True})
+
 @app.route('/api/performance')
 def get_performance():
     """최근 성능 API"""
@@ -3512,9 +3558,12 @@ def generate_new_predictions():
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         _sys.path.insert(0, project_root)
 
-        # [NEW] 중요: 작업 디렉토리를 프로젝트 루트로 변경 (DatabaseManager가 상대 경로 사용)
-        original_cwd = os.getcwd()
-        os.chdir(project_root)
+        # [dashboard-monitoring-6] os.chdir는 프로세스 전역 cwd를 바꿔 동시 요청 간 race를 유발한다.
+        # 서버 시작(run_enhanced_dashboard_v2)이 이미 cwd를 project_root로 고정하므로, 여기서는
+        # 불변식(cwd==project_root)을 멱등적으로 보장만 하고 '원래 cwd로 복원'은 하지 않는다.
+        # (잘못된 값으로 복원해 다른 동시 요청의 상대경로를 깨뜨리던 race를 제거.)
+        if os.path.abspath(os.getcwd()) != os.path.abspath(project_root):
+            os.chdir(project_root)
 
         # 필요한 모듈 import
         from main import generate_final_predictions
@@ -3714,13 +3763,6 @@ def generate_new_predictions():
             'success': False,
             'error': str(e)
         }), 500
-    finally:
-        # 원래 작업 디렉토리로 복원
-        try:
-            if 'original_cwd' in locals():
-                os.chdir(original_cwd)
-        except:
-            pass
 
 @app.route('/api/quick-prediction-status')
 @limiter.limit("300 per hour")  # [2026-06-01] read-only 상태 폴링: 기본 limit(20/h) 초과 방지(로컬 전용)

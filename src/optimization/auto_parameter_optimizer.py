@@ -152,20 +152,33 @@ class AutoParameterOptimizer:
             db_manager = DatabaseManager()
             backtester = OptimizedBacktestingFramework(db_manager)
             
-            # 최근 20회차 백테스팅
+            # [N-C07] 수정:
+            #   결함1: model_types 파라미터 제거 (run_backtest 시그니처에 없음)
+            #          실제 시그니처: run_backtest(start_round, end_round, window_size=100)
+            #   결함2: 반환 키 'performance_summary' -> 실제 키 'performance_metrics' 사용
             results = backtester.run_backtest(
                 start_round=1165,
-                end_round=1185,
-                model_types=['ensemble']
+                end_round=1185
             )
-            
+
             # 성능 지표 계산
-            if results and 'performance_summary' in results:
-                perf = results['performance_summary']
-                
-                # 목표: 평균 일치 개수 최대화, 필터링 비율 적정화
-                avg_match = perf.get('avg_match_count', 0)
-                pass_rate = perf.get('filtered_combinations', 100000) / 8145060
+            if results and 'performance_metrics' in results:
+                perf = results['performance_metrics']
+
+                # 모델별 성능에서 평균 일치 개수 집계
+                model_performances = perf.get('model_performance', {})
+                total_matches = 0
+                total_predictions = 0
+                for model_metrics in model_performances.values():
+                    avg = model_metrics.get('avg_matches', 0)
+                    preds = model_metrics.get('total_predictions', 0)
+                    total_matches += avg * preds
+                    total_predictions += preds
+                avg_match = total_matches / total_predictions if total_predictions > 0 else 0
+
+                filter_stats = results.get('filter_statistics', {})
+                filtered_combos = filter_stats.get('total_combinations_after_filter', 100000)
+                pass_rate = filtered_combos / 8145060
                 
                 # 패스율이 너무 낮으면 패널티 (0.5% 미만)
                 if pass_rate < 0.005:

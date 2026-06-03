@@ -123,7 +123,7 @@ def generate_all_combinations():
 if __name__ == "__main__":
     try:
         result = generate_all_combinations()
-        print(f"\n✅ 전체 8,145,060개 조합이 성공적으로 생성되었습니다!")
+        print(f"\n[O] 전체 8,145,060개 조합이 성공적으로 생성되었습니다!")
     except KeyboardInterrupt:
         print("\n\n사용자에 의해 중단되었습니다.")
     except Exception as e:

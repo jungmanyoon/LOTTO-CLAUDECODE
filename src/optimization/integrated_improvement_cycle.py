@@ -45,7 +45,7 @@ class IntegratedImprovementCycle:
             Dict: 개선 사이클 결과
         """
         self.logger.info("="*60)
-        self.logger.info("🔄 통합 개선 사이클 시작")
+        self.logger.info("[SYNC] 통합 개선 사이클 시작")
         self.logger.info("="*60)
 
         # 회차 범위 설정
@@ -124,22 +124,22 @@ class IntegratedImprovementCycle:
 
         try:
             # 1. 필터 업데이트 (해당 회차까지의 데이터로)
-            self.logger.info(f"  1️⃣ 필터 업데이트 중...")
+            self.logger.info(f"  [1] 필터 업데이트 중...")
             filter_updated = self._update_filters_for_round(round_num)
             round_result['filter_updated'] = filter_updated
 
             if filter_updated:
-                self.logger.info(f"     ✓ 필터 업데이트 완료")
+                self.logger.info(f"     [O] 필터 업데이트 완료")
             else:
-                self.logger.warning(f"     × 필터 업데이트 실패")
+                self.logger.warning(f"     [X] 필터 업데이트 실패")
 
             # 2. 업데이트된 필터로 백테스팅
-            self.logger.info(f"  2️⃣ 백테스팅 실행 중...")
+            self.logger.info(f"  [2] 백테스팅 실행 중...")
             backtest_results = self._run_backtest_for_round(round_num)
             round_result['backtest_completed'] = True
 
             # 3. 성능 평가 및 개선 추적
-            self.logger.info(f"  3️⃣ 성능 평가 중...")
+            self.logger.info(f"  [3] 성능 평가 중...")
             improvement_info = self.improvement_manager.track_backtest_improved(
                 backtest_results, round_num
             )
@@ -149,12 +149,12 @@ class IntegratedImprovementCycle:
 
             if round_result['improved']:
                 reasons = ', '.join(improvement_info.get('update_reasons', []))
-                self.logger.info(f"     ✓ 개선 발견: {reasons}")
+                self.logger.info(f"     [O] 개선 발견: {reasons}")
             else:
                 self.logger.info(f"     - 개선 없음")
 
             # 4. 임계값 동적 조정
-            self.logger.info(f"  4️⃣ 임계값 조정 검토 중...")
+            self.logger.info(f"  [4] 임계값 조정 검토 중...")
             old_threshold = self.improvement_manager.state.get('current_threshold', 1.0)
             new_threshold = self.improvement_manager.adjust_threshold_dynamically(
                 round_result['performance']
@@ -162,7 +162,7 @@ class IntegratedImprovementCycle:
 
             if new_threshold != old_threshold:
                 round_result['threshold_adjusted'] = True
-                self.logger.info(f"     ✓ 임계값 조정: {old_threshold:.2f} → {new_threshold:.2f}")
+                self.logger.info(f"     [O] 임계값 조정: {old_threshold:.2f} -> {new_threshold:.2f}")
             else:
                 self.logger.info(f"     - 임계값 유지: {old_threshold:.2f}")
 
@@ -256,7 +256,7 @@ class IntegratedImprovementCycle:
                   (end_round - cycle_results['start_round'] + 1) * 100
 
         self.logger.info(
-            f"\n📊 진행률: {progress:.1f}% | "
+            f"\n[STAT] 진행률: {progress:.1f}% | "
             f"처리: {cycle_results['rounds_processed']} | "
             f"개선: {cycle_results['improvements_found']} | "
             f"임계값 조정: {cycle_results['threshold_adjustments']}"
@@ -265,7 +265,7 @@ class IntegratedImprovementCycle:
     def _log_cycle_summary(self, cycle_results: Dict):
         """사이클 요약 로그"""
         self.logger.info("\n" + "="*60)
-        self.logger.info("📊 통합 개선 사이클 요약")
+        self.logger.info("[STAT] 통합 개선 사이클 요약")
         self.logger.info("="*60)
 
         self.logger.info(f"\n회차 범위: {cycle_results['start_round']} ~ {cycle_results['end_round']}")
@@ -293,9 +293,9 @@ class IntegratedImprovementCycle:
         Returns:
             List: 각 반복의 결과
         """
-        self.logger.info("\n" + "🔄"*20)
-        self.logger.info("🧠 적응형 개선 사이클 시작")
-        self.logger.info("🔄"*20)
+        self.logger.info("\n" + "[SYNC]"*20)
+        self.logger.info("[BRAIN] 적응형 개선 사이클 시작")
+        self.logger.info("[SYNC]"*20)
 
         all_results = []
         latest_round = self.db_manager.get_last_round()
@@ -320,7 +320,7 @@ class IntegratedImprovementCycle:
 
             # 성능이 목표에 도달하면 조기 종료
             if cycle_result['best_performance'] >= 1.5:
-                self.logger.info(f"\n🎯 목표 성능 달성! (성능: {cycle_result['best_performance']:.3f})")
+                self.logger.info(f"\n[TARGET] 목표 성능 달성! (성능: {cycle_result['best_performance']:.3f})")
                 break
 
             # 반복 간 짧은 대기
@@ -334,7 +334,7 @@ class IntegratedImprovementCycle:
     def _log_adaptive_summary(self, all_results: List[Dict[str, Any]]):
         """적응형 사이클 요약 로그"""
         self.logger.info("\n" + "="*60)
-        self.logger.info("🧠 적응형 개선 사이클 최종 요약")
+        self.logger.info("[BRAIN] 적응형 개선 사이클 최종 요약")
         self.logger.info("="*60)
 
         total_improvements = sum(r['improvements_found'] for r in all_results)

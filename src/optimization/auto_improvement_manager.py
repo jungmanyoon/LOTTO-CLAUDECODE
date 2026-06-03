@@ -51,8 +51,8 @@ class AutoImprovementManager:
             try:
                 with open(self.state_file, 'r', encoding='utf-8') as f:
                     state = json.load(f)
-                logging.info(f"📂 이전 상태를 불러왔습니다: {self.state_file}")
-                logging.info(f"📊 불러온 백테스팅 횟수: {state.get('total_backtest_count', 0)}회")
+                logging.info(f"[LOAD] 이전 상태를 불러왔습니다: {self.state_file}")
+                logging.info(f"[STAT] 불러온 백테스팅 횟수: {state.get('total_backtest_count', 0)}회")
                 return state
             except Exception as e:
                 logging.error(f"상태 파일 로드 실패: {e}")
@@ -125,8 +125,8 @@ class AutoImprovementManager:
         # 백테스팅 횟수 증가
         old_count = self.state['total_backtest_count']
         self.state['total_backtest_count'] += 1
-        logging.info(f"🔢 백테스팅 횟수 증가: {old_count} → {self.state['total_backtest_count']}")
-        logging.info(f"📋 백테스팅 #({self.state['total_backtest_count']}) 성능 추적 시작")
+        logging.info(f"[COUNT] 백테스팅 횟수 증가: {old_count} -> {self.state['total_backtest_count']}")
+        logging.info(f"[LIST] 백테스팅 #({self.state['total_backtest_count']}) 성능 추적 시작")
         
         # 성능 추출
         new_performance = self._extract_performance(backtest_results)
@@ -156,7 +156,7 @@ class AutoImprovementManager:
             improvement_info['improvements'][model_type] = {
                 'rate': improvement_rate,
                 'absolute': new_perf - old_perf,
-                'improved': improvement_rate > self.config.get('min_improvement_rate', 0.05)
+                'improved': improvement_rate > self.config.get('min_improvement_rate', 0.0)
             }
             
             # 개선된 경우 최고 성능 업데이트
@@ -174,11 +174,39 @@ class AutoImprovementManager:
             overall_improvement = 1.0 if new_overall > 0 else 0.0
         
         # 업데이트 여부 결정
-        if overall_improvement > self.config.get('min_improvement_rate', 0.05):
+        if overall_improvement > self.config.get('min_improvement_rate', 0.0):
             improvement_info['should_update'] = True
             improvement_info['update_reasons'].append("전체 성능 개선")
             self.state['current_performance'] = new_performance
-        
+
+        # [log-analysis-4 대칭화] 성능 대폭 하락(10% 이상) 시 경고 + 롤백 트리거.
+        # 이 구버전 매니저가 실사용 경로(EnhancedFeedbackLoop)인데 하락 대응이 없어
+        # -33% 같은 대폭 하락이 조용히 무시되던 비대칭을, 신버전(ImprovedAutoImprovementManager)과
+        # 동일한 롤백 로직으로 보정한다.
+        elif overall_improvement < -0.10 and old_overall > 0:
+            logging.warning(f"[WARN] 성능 대폭 하락 감지: {overall_improvement:.1%}")
+            logging.warning(f"    - 이전 성능: {old_overall:.4f}")
+            logging.warning(f"    - 현재 성능: {new_overall:.4f}")
+
+            improvement_info['should_rollback'] = True
+            improvement_info['rollback_reason'] = f"성능 하락: {overall_improvement:.1%}"
+
+            # ContinuousImprovementEngine 롤백 호출 시도 (지연 import, 하락 시에만 생성)
+            try:
+                from src.core.continuous_improvement_engine import ContinuousImprovementEngine
+                engine = ContinuousImprovementEngine(db_manager=None)
+                rollback_success = engine.rollback_to_best()
+
+                if rollback_success:
+                    logging.info("[O] 자동 롤백 완료 - 최고 성능 설정 복원됨")
+                    improvement_info['rollback_executed'] = True
+                else:
+                    logging.warning("[WARN] 자동 롤백 실패 - 백업 없음")
+                    improvement_info['rollback_executed'] = False
+            except Exception as e:
+                logging.error(f"롤백 호출 실패: {e}")
+                improvement_info['rollback_error'] = str(e)
+
         # 개선 이력 추가
         self.state['improvement_history'].append(improvement_info)
         
@@ -188,9 +216,9 @@ class AutoImprovementManager:
 
         # 항상 자동 저장 (백테스팅 카운트가 증가했으므로)
         self.save_state()
-        logging.info(f"📁 백테스팅 상태 자동 저장 완료 (총 횟수: {self.state['total_backtest_count']})")
-        logging.info(f"📂 저장 파일: {self.state_file}")
-        logging.info(f"⏰ 저장 시간: {self.state['last_updated']}")
+        logging.info(f"[SAVE] 백테스팅 상태 자동 저장 완료 (총 횟수: {self.state['total_backtest_count']})")
+        logging.info(f"[LOAD] 저장 파일: {self.state_file}")
+        logging.info(f"[TIME] 저장 시간: {self.state['last_updated']}")
 
         return improvement_info
     

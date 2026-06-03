@@ -5,7 +5,6 @@
 선택적으로 필터를 적용하는 개선된 시스템
 """
 import json
-import random
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 import logging
@@ -26,14 +25,7 @@ class DynamicFilterManager:
                         "arithmetic_sequence", "geometric_sequence", 
                         "prime_composite", "digit_sum"]              # 비활성화
         }
-        
-        # 적용 전략별 설정
-        self.strategies = {
-            "strict": {"essential": 1.0, "optional_a": 0.8, "optional_b": 0.6},
-            "balanced": {"essential": 1.0, "optional_a": 0.5, "optional_b": 0.3},
-            "lenient": {"essential": 1.0, "optional_a": 0.3, "optional_b": 0.1}
-        }
-        
+
         logging.info("동적 필터 관리자 초기화 완료")
     
     def _analyze_winning_numbers(self) -> Dict[str, Any]:
@@ -196,89 +188,6 @@ class DynamicFilterManager:
         
         return criteria
     
-    def select_filters(self, strategy: str = 'balanced') -> List[str]:
-        """전략에 따른 필터 선택"""
-        if strategy not in self.strategies:
-            strategy = 'balanced'
-        
-        selected = []
-        probabilities = self.strategies[strategy]
-        
-        # Essential 필터는 항상 포함
-        selected.extend(self.filter_groups['essential'])
-        
-        # Optional 필터는 확률적으로 선택
-        for group_name in ['optional_a', 'optional_b']:
-            if random.random() < probabilities[group_name]:
-                # 그룹에서 일부 선택
-                group_filters = self.filter_groups[group_name]
-                num_select = max(1, int(len(group_filters) * probabilities[group_name]))
-                selected.extend(random.sample(group_filters, num_select))
-        
-        # 효과성 순으로 정렬
-        selected.sort(key=lambda x: self.filter_effectiveness.get(x, 0), reverse=True)
-        
-        return selected
-    
-    def get_filter_config(self, strategy: str = 'balanced') -> Dict[str, Any]:
-        """전략별 필터 설정 생성"""
-        selected_filters = self.select_filters(strategy)
-        
-        config = {
-            'enabled_filters': selected_filters,
-            'filter_criteria': {},
-            'filter_efficiency': {}
-        }
-        
-        # 각 필터의 동적 기준값 설정
-        for filter_name in selected_filters:
-            dynamic_criteria = self.get_dynamic_criteria(filter_name)
-            if dynamic_criteria:
-                config['filter_criteria'][filter_name] = dynamic_criteria
-            
-            # 효율성 점수 설정
-            config['filter_efficiency'][filter_name] = \
-                self.filter_effectiveness.get(filter_name, 0.1)
-        
-        return config
-    
-    def update_config_file(self, strategy: str = 'balanced'):
-        """config.yaml 파일 업데이트"""
-        import yaml
-        
-        try:
-            # 기존 설정 로드
-            with open('config.yaml', 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-            
-            # 필터 설정 업데이트
-            new_filter_config = self.get_filter_config(strategy)
-            
-            config['filters']['enabled_filters'] = new_filter_config['enabled_filters']
-            
-            # 동적 기준값 업데이트
-            for filter_name, criteria in new_filter_config['filter_criteria'].items():
-                if filter_name in config['filters']['criteria']:
-                    config['filters']['criteria'][filter_name].update(criteria)
-            
-            # 효율성 업데이트
-            config['filters']['filter_efficiency'] = new_filter_config['filter_efficiency']
-            
-            # match 필터 수정
-            if 'match' in config['filters']['criteria']:
-                config['filters']['criteria']['match']['max_match'] = 6  # 6개까지 허용
-            
-            # 파일 저장
-            with open('config_dynamic.yaml', 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-            
-            logging.info(f"동적 설정이 config_dynamic.yaml에 저장되었습니다. (전략: {strategy})")
-            return True
-            
-        except Exception as e:
-            logging.error(f"설정 파일 업데이트 중 오류: {str(e)}")
-            return False
-    
     def print_statistics(self):
         """분석된 통계 정보 출력"""
         print("\n=== 당첨번호 통계 분석 결과 ===")
@@ -303,47 +212,3 @@ class DynamicFilterManager:
                               key=lambda x: x[1], reverse=True)
         for i, (name, score) in enumerate(sorted_filters[:10], 1):
             print(f"{i:2d}. {name:20s}: {score*100:.2f}%")
-
-
-def main():
-    """테스트 및 시연"""
-    import sys
-    sys.path.append('.')
-    from src.core.db_manager import DatabaseManager
-    
-    # DB 매니저 초기화
-    db_manager = DatabaseManager()
-    
-    # 동적 필터 관리자 생성
-    dynamic_manager = DynamicFilterManager(db_manager)
-    
-    # 통계 출력
-    dynamic_manager.print_statistics()
-    
-    # 각 전략별 필터 선택 시연
-    print("\n=== 전략별 필터 선택 ===")
-    for strategy in ['strict', 'balanced', 'lenient']:
-        selected = dynamic_manager.select_filters(strategy)
-        print(f"\n{strategy} 전략: {len(selected)}개 필터")
-        print(f"  선택된 필터: {', '.join(selected)}")
-    
-    # 동적 설정 생성
-    print("\n=== 동적 설정 생성 ===")
-    config = dynamic_manager.get_filter_config('balanced')
-    print(f"활성 필터: {len(config['enabled_filters'])}개")
-    
-    # 동적 임계값 예시
-    print("\n동적 임계값 예시:")
-    for filter_name in ['sum_range', 'average', 'max_gap']:
-        criteria = dynamic_manager.get_dynamic_criteria(filter_name)
-        if criteria:
-            print(f"\n{filter_name}:")
-            for key, value in criteria.items():
-                print(f"  - {key}: {value}")
-    
-    # 설정 파일 업데이트
-    if dynamic_manager.update_config_file('balanced'):
-        print("\n✅ config_dynamic.yaml 파일이 생성되었습니다.")
-
-if __name__ == "__main__":
-    main()

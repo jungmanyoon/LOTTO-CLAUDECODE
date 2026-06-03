@@ -714,66 +714,56 @@ class ThresholdOptimizer:
         winning_inclusion_rate: float = 1.0
     ) -> float:
         """
-        [v5] 통과율(winning_inclusion) 최대화 중심 점수 계산
+        [v6] 풀 축소(극단 패턴 제거) 중심 점수 계산 — 통과율 hard constraint 제거
 
-        공식:
-            제약 충족(통과율 >= 0.95):
-                score = winning_inclusion + 0.1 * avg_matches - 0.05 * log(pool/100_000)
-            제약 위반(통과율 < 0.95):
-                score = winning_inclusion - 10 * deficit - pool_penalty
+        공식(절벽/제약 없음):
+            score = pool_reward + W_INCLUSION * winning_inclusion + 0.1 * avg_matches
+            - pool_reward = -0.05 * log(pool/100_000)  → 풀이 좁을수록(극단 제거 많을수록) 점수 ↑ (주 목표)
+            - W_INCLUSION * winning_inclusion           → 통과율은 약한 보조항(절벽 없음, 빈 풀 붕괴만 완만히 방지)
+            - 0.1 * avg_matches                         → 동률 trial 구분용 tie-breaker
 
-        설계 원칙(2026-05-31 재설계, Codex/Gemini 교차검증):
-        - [핵심 전략] 1차 지표 = "실제 당첨번호가 필터를 통과하는 비율(통과율)".
-          로또는 독립시행이므로 avg_matches 최대화는 노이즈/과적합 추종(E[일치수]=0.8 고정).
-        - winning_inclusion_rate를 "주 목표"로 승격(기존 v4는 제약조건으로만 사용 → 우선순위 역전 버그).
-        - avg_matches는 가중치 0.1의 tie-breaker로 강등(동률 trial 구분용, 노이즈 영향 최소화).
-        - pool_penalty(풀 축소 인센티브) 유지: "통과율 유지하며 풀 최소화" = 핵심 전략 그 자체.
-        - 제약 위반 시 deficit*10 강페널티로 통과율 미달 trial이 절대 선택되지 않게 함.
+        설계 원칙([사용자 최종확정 결정 2026-05-31] 통과율 강제 제약 제거):
+        - [핵심 전략] "역사적으로 출현율이 극히 낮은 극단 패턴을 최대한 많이 제거(풀 축소)"가 1차 목표.
+          → pool_reward(풀이 좁을수록 보상)를 실질 주도 신호로 승격.
+        - [통과율 강등] 통과율(winning_inclusion)은 강제 목표/제약이 아니라 약한 보조항.
+          기존 v5의 INCLUSION_THRESHOLD=0.95 hard constraint(deficit*10 절벽)를 완전 제거 →
+          "통과율 95% 미달 trial 절대 선택 불가"라는 사용자 결정 위반 요소 삭제.
+          통과율 원값은 호출부에서 trial.set_user_attr('winning_inclusion_rate', ...)로 참고 지표 보존.
+        - [완전붕괴 방지] 통과율 항을 0으로 빼면 "풀=0(전부 제거)"가 최고점이 되어 무의미 →
+          W_INCLUSION(작은 가중치)로 빈 풀만 완만히 저지하되, 절벽은 두지 않음.
+        - avg_matches는 노이즈 신호이므로 0.1 tie-breaker로만 유지(로또 독립시행, E[일치수] 고정).
 
         Args:
             avg_matches: 평균 매칭 수 (보조 tie-breaker, 노이즈 신호)
             ml_inclusion: ML 예측의 필터 통과율 (미사용 - Level-3 바이패스로 상수 편향)
-            combination_count: 필터링 후 조합 수 (로그 페널티)
+            combination_count: 필터링 후 조합 수 (작을수록 보상 = 극단 제거 많음)
             threshold: 현재 probability threshold (내부 사용 안 함, 하위호환성 유지)
-            winning_inclusion_rate: 당첨번호가 필터를 통과하는 비율 (주 최적화 목표)
+            winning_inclusion_rate: 당첨번호가 필터를 통과하는 비율 (약한 보조항 + 참고 지표)
         """
-        # [v5 FIX] 0.99 → 0.95: 50~100회 표본에서 1~2개 누락에 score가 절벽처럼 0이 되는
-        #          cliff 제거. 0.95는 핵심 전략(통과율 95%+)의 목표값과 정합.
-        INCLUSION_THRESHOLD = 0.95
-
         # ============================================================
-        # (A) 풀 크기 로그 페널티 (regularizer) - 먼저 계산하여 모든 경로에 적용
-        # pool=300K → penalty=0.055, pool=8.14M → penalty=0.220
-        # "같은 통과율이면 더 좁은 풀"을 선호하도록 유도 (핵심 전략)
+        # (A) 풀 축소 보상 (주 목표: 극단 패턴 제거 = 풀 축소)
+        # pool=100K → reward=0, pool=300K → -0.055, pool=8.14M → -0.220
+        # "풀이 좁을수록(극단 많이 제거) 점수가 높다" — 핵심 전략 그 자체
         # ============================================================
         effective_pool = max(combination_count if combination_count > 0 else 8_145_060, 100_000)
-        pool_penalty = 0.05 * math.log(effective_pool / 100_000)
+        pool_reward = -0.05 * math.log(effective_pool / 100_000)
 
         # ============================================================
-        # (B) 당첨번호 통과율 제약 위반 (Hard Constraint)
-        # 95% 미만 시 미달분에 강한 페널티 → 풀 축소 이득이 절대 이기지 못하게
+        # (B) 통과율 = 약한 보조항 (hard constraint/절벽 없음)
+        # 사용자 결정: 통과율은 강제 제약이 아니라 참고 지표. 빈 풀(통과율 0) 붕괴만 완만히 방지.
+        # W_INCLUSION은 풀 보상 범위(~0.22)와 비슷한 작은 스케일 → 풀 축소가 주도하되 통과율도 약하게 반영.
         # ============================================================
-        if winning_inclusion_rate < INCLUSION_THRESHOLD:
-            deficit = INCLUSION_THRESHOLD - winning_inclusion_rate
-            # 1%p 미달 당 0.1 감점 (통과율 주항보다 10배 큰 기울기로 위반을 강하게 회피)
-            score = winning_inclusion_rate - deficit * 10.0 - pool_penalty
-            self.logger.debug(
-                f"[SCORE v5] 통과율 제약 위반: {winning_inclusion_rate:.3f} < {INCLUSION_THRESHOLD} "
-                f"-> deficit={deficit:.3f}, score={score:.4f}"
-            )
-            return score
+        W_INCLUSION = 0.2
 
         # ============================================================
-        # (C) 최종 점수: 통과율(주) + avg_matches(보조 tie-breaker) - 풀 페널티
-        # 통과율 충족 trial들 사이에서는 pool_penalty(풀 크기)가 실질 구분자가 됨
-        # → "통과율 95%+ 유지하면서 풀을 최대한 좁힌" trial이 최고 점수
+        # (C) 최종 점수: 풀 축소 보상(주) + 통과율(약한 보조) + avg_matches(tie-breaker)
         # ============================================================
-        score = winning_inclusion_rate + 0.1 * avg_matches - pool_penalty
+        score = pool_reward + W_INCLUSION * winning_inclusion_rate + 0.1 * avg_matches
 
         self.logger.debug(
-            f"[SCORE v5] winning_inclusion={winning_inclusion_rate:.3f}(주) "
-            f"+ 0.1*avg_matches={0.1 * avg_matches:.3f}(보조) "
-            f"- pool_penalty={pool_penalty:.4f} -> score={score:.4f}"
+            f"[SCORE v6] pool_reward={pool_reward:.4f}(주) "
+            f"+ {W_INCLUSION}*winning_inclusion={W_INCLUSION * winning_inclusion_rate:.3f}(보조) "
+            f"+ 0.1*avg_matches={0.1 * avg_matches:.3f}(tie) -> score={score:.4f}"
         )
 
         return score
@@ -1130,6 +1120,25 @@ class ThresholdOptimizer:
 
             # 설정 저장 (dynamic_criteria 보존됨)
             self._save_config(current_config, backup=True)
+
+            # [adaptive-threshold-5] ThresholdManager 인메모리 상태 즉시 동기화
+            # YAML만 저장하면 ConfigWatcher가 파일 변경을 감지할 때까지
+            # 인메모리/Observer 값이 옛 값으로 남아 불일치가 발생한다.
+            # set_*()를 명시 호출해 파일/인메모리/Observer를 일관되게 갱신한다.
+            try:
+                from src.core.threshold_manager import get_threshold_manager
+                tm = get_threshold_manager()
+                # global_probability_threshold (YAML 저장값과 동일한 round 적용)
+                tm.set_threshold(round(self.best_params['threshold'], 2), source="optimizer")
+                # ML 우회 필터 수
+                tm.set_ml_bypass_filters(self.best_params['ml_bypass'], source="optimizer")
+                # ML 가중치
+                tm.set_ml_weight(round(self.best_params['ml_weight'], 2), source="optimizer")
+                self.logger.info("[ThresholdOptimizer] ThresholdManager 인메모리 동기화 완료 (source=optimizer)")
+            except Exception as tm_err:
+                # 동기화 실패는 치명적이지 않다 (YAML은 이미 저장됨, ConfigWatcher가 후속 반영).
+                # 다만 인메모리/Observer 지연 불일치 가능성을 경고로 남긴다.
+                self.logger.warning(f"[ThresholdOptimizer] ThresholdManager 동기화 실패(YAML은 저장됨): {tm_err}")
 
             # 최적 파라미터 이력 저장
             with sqlite3.connect(self.optimization_db_path) as conn:

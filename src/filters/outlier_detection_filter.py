@@ -43,6 +43,28 @@ class OutlierDetectionFilter(BaseFilter):
         # 과거 당첨번호 통계 분석 (참고용)
         self._analyze_historical_outliers()
 
+    @staticmethod
+    def _compute_q1_q3(numbers: List[int]):
+        """단일 조합(6개 번호)의 Q1/Q3를 계산 (단일 소스)
+
+        n=6 정렬 후 선형 보간으로 Q1/Q3 계산.
+        벡터화 경로(_process_chunk)의 numpy 식과 동일한 결과를 보장한다:
+          - percentile(25) = sorted[1] + 0.25*(sorted[2] - sorted[1])
+          - percentile(75) = sorted[3] + 0.75*(sorted[4] - sorted[3])
+        검증 경로(check_combination)와 통계 경로(_analyze_historical_outliers)가
+        모두 이 헬퍼를 사용해 계산식 불일치를 제거한다.
+
+        Args:
+            numbers: 정렬되지 않은 6개 번호 리스트
+
+        Returns:
+            tuple(float, float): (Q1, Q3)
+        """
+        s = sorted(numbers)
+        q1 = s[1] + 0.25 * (s[2] - s[1])
+        q3 = s[3] + 0.75 * (s[4] - s[3])
+        return q1, q3
+
     def _validate_criteria(self) -> None:
         """필터링 기준값 유효성 검사"""
         # 기본값 설정
@@ -81,8 +103,10 @@ class OutlierDetectionFilter(BaseFilter):
                 return
 
             # 각 조합의 이상치 개수 계산
+            # multiplier 기본값을 1.0으로 통일 (검증/벡터화 경로와 동일).
+            # _validate_criteria가 이미 1.0을 채워두므로 fallback은 안전망일 뿐이다.
             outlier_counts = []
-            multiplier = self.criteria.get('iqr_multiplier', 0.75)
+            multiplier = self.criteria.get('iqr_multiplier', 1.0)
 
             for nums in winning_numbers:
                 if isinstance(nums, str):
@@ -90,9 +114,8 @@ class OutlierDetectionFilter(BaseFilter):
                 else:
                     numbers = list(nums[:6])  # 보너스 제외
 
-                # 조합 내부 IQR 계산
-                q1 = np.percentile(numbers, 25)
-                q3 = np.percentile(numbers, 75)
+                # 조합 내부 IQR 계산 (단일 소스 헬퍼 사용)
+                q1, q3 = self._compute_q1_q3(numbers)
                 iqr = q3 - q1
 
                 # 이상치 범위
@@ -161,7 +184,9 @@ class OutlierDetectionFilter(BaseFilter):
                       iqr_multiplier: float) -> List[str]:
         """청크 단위 벡터화 필터링
 
-        n=6 고정이므로 Q1/Q3를 정렬 인덱스에서 직접 계산 (np.percentile 호출 제거)
+        n=6 고정이므로 Q1/Q3를 정렬 인덱스에서 직접 계산 (np.percentile 호출 제거).
+        계산식은 스칼라 헬퍼 _compute_q1_q3와 동일하며(단일 소스), 검증/통계 경로와
+        수치 결과가 일치한다.
         """
         try:
             chunk_arrays = np.array(
@@ -169,7 +194,7 @@ class OutlierDetectionFilter(BaseFilter):
                 dtype=np.float32
             )
 
-            # n=6 정렬 후 Q1/Q3 직접 계산 (percentile(25)=sorted[1]+0.25*(sorted[2]-sorted[1]))
+            # n=6 정렬 후 Q1/Q3 직접 계산 (_compute_q1_q3와 동일 식의 벡터화 버전)
             sorted_arr = np.sort(chunk_arrays, axis=1)
             q1 = sorted_arr[:, 1] + 0.25 * (sorted_arr[:, 2] - sorted_arr[:, 1])
             q3 = sorted_arr[:, 3] + 0.75 * (sorted_arr[:, 4] - sorted_arr[:, 3])
@@ -205,9 +230,8 @@ class OutlierDetectionFilter(BaseFilter):
         # 조합을 숫자 리스트로 변환
         numbers = list(map(int, combination.split(',')))
 
-        # 조합 내부 IQR 계산
-        q1 = np.percentile(numbers, 25)
-        q3 = np.percentile(numbers, 75)
+        # 조합 내부 IQR 계산 (단일 소스 헬퍼 사용 - 벡터화 경로와 동일 식)
+        q1, q3 = self._compute_q1_q3(numbers)
         iqr = q3 - q1
 
         # 이상치 범위 계산

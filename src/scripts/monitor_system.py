@@ -151,22 +151,22 @@ class SystemMonitor:
         
         # CPU 경고
         if stats['cpu']['percent'] > 95:
-            alerts.append(f"⚠️ CPU 사용률 높음: {stats['cpu']['percent']}%")
+            alerts.append(f"[WARN] CPU 사용률 높음: {stats['cpu']['percent']}%")
             
         # 메모리 경고
         if stats['memory']['percent'] > 90:
-            alerts.append(f"⚠️ 메모리 사용률 높음: {stats['memory']['percent']}%")
+            alerts.append(f"[WARN] 메모리 사용률 높음: {stats['memory']['percent']}%")
         elif stats['memory']['percent'] > 80:
-            alerts.append(f"⚡ 메모리 사용률 주의: {stats['memory']['percent']}%")
+            alerts.append(f"[FAST] 메모리 사용률 주의: {stats['memory']['percent']}%")
             
         # 디스크 경고
         if stats['disk']['percent'] > 95:
-            alerts.append(f"⚠️ 디스크 사용률 높음: {stats['disk']['percent']}%")
+            alerts.append(f"[WARN] 디스크 사용률 높음: {stats['disk']['percent']}%")
             
         # Python 프로세스 메모리 경고
         for proc in stats['python_processes']:
             if proc['memory_mb'] > 2000:  # 2GB 이상
-                alerts.append(f"⚠️ Python 프로세스 메모리 높음: "
+                alerts.append(f"[WARN] Python 프로세스 메모리 높음: "
                             f"{proc['script']} (PID: {proc['pid']}) - {proc['memory_mb']}MB")
                 
         return alerts

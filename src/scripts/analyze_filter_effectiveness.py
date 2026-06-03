@@ -237,7 +237,7 @@ def main():
             print(f"  - 당첨번호 통과율: {winning_eval['pass_rate']*100:.2f}%")
             
             if winning_eval['filtered_winning_count'] > 0:
-                print(f"  ⚠️ 테스트 기간 중 {winning_eval['filtered_winning_count']}개 당첨번호가 필터링됨!")
+                print(f"  [WARN] 테스트 기간 중 {winning_eval['filtered_winning_count']}개 당첨번호가 필터링됨!")
                 print(f"     필터링된 회차: {winning_eval['filtered_rounds']}")
     
     # 필터 효과성 순위
@@ -259,7 +259,7 @@ def main():
         print(f"{i:2d}. {name:25s}: 제외율 {rate*100:6.2f}%, 당첨번호 통과율 {winning_pass*100:6.2f}%")
     
     # 당첨번호 필터링 문제가 있는 필터
-    print("\n[⚠️ 주의가 필요한 필터]")
+    print("\n[[WARN] 주의가 필요한 필터]")
     problematic_filters = [
         (name, data) for name, data in filter_analysis.items()
         if data['winning_evaluation']['filtered_winning_count'] > 0
@@ -329,7 +329,7 @@ def main():
     with open('analyze_system/filter_effectiveness_result.json', 'w', encoding='utf-8') as f:
         json.dump(analysis_result, f, ensure_ascii=False, indent=2)
     
-    print("\n✅ 분석 결과가 analyze_system/filter_effectiveness_result.json에 저장되었습니다.")
+    print("\n[O] 분석 결과가 analyze_system/filter_effectiveness_result.json에 저장되었습니다.")
 
 if __name__ == "__main__":
     main()

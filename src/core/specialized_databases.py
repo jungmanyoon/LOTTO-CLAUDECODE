@@ -10,6 +10,7 @@ import time
 
 # LottoValidator 클래스 가져오기 (encode_combination과 decode_combination을 위해)
 from src.utils.validators import LottoValidator
+from src.utils.constants import LottoConstants
 
 class LottoNumbersDB(BaseDatabase):
     """당첨 번호 데이터베이스"""
@@ -280,17 +281,22 @@ class LottoNumbersDB(BaseDatabase):
         return self.get_last_round()
     
     def get_numbers_with_bonus(self) -> List[Tuple[int, Tuple[int, ...]]]:
-        """보너스 번호를 포함한 모든 당첨번호 조회
-        
+        """보너스 번호를 포함한 모든 당첨번호 조회 (인메모리 캐시 활용)
+
         Returns:
             List[Tuple[int, Tuple[int, ...]]]: (회차, (번호1,번호2,...,번호6,보너스)) 튜플 리스트
         """
+        # 캐시 히트 시 DB 조회 생략 (자매 메서드 get_all_winning_numbers와 동일 패턴 - db-2)
+        # 라이브 프로세스의 모든 보너스 쓰기경로(insert_numbers[_with_bonus])가 invalidate_cache로
+        # 자동 무효화하므로 인프로세스 정합성 보장. 내부 튜플은 불변이라 얕은복사(list)로 안전.
+        if LottoNumbersDB._winning_numbers_with_bonus_cache is not None:
+            return list(LottoNumbersDB._winning_numbers_with_bonus_cache)
         try:
             with self._create_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT round, numbers, bonus_number 
-                    FROM lotto_numbers 
+                    SELECT round, numbers, bonus_number
+                    FROM lotto_numbers
                     WHERE bonus_number IS NOT NULL
                     ORDER BY round
                 """)
@@ -300,7 +306,9 @@ class LottoNumbersDB(BaseDatabase):
                     numbers = [int(n) for n in numbers_str.split(',')]
                     numbers.append(bonus)  # 보너스 번호를 7번째 요소로 추가
                     results.append((round_num, tuple(numbers)))
-                return results
+                # 캐시 저장
+                LottoNumbersDB._winning_numbers_with_bonus_cache = results
+                return list(results)
         except Exception as e:
             logging.error(f"보너스 포함 당첨번호 조회 중 오류: {e}")
             return []
@@ -694,9 +702,14 @@ class CombinationsDB(BaseDatabase):
                 logging.debug(f"기본 조합 존재 여부: {exists}")
                 return exists
         except Exception as e:
-            logging.error(f"기본 조합 확인 중 오류 발생: {str(e)}")
-            # 오류 시 조합이 있다고 가정 (재생성 방지)
-            return True
+            # [db-6 수정] 예외 시 True 반환은 위험: DB 손상/락 상황에서 실제로는
+            # base 조합이 없는데 "있다"고 보고하면 재생성이 스킵되어 빈/손상 풀로
+            # 침묵 진행(fail-fast 위반)한다. 핵심 전략상 815만 base 풀 부재는 치명적이므로
+            # fail-safe로 False(=존재 불확실)를 반환해 재생성을 유도한다.
+            # 재생성(generate_base_combinations -> save_base_combinations)은 INSERT OR IGNORE
+            # 기반이라 멱등적이므로, 실제로 조합이 이미 있어도 재실행은 안전하다.
+            logging.error(f"기본 조합 확인 중 오류 발생(존재 불확실 -> 재생성 유도): {str(e)}")
+            return False
 
     def save_base_combinations(self, combinations: List[str]) -> bool:
         """기본 로또 조합 저장"""
@@ -875,28 +888,15 @@ class CombinationsDB(BaseDatabase):
             return []
 
     def count_all_combinations(self) -> int:
-        """전체 조합 수 조회"""
-        try:
-            # 대량 데이터로 인한 타임아웃 방지를 위해 캐시된 값 반환
-            # 실제로는 8,145,060개가 있음
-            logging.debug("count_all_combinations - 캐시된 값 반환: 8,145,060")
-            return 8145060
-            
-            # 아래는 원래 코드 (타임아웃 문제로 임시 비활성화)
-            # with self._create_connection() as conn:
-            #     cursor = conn.cursor()
-            #     mode = self._get_storage_mode()
-            #     
-            #     if mode == 'optimized':
-            #         cursor.execute("SELECT COUNT(*) FROM base_combinations_optimized")
-            #     else:
-            #         cursor.execute("SELECT COUNT(*) FROM base_combinations")
-            #         
-            #     count = cursor.fetchone()[0]
-            #     return count
-        except Exception as e:
-            logging.error(f"조합 수 조회 중 오류 발생: {str(e)}")
-            return 8145060  # 기본값 반환
+        """이론적 전체 조합 수 C(45,6)=8,145,060 반환 (db-4).
+
+        주의: 이 값은 '이론적 전체 조합 수'이며 DB에 실제 적재된 행 수가 아니다.
+        모든 호출처(필터링 진행률/비율 계산)가 '전체 대비 비율'의 분모로 이 이론값을
+        사용하므로, 대용량 테이블 COUNT(*)의 타임아웃을 피하려고 상수를 반환한다.
+        (DB 실제 적재 수가 필요하면 별도 메서드로 COUNT(*)/max(rowid)를 구현할 것)
+        하드코딩 8145060 -> LottoConstants.TOTAL_COMBINATIONS 단일 소스로 교체.
+        """
+        return LottoConstants.TOTAL_COMBINATIONS
 
     def save_valid_combinations(self, round_num: int, combinations: List[str]) -> bool:
         """유효한 로또 번호 조합 저장"""
@@ -1300,8 +1300,9 @@ class PatternsDB(BaseDatabase):
     
     def __init__(self, db_path: str):
         super().__init__(db_path)
-        self._initialize_database()
-        
+        # BaseDatabase.__init__이 이미 self._initialize_database()를 호출하므로
+        # 여기서의 중복 호출은 제거 (db-3). CREATE IF NOT EXISTS라 멱등이지만 불필요한 마이그레이션 검사 오버헤드 제거.
+
     def _initialize_database(self):
         """필요한 테이블 생성"""
         with self._create_connection() as conn:

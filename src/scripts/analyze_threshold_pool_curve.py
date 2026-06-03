@@ -98,7 +98,8 @@ def main():
     prev = None
     for K in grid_K:
         cutoff = ExtremenessScorer.cutoff_for_size(scores, K)
-        pool_ratio = K / TOTAL_COMBINATIONS
+        # 동점 견고성: 실제 풀비율을 cutoff 이하 실측값으로 보정 (lift 과대평가 방지)
+        pool_ratio = float((scores <= cutoff).mean())
         cov_hold = float((s_holdout <= cutoff).mean())
         cov_ins = float((s_train <= cutoff).mean())
         lift = cov_hold / pool_ratio if pool_ratio > 0 else 0.0

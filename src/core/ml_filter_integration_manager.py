@@ -267,8 +267,13 @@ class MLFilterIntegrationManager:
                 batch_size=32,
                 validation_split=0.2
             )
-            logging.debug("LSTM 모델 학습 완료")
-            return True
+            # 거짓 성공 보고 금지: 실제 학습 여부(is_trained)를 반환
+            trained = getattr(self.filtered_lstm, 'is_trained', False)
+            if trained:
+                logging.debug("LSTM 모델 학습 완료")
+            else:
+                logging.warning("LSTM 학습 미완료 (TensorFlow 미사용 또는 데이터 부족)")
+            return trained
 
         except Exception as e:
             logging.error(f"LSTM 모델 학습 실패: {e}")

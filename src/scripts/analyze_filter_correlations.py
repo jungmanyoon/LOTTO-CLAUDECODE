@@ -283,7 +283,7 @@ def main():
     if high_correlations:
         print("\n높은 상관관계를 가진 필터 쌍:")
         for f1, f2, similarity in sorted(high_correlations, key=lambda x: x[2], reverse=True)[:5]:
-            print(f"  - {f1} ↔ {f2}: {similarity:.2%} 유사도")
+            print(f"  - {f1} <-> {f2}: {similarity:.2%} 유사도")
     
     # 2. 필터 조합 분석
     print("\n[2] 필터 조합 효과성 분석")
@@ -334,7 +334,7 @@ def main():
     with open('filter_optimization_analysis.json', 'w', encoding='utf-8') as f:
         json.dump(final_analysis, f, ensure_ascii=False, indent=2)
     
-    print("\n✅ 분석 결과가 filter_optimization_analysis.json 파일로 저장되었습니다.")
+    print("\n[O] 분석 결과가 filter_optimization_analysis.json 파일로 저장되었습니다.")
 
 if __name__ == "__main__":
     main()

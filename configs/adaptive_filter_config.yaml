@@ -20,7 +20,7 @@ backtesting_targets:
 dynamic_criteria:
   ac_value:
     max_ac: 10
-    min_ac: 2  # [v5 FIX] 3->2: 실제 당첨번호 1152회(AC값2, 준연속패턴) 보호. AC값1은 여전히 제외
+    min_ac: 2
     use_scoring: false
   arithmetic:
     exclude_lengths:
@@ -36,7 +36,7 @@ dynamic_criteria:
     max_consecutive: 5
     min_gap: 1
   digit_sum:
-    max_digit_sum: 60  # [v5 FIX] 55->60: 실제 당첨번호 1189회(digit_sum=59) 보호. 60 초과는 여전히 제외
+    max_digit_sum: 60
     max_digit_sum_range: 17
     min_digit_sum: 9
     min_digit_sum_range: 0
@@ -140,15 +140,15 @@ filters:
   section: false
   sum_range: true
   ten_section: false
-global_probability_threshold: 0.5
+global_probability_threshold: 1.1
 logging:
   log_excluded_patterns: true
   statistics_interval: 25
   verbosity: INFO
 ml_integration:
   ensemble_confidence_threshold: 0.2
-  ml_bypass_filters: 10
-  ml_weight: 0.4
+  ml_bypass_filters: 14
+  ml_weight: 0.6
 ml_relaxed_threshold: 0.5
 performance:
   batch_size: 5000

@@ -12,6 +12,8 @@ import logging
 from dataclasses import dataclass
 import random
 
+logger = logging.getLogger(__name__)
+
 @dataclass
 class OptimizationStrategy:
     """최적화 전략 정의"""
@@ -23,8 +25,9 @@ class OptimizationStrategy:
 
 class MetaOptimizer:
     """메타 최적화 엔진"""
-    
+
     def __init__(self, state_file: str = 'data/auto_improvement_state.json'):
+        # state_file 파라미터는 하위 호환성을 위해 유지하지만 실제로는 OptimizationDB 사용
         self.state_file = state_file
         self.strategies = self._initialize_strategies()
         self.exploration_rate = 0.2  # 20% 확률로 탐색
@@ -107,9 +110,26 @@ class MetaOptimizer:
     
     def analyze_stagnation(self) -> Dict[str, Any]:
         """정체 상태 분석"""
-        with open(self.state_file, 'r', encoding='utf-8') as f:
-            state = json.load(f)
-        
+        # [N-C04] 수정: 삭제된 JSON 파일(data/auto_improvement_state.json) 대신
+        #   data/optimization.db (OptimizationDB)에서 상태 조회
+        state = {}
+        try:
+            from src.core.optimization_db import OptimizationDB
+            opt_db = OptimizationDB()
+            # optimization_state 테이블에서 auto_improvement_state 키 조회
+            stored = opt_db.get_state('auto_improvement_state')
+            if stored:
+                state = stored
+            else:
+                # 구버전 JSON 파일이 아직 존재하는 경우 폴백 (마이그레이션 이전 환경 대비)
+                import os
+                if os.path.exists(self.state_file):
+                    with open(self.state_file, 'r', encoding='utf-8') as f:
+                        state = json.load(f)
+        except Exception as e:
+            logger.warning(f"최적화 상태 로드 실패: {e}")
+            state = {}
+
         history = state.get('improvement_history', [])
         if len(history) < 3:
             return {"stagnation_level": 0, "pattern": "insufficient_data"}

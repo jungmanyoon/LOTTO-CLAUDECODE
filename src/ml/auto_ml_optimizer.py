@@ -387,11 +387,24 @@ class AutoMLOptimizer:
 
         if len(all_numbers) < 100:
             return 0.0
-        
-        # 학습 및 검증
-        train_score = lstm_model.train_with_validation(all_numbers[:-20], all_numbers[-20:])
-        
-        return train_score
+
+        # Optuna가 탐색한 epochs 값 추출 (없으면 기본값 50)
+        epochs = params.get('epochs', 50)
+
+        # train()으로 epochs 전달 (train_with_validation은 epochs 미지원)
+        try:
+            lstm_model.train(all_numbers[:-20], epochs=epochs)
+        except Exception as e:
+            logging.warning(f"LSTM train() 실패: {e}")
+            return 0.0
+
+        # 검증 점수 계산 (evaluate_model 사용)
+        try:
+            metrics = lstm_model.evaluate_model(all_numbers[-20:])
+            return float(metrics.get('avg_match_rate', 0.0))
+        except Exception as e:
+            logging.warning(f"LSTM 검증 실패: {e}")
+            return 0.0
     
     def _validate_monte_carlo(self, mc_model) -> float:
         """Monte Carlo 모델 검증"""
@@ -405,18 +418,19 @@ class AutoMLOptimizer:
 
         score = 0
         for i in range(10):
-            predictions = mc_model.simulate(n_predictions=5)
-            
+            # simulate_combinations: List[Tuple[List[int], float]] 반환
+            predictions = mc_model.simulate_combinations(n_simulations=5)
+
             # 실제 번호를 튜플에서 추출하고 정수 리스트로 변환
             actual_str = recent_numbers[10+i][1]
             actual = [int(n) for n in actual_str.split(',')]
-            
-            # 상위 예측과 실제 번호 비교
+
+            # 상위 예측과 실제 번호 비교 (반환값: (조합, 점수) 튜플 리스트)
             if predictions and len(predictions) > 0:
-                best_prediction = predictions[0].get('numbers', [])
+                best_prediction = predictions[0][0]  # (조합, 점수) 중 조합 추출
                 matches = len(set(best_prediction) & set(actual))
                 score += matches
-        
+
         return score / 10 if score > 0 else 0.0
     
     def _save_optimization_history(self):

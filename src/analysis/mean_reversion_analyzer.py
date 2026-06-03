@@ -11,6 +11,35 @@ Mean Reversion (평균 회귀) 분석기
 4. 가중치 점수 제공 (점수화 시스템 연동)
 
 참고: 검토사항.txt의 "Mean Reversion" 권장사항 기반 구현
+
+---
+[N-W16] 파이프라인 미연결 - TODO
+현재 상태: 완전 구현됨, 예측 파이프라인에 미연결
+
+연결 방법 (main.py 예측 파이프라인에 추가 필요):
+    # 초기화
+    from src.analysis.mean_reversion_analyzer import MeanReversionAnalyzer
+    mean_reversion = MeanReversionAnalyzer(db_manager=db_manager)
+    mean_reversion.update_statistics()
+
+    # 예측 후 조합 점수화에 활용 (generate_final_predictions_enhanced 내부)
+    for combo in candidate_combinations:
+        mr_score = mean_reversion.calculate_combination_score(list(combo))
+        # mr_score['score'] 를 조합 가중치에 반영 (0-100 범위)
+
+    # 또는 풀 다양성 가중치로 활용
+    cold_numbers = [num for num, _ in mean_reversion.get_cold_numbers(top_n=15)]
+    reversion_signals = mean_reversion.get_reversion_signals()  # [(num, strength), ...]
+
+공개 API 요약:
+    - update_statistics(force=False)             : 통계 갱신
+    - get_cold_numbers(top_n=10)                 : 미출현 상위 번호 리스트
+    - get_hot_numbers(top_n=10)                  : 고빈도 번호 리스트
+    - get_reversion_signals(threshold=None)      : 회귀 시그널 번호 리스트
+    - calculate_combination_score(numbers)       : 조합의 MR 점수 (0-100)
+    - get_classification(number)                 : 번호 분류 ('hot'/'cold'/'neutral')
+    - get_number_stats(number)                   : 번호 상세 통계 딕셔너리
+---
 """
 
 from typing import Dict, List, Tuple, Optional, Any
@@ -420,19 +449,19 @@ if __name__ == "__main__":
     print("\n=== Mean Reversion 분석 ===")
     analyzer.update_statistics()
 
-    print("\n🔥 Hot Numbers (상위 10개):")
+    print("\n[HOT] Hot Numbers (상위 10개):")
     for num, stats in analyzer.get_hot_numbers(10):
         print(f"  {num:2d}: {stats['total_appearances']}회 출현 ({stats['rounds_since_appearance']}회차 전)")
 
-    print("\n❄️ Cold Numbers (하위 10개):")
+    print("\n[COLD] Cold Numbers (하위 10개):")
     for num, stats in analyzer.get_cold_numbers(10):
         print(f"  {num:2d}: {stats['total_appearances']}회 출현 ({stats['rounds_since_appearance']}회차 전)")
 
-    print("\n📈 Mean Reversion 시그널:")
+    print("\n[UP] Mean Reversion 시그널:")
     for num, strength in analyzer.get_reversion_signals()[:5]:
         print(f"  {num:2d}: 회귀 강도 {strength:.2f}")
 
-    print("\n🎯 추천 번호:")
+    print("\n[TARGET] 추천 번호:")
     print(f"  균형 전략: {analyzer.get_recommended_numbers(6, 'balanced')}")
     print(f"  냉각 우선: {analyzer.get_recommended_numbers(6, 'cold_bias')}")
     print(f"  회귀 우선: {analyzer.get_recommended_numbers(6, 'reversion')}")
@@ -440,7 +469,7 @@ if __name__ == "__main__":
     # 조합 점수 테스트
     test_combo = [3, 17, 25, 31, 38, 44]
     score_result = analyzer.calculate_combination_score(test_combo)
-    print(f"\n📊 조합 점수 ({test_combo}):")
+    print(f"\n[STAT] 조합 점수 ({test_combo}):")
     print(f"  점수: {score_result['score']:.1f}")
     print(f"  Hot/Cold/Neutral: {score_result['hot_count']}/{score_result['cold_count']}/{score_result['neutral_count']}")
     print(f"  평균 회귀 강도: {score_result['avg_reversion_strength']:.2f}")

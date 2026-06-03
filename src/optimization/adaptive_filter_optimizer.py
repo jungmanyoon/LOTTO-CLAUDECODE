@@ -387,7 +387,7 @@ class AdaptiveFilterOptimizer:
                         if filter_name in config['filters']['criteria']:
                             config['filters']['criteria'][filter_name].update(result['new_criteria'])
                             applied_filters.append(filter_name)
-                            logging.info(f"✅ {filter_name} 필터 설정 업데이트 완료")
+                            logging.info(f"[O] {filter_name} 필터 설정 업데이트 완료")
                     else:
                         # adaptive_filter_config.yaml에서 업데이트 시도
                         logging.debug(f"{filter_name}: config.yaml에 criteria 없음, adaptive_config 사용")

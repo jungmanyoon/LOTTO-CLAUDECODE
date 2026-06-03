@@ -106,7 +106,7 @@ class RealtimeLearningSystem:
         self.auto_restart_enabled = True  # 자동 재시작 활성화
         
         logging.info("실시간 학습 시스템 초기화 완료")
-        logging.info("✅ 자동 학습 안전장치 활성화: 1시간마다 상태 점검 및 자동 재시작")
+        logging.info("[O] 자동 학습 안전장치 활성화: 1시간마다 상태 점검 및 자동 재시작")
     
     def update_models_incrementally(self, models: Dict[str, Any], 
                                   new_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -145,10 +145,18 @@ class RealtimeLearningSystem:
                     continue
                 
                 update_results[model_type] = update_result
-                self.model_states[model_type]['last_update'] = datetime.now()
-                self.model_states[model_type]['update_count'] += 1
-                
-                logging.info(f"{model_type} 업데이트 완료: {update_result}")
+
+                # 실제 업데이트가 일어난 경우에만 카운트/완료 로깅 (거짓 성공 보고 금지)
+                # 성공 경로는 'updated' 키가 없거나 True, 실패/스킵은 명시적으로 'updated': False
+                if update_result.get('updated', True) is False:
+                    logging.warning(
+                        f"{model_type} 업데이트 건너뜀/실패: "
+                        f"{update_result.get('error') or update_result.get('message')}"
+                    )
+                else:
+                    self.model_states[model_type]['last_update'] = datetime.now()
+                    self.model_states[model_type]['update_count'] += 1
+                    logging.info(f"{model_type} 업데이트 완료: {update_result}")
         
         # 전체 업데이트 요약
         summary = self._create_update_summary(update_results)
@@ -328,46 +336,77 @@ class RealtimeLearningSystem:
         # 기존 성능 평가
         old_performance = self._evaluate_model_performance(ensemble_model, recent_data)
         
-        # 각 서브모델 부분 학습 (온라인 학습 지원 모델만)
+        # 각 서브모델 온라인 업데이트 (정식 학습과 동일하게 45차원 멀티라벨 사용)
+        # RF는 온라인 미지원. XGBoost(MultiOutputClassifier)는 booster-incremental 불가하므로
+        # 미니배치 전체 재학습, NN은 partial_fit. 실제 갱신된 모델만 추적한다.
+        updated_models = []
+        update_error = None
         try:
-            # 특징 데이터 생성
-            features = []
-            targets = []
+            # 1) 특징/타겟 구성: data[i]의 특징 -> data[i+1]의 당첨번호(45차원 이진)
+            number_strings = [','.join(map(str, d['numbers'])) for d in recent_data]
+            feat_df = ensemble_model.extract_features(number_strings)
 
+            if feat_df is None or len(feat_df) != len(recent_data) or len(recent_data) < 2:
+                # 특징 행이 입력과 정렬되지 않거나 데이터가 부족하면 정직하게 실패 처리
+                raise ValueError(
+                    f"특징/데이터 정렬 실패 또는 데이터 부족 "
+                    f"(features={0 if feat_df is None else len(feat_df)}, data={len(recent_data)})"
+                )
+
+            X = feat_df.values[:-1]  # data[0..N-2]의 특징
+            # 타겟: data[1..N-1]의 당첨번호를 45차원 이진 멀티라벨로 변환 (정식 규약)
+            y = np.zeros((len(recent_data) - 1, 45), dtype=np.int8)
             for i in range(len(recent_data) - 1):
-                # FIX: Convert list/tuple of integers to comma-separated string format
-                # ensemble_model.extract_features expects List[str] where each string is '1,2,3,4,5,6'
-                numbers_str = ','.join(map(str, recent_data[i]['numbers']))
-                feature = ensemble_model.extract_features([numbers_str])
-                target = recent_data[i + 1]['numbers']
-                features.append(feature[0])
-                targets.append(target)
-            
-            if features:
-                X = np.array(features)
-                y = np.array(targets)
-                
-                # Random Forest는 온라인 학습 미지원, XGBoost와 Neural Network만 업데이트
-                if hasattr(ensemble_model, 'xgb_model'):
-                    # XGBoost 부분 업데이트 (incremental learning)
-                    ensemble_model.xgb_model.fit(X, y, xgb_model=ensemble_model.xgb_model.get_booster())
-                
-                if hasattr(ensemble_model, 'nn_model'):
-                    # Neural Network 부분 업데이트
-                    ensemble_model.nn_model.partial_fit(X, y)
-        
+                for num in recent_data[i + 1]['numbers']:
+                    if 1 <= int(num) <= 45:
+                        y[i, int(num) - 1] = 1
+
+            # 정식 예측과 동일하게 스케일링 (학습 시 스케일된 특징을 사용했음)
+            scaler = getattr(ensemble_model, 'scalers', {}).get('features')
+            if scaler is not None and hasattr(scaler, 'mean_'):
+                X = scaler.transform(X)
+
+            models = getattr(ensemble_model, 'models', {}) or {}
+
+            # 2) XGBoost: MultiOutputClassifier라 미니배치 전체 재학습 (.fit)
+            if models.get('xgb') is not None:
+                try:
+                    models['xgb'].fit(X, y)
+                    updated_models.append('xgb')
+                except Exception as e_xgb:
+                    logging.debug(f"XGBoost 온라인 재학습 스킵: {e_xgb}")
+
+            # 3) Neural Network: partial_fit 지원 시에만 (이미 학습된 모델이라 classes 불필요)
+            nn_model = models.get('nn')
+            if nn_model is not None and hasattr(nn_model, 'partial_fit'):
+                try:
+                    nn_model.partial_fit(X, y)
+                    updated_models.append('nn')
+                except Exception as e_nn:
+                    logging.debug(f"NN partial_fit 스킵: {e_nn}")
+
         except Exception as e:
-            logging.warning(f"앙상블 모델 업데이트 중 오류: {e}")
-        
+            update_error = str(e)
+            logging.warning(f"앙상블 모델 업데이트 실패: {e}")
+
+        # 업데이트가 하나도 성공하지 못하면 거짓 성공을 보고하지 않는다.
+        if not updated_models:
+            return {
+                'updated': False,
+                'error': update_error or '온라인 학습 가능한 서브모델 없음(RF만 존재하거나 partial_fit 미지원)'
+            }
+
         # 새로운 성능 평가
         new_performance = self._evaluate_model_performance(ensemble_model, recent_data)
-        
+
         # 성능 기록
         if 'ensemble' not in self.performance_history:
             self.performance_history['ensemble'] = deque(maxlen=config.get('performance_window', 10))
         self.performance_history['ensemble'].append(new_performance)
-        
+
         return {
+            'updated': True,
+            'updated_models': updated_models,
             'old_performance': old_performance,
             'new_performance': new_performance,
             'improvement': new_performance - old_performance
@@ -436,7 +475,20 @@ class RealtimeLearningSystem:
         # 간단한 성능 평가: 최근 데이터로 예측하고 다음 데이터와 비교
         try:
             # 모델 종류에 따른 예측
-            if hasattr(model, 'predict_next_numbers'):
+            # 주의: Ensemble과 LSTM 모두 predict_next_numbers를 가지므로,
+            # Ensemble 전용 메서드 extract_features로 먼저 식별해야 한다.
+            # (extract_features는 Ensemble 계열에만 존재, LSTM에는 없음)
+            if hasattr(model, 'extract_features') and hasattr(model, 'predict_next_numbers'):
+                # Ensemble 모델: sequence_length 제약 없이 전체 데이터로 예측
+                winning_numbers = [','.join(map(str, d['numbers'])) for d in test_data]
+                predictions = model.predict_next_numbers(winning_numbers, num_predictions=1)
+                if predictions and len(predictions) > 0:
+                    prediction = predictions[0].get('numbers', [])
+                    if prediction and len(prediction) == 6:
+                        total_score = 0.15  # 기본 점수 향상
+                        count = 1
+
+            elif hasattr(model, 'predict_next_numbers'):
                 # LSTM 모델
                 winning_numbers = [','.join(map(str, d['numbers'])) for d in test_data]
                 # LSTM sequence_length 확인 (기본 50, 최소 10)
@@ -454,22 +506,12 @@ class RealtimeLearningSystem:
                     if prediction and len(prediction) == 6:
                         total_score = 0.15  # 기본 점수 향상 (0.1 → 0.15)
                         count = 1
-                        
-            elif hasattr(model, 'predict_next'):
-                # Ensemble 모델
-                winning_numbers = [','.join(map(str, d['numbers'])) for d in test_data]
-                predictions = model.predict_next_numbers(winning_numbers, num_predictions=1)
-                if predictions and len(predictions) > 0:
-                    prediction = predictions[0].get('numbers', [])
-                    if prediction and len(prediction) == 6:
-                        total_score = 0.15  # 기본 점수 향상
-                        count = 1
-                        
-            elif hasattr(model, 'simulate'):
-                # Monte Carlo 모델
-                simulations = model.simulate(n_predictions=1)
+
+            elif hasattr(model, 'simulate_combinations'):
+                # Monte Carlo 모델 (simulate_combinations: List[Tuple[List[int], float]] 반환)
+                simulations = model.simulate_combinations(n_simulations=1)
                 if simulations and len(simulations) > 0:
-                    prediction = simulations[0].get('numbers', [])
+                    prediction = simulations[0][0]  # (조합, 점수) 중 조합 추출
                     if prediction and len(prediction) == 6:
                         total_score = 0.15  # 기본 점수 향상
                         count = 1
@@ -478,9 +520,22 @@ class RealtimeLearningSystem:
             if len(test_data) >= 2:
                 last_actual = test_data[-1]['numbers']
                 prev_data = test_data[:-1]
-                
-                # 이전 데이터로 예측
-                if hasattr(model, 'predict_next_numbers'):
+
+                # 이전 데이터로 예측 (모델 종류별 분기)
+                # Ensemble은 extract_features로 먼저 식별 (LSTM과 predict_next_numbers를 공유하므로)
+                if hasattr(model, 'extract_features') and hasattr(model, 'predict_next_numbers'):
+                    # Ensemble 모델: sequence_length 제약 없이 이전 데이터 전체로 예측
+                    winning_numbers = [','.join(map(str, d['numbers'])) for d in prev_data]
+                    predictions = model.predict_next_numbers(winning_numbers, num_predictions=1)
+                    if predictions and len(predictions) > 0:
+                        prediction = predictions[0].get('numbers', [])
+                        if prediction:
+                            matches = len(set(prediction) & set(last_actual))
+                            total_score = matches / 6.0
+                            count = 1
+                            logging.debug(f"앙상블 성능 평가: {matches}/6 매치")
+
+                elif hasattr(model, 'predict_next_numbers'):
                     winning_numbers = [','.join(map(str, d['numbers'])) for d in prev_data]
                     # LSTM sequence_length 확인 (기본 50, 최소 10)
                     sequence_length = getattr(model, 'sequence_length', 50)
@@ -685,7 +740,7 @@ class RealtimeLearningSystem:
         
         # 정기 상태 점검 (1시간마다)
         if time_since_check >= self.health_check_interval:
-            logging.info("🔍 실시간 학습 시스템 정기 상태 점검 시작...")
+            logging.info("[SEARCH] 실시간 학습 시스템 정기 상태 점검 시작...")
             
             # 1. 모델별 최근 업데이트 상태 확인
             for model_type, state in self.model_states.items():
@@ -722,16 +777,16 @@ class RealtimeLearningSystem:
             
             if health_report['issues']:
                 health_report['status'] = 'issues_detected'
-                logging.warning(f"⚠️ 실시간 학습 시스템에서 {len(health_report['issues'])}개 문제 발견")
+                logging.warning(f"[WARN] 실시간 학습 시스템에서 {len(health_report['issues'])}개 문제 발견")
                 for issue in health_report['issues']:
                     logging.warning(f"  - {issue}")
                     
                 if health_report['actions_taken']:
-                    logging.info("🔧 자동 복구 조치 수행:")
+                    logging.info("[FIX] 자동 복구 조치 수행:")
                     for action in health_report['actions_taken']:
                         logging.info(f"  - {action}")
             else:
-                logging.info("✅ 실시간 학습 시스템 상태 양호")
+                logging.info("[O] 실시간 학습 시스템 상태 양호")
         
         return health_report
     
@@ -756,10 +811,10 @@ class RealtimeLearningSystem:
                 maxlen=config.get('performance_window', 10)
             )
             
-            logging.info(f"✅ {model_type} 모델 학습 재시작 완료")
+            logging.info(f"[O] {model_type} 모델 학습 재시작 완료")
             
         except Exception as e:
-            logging.error(f"❌ {model_type} 모델 학습 재시작 실패: {e}")
+            logging.error(f"[X] {model_type} 모델 학습 재시작 실패: {e}")
     
     def _reinitialize_buffer(self, model_type: str):
         """학습 버퍼 재초기화"""
@@ -782,19 +837,19 @@ class RealtimeLearningSystem:
                             'numbers': numbers
                         })
                     
-                    logging.info(f"✅ {model_type} 학습 버퍼 재초기화 완료 ({len(self.learning_buffers[model_type])}개 데이터)")
+                    logging.info(f"[O] {model_type} 학습 버퍼 재초기화 완료 ({len(self.learning_buffers[model_type])}개 데이터)")
                 
             except Exception as e:
-                logging.warning(f"⚠️ {model_type} 버퍼 데이터 로드 실패: {e}")
+                logging.warning(f"[WARN] {model_type} 버퍼 데이터 로드 실패: {e}")
                 
         except Exception as e:
-            logging.error(f"❌ {model_type} 학습 버퍼 재초기화 실패: {e}")
+            logging.error(f"[X] {model_type} 학습 버퍼 재초기화 실패: {e}")
     
     def enable_auto_restart(self, enabled: bool = True):
         """자동 재시작 기능 활성화/비활성화"""
         self.auto_restart_enabled = enabled
         status = "활성화" if enabled else "비활성화"
-        logging.info(f"🔄 자동 재시작 기능 {status}")
+        logging.info(f"[SYNC] 자동 재시작 기능 {status}")
     
     def get_health_status(self) -> Dict[str, Any]:
         """현재 시스템 건강 상태 반환"""

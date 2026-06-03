@@ -39,6 +39,12 @@ PRIMES_1_45 = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43}
 class ExtremenessScorer:
     """단일 극단성 점수 기반 풀 제어 엔진."""
 
+    # 전체 조합 배열 캐시 (클래스 레벨).
+    # all_combinations()는 params와 무관한 순수 상수 배열(8.14M x 6 int8 ~49MB)이므로
+    # 최초 1회만 생성하고 이후 재사용한다. PoolOptimizer가 trial마다 호출하던
+    # np.fromiter 전수 재생성(+GC 압박)을 제거한다. (결과 배열 동일성 보장: 동일 입력->동일 출력)
+    _ALL_COMBINATIONS_CACHE: Optional[np.ndarray] = None
+
     # 마할라노비스에 쓰는 연속/순서형 특징 (완전상관 변수는 하나만: average는 sum과 100% 상관 -> 제외)
     CONTINUOUS_FEATURES = [
         'sum', 'std', 'max_gap', 'range', 'odd_count',
@@ -67,14 +73,23 @@ class ExtremenessScorer:
     # ------------------------------------------------------------------
     # 조합 생성 / 특징 추출 (벡터화)
     # ------------------------------------------------------------------
-    @staticmethod
-    def all_combinations() -> np.ndarray:
-        """전체 C(45,6) 조합을 (8145060, 6) int8 배열로 생성 (오름차순)."""
-        arr = np.fromiter(
-            (n for combo in combinations(range(1, 46), 6) for n in combo),
-            dtype=np.int8, count=TOTAL_COMBINATIONS * 6,
-        )
-        return arr.reshape(TOTAL_COMBINATIONS, 6)
+    @classmethod
+    def all_combinations(cls) -> np.ndarray:
+        """전체 C(45,6) 조합을 (8145060, 6) int8 배열로 생성 (오름차순).
+
+        params 무관 상수 배열이므로 클래스 레벨 캐시에 1회 생성 후 재사용한다.
+        반환 배열은 읽기 전용(writeable=False)으로 표시하여 캐시 오염을 방지한다
+        (score() 등은 내부에서 _to_array로 astype 복사하므로 원본을 변형하지 않음).
+        """
+        if cls._ALL_COMBINATIONS_CACHE is None:
+            arr = np.fromiter(
+                (n for combo in combinations(range(1, 46), 6) for n in combo),
+                dtype=np.int8, count=TOTAL_COMBINATIONS * 6,
+            )
+            arr = arr.reshape(TOTAL_COMBINATIONS, 6)
+            arr.setflags(write=False)  # 캐시 무결성 보호 (호출자 우발 변형 차단)
+            cls._ALL_COMBINATIONS_CACHE = arr
+        return cls._ALL_COMBINATIONS_CACHE
 
     @staticmethod
     def _to_array(combos) -> np.ndarray:
@@ -233,8 +248,9 @@ class ExtremenessScorer:
             table = self._penalty_tables[dim]
             default = max(table.values())  # 미관측 값은 최대 페널티
             vals = disc[dim]
-            pen = np.array([table.get(int(v), default) for v in np.unique(vals)], dtype=np.float32)
+            # np.unique를 한 번만 계산해 pen/lut 모두 재사용 (결과 불변, 효율 개선)
             uniq = np.unique(vals)
+            pen = np.array([table.get(int(v), default) for v in uniq], dtype=np.float32)
             lut = {int(u): pen[i] for i, u in enumerate(uniq)}
             out += w * np.array([lut[int(v)] for v in vals], dtype=np.float32)
         return out

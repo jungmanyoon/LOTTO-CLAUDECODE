@@ -41,6 +41,11 @@ class SystemStateManager:
         """
         [NEW] NEW: WeeklyCycleManager 설정 (나중에 설정 가능)
 
+        [automation-1] 주의: WeeklyCycleManager는 UnifiedOptimizer(단일 백그라운드 최적화)로
+        대체되었으며 현재 main.py에서 의도적으로 주입하지 않는다(아래 on_new_round_detected 훅은
+        weekly_cycle_manager가 None이라 휴면 상태). 이 메서드로 주입하면 ThresholdOptimizer.optimize를
+        반복하는 무한 학습 스레드가 추가로 떠 UnifiedOptimizer와 중복되므로 경고를 남긴다.
+
         Args:
             weekly_cycle_manager: WeeklyCycleManager 인스턴스
             backtesting_func: 백테스팅 함수 (선택)
@@ -48,7 +53,10 @@ class SystemStateManager:
         self.weekly_cycle_manager = weekly_cycle_manager
         if backtesting_func:
             self.backtesting_func = backtesting_func
-        logging.info("[SystemStateManager] WeeklyCycleManager 설정 완료")
+        logging.warning(
+            "[SystemStateManager] WeeklyCycleManager 주입됨 - 주의: UnifiedOptimizer와 "
+            "백그라운드 최적화가 중복될 수 있음(automation-1 참조)"
+        )
 
     def _load_state(self) -> Dict[str, Any]:
         """상태 파일 로드"""

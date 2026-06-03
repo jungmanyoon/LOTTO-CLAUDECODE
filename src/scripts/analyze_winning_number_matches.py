@@ -171,7 +171,7 @@ def main():
             # 차이 분석
             if percentage > 0:
                 diff = ((percentage - theoretical_prob) / theoretical_prob) * 100
-                print(f"  → 이론값 대비: {diff:+.2f}%")
+                print(f"  -> 이론값 대비: {diff:+.2f}%")
     
     # 2. 5개 이상 일치 사례 상세 분석
     print("\n" + "="*60)
@@ -197,7 +197,7 @@ def main():
     
     if not high_match_found:
         print("5개 이상 일치하는 사례가 없습니다.")
-        print("→ Match 필터의 max_match=5 기준은 타당합니다.")
+        print("-> Match 필터의 max_match=5 기준은 타당합니다.")
     
     # 3. 4개 일치 사례 분석
     print("\n" + "="*60)
@@ -235,7 +235,7 @@ def main():
     if consecutive_analysis['high_matches']:
         print(f"\n연속 회차에서 3개 이상 일치 사례: {len(consecutive_analysis['high_matches'])}건")
         for case in consecutive_analysis['high_matches'][:5]:
-            print(f"  - {case['rounds'][0]}회차 → {case['rounds'][1]}회차: "
+            print(f"  - {case['rounds'][0]}회차 -> {case['rounds'][1]}회차: "
                   f"{case['matches']}개 일치 (공통: {case['common']})")
     
     # 5. Match 필터 기준 제안
@@ -247,17 +247,17 @@ def main():
     print("\n분석 결과 기반 제안:")
     
     if 6 not in match_distribution or not match_distribution[6]:
-        print("• 6개 일치(완전 일치): 발생 사례 없음 → 필터링 불필요")
+        print("- 6개 일치(완전 일치): 발생 사례 없음 -> 필터링 불필요")
     
     if 5 not in match_distribution or not match_distribution[5]:
-        print("• 5개 일치: 발생 사례 없음 → max_match=5 설정 타당")
+        print("- 5개 일치: 발생 사례 없음 -> max_match=5 설정 타당")
     else:
-        print(f"• 5개 일치: {len(match_distribution[5])}건 발생 → max_match=5 재검토 필요")
+        print(f"- 5개 일치: {len(match_distribution[5])}건 발생 -> max_match=5 재검토 필요")
     
     if 4 in match_distribution:
         four_match_prob = (len(match_distribution[4]) / total_pairs) * 100
         if four_match_prob < 0.1:  # 0.1% 미만
-            print(f"• 4개 일치: {four_match_prob:.4f}% → max_match=4도 고려 가능")
+            print(f"- 4개 일치: {four_match_prob:.4f}% -> max_match=4도 고려 가능")
     
     # 결과 저장
     analysis_result = {
@@ -278,7 +278,7 @@ def main():
     with open('analyze_system/match_analysis_result.json', 'w', encoding='utf-8') as f:
         json.dump(analysis_result, f, ensure_ascii=False, indent=2)
     
-    print("\n✅ 분석 결과가 analyze_system/match_analysis_result.json에 저장되었습니다.")
+    print("\n[O] 분석 결과가 analyze_system/match_analysis_result.json에 저장되었습니다.")
 
 if __name__ == "__main__":
     main()

@@ -503,7 +503,9 @@ class {class_name}:
                         size = file_path.stat().st_size
                         total_size += size
                         file_count += 1
-                    except Exception:
+                    except Exception as e:
+                        # [health-repair-7] 개별 파일 stat 실패는 건너뛰되 원인을 debug로 남긴다
+                        self.logger.debug(f"파일 크기 측정 건너뜀({file_path}): {e}")
                         continue
 
             total_size_mb = total_size / (1024 * 1024)
@@ -548,7 +550,9 @@ class {class_name}:
                             file_path.unlink()
                             cleaned_size += size
 
-                    except Exception:
+                    except Exception as e:
+                        # [health-repair-7] 개별 캐시 파일 삭제 실패는 건너뛰되 원인을 debug로 남긴다
+                        self.logger.debug(f"캐시 파일 정리 건너뜀({file_path}): {e}")
                         continue
 
             return cleaned_size / (1024 * 1024)  # MB 단위로 반환
@@ -616,9 +620,10 @@ class {class_name}:
                         cursor.execute("SELECT COUNT(*) FROM filtered_combinations WHERE included = 1")
                         filtered_count = cursor.fetchone()[0]
                     else:
-                        # included 컬럼이 없는 경우 전체 count 확인
-                        cursor.execute("SELECT COUNT(*) FROM filtered_combinations")
-                        filtered_count = cursor.fetchone()[0]
+                        # [health-repair-6] included 컬럼이 없으면 '통과 풀 크기'를 알 수 없다.
+                        # 전체 COUNT(*)를 통과 풀로 간주하면 풀 크기를 과대평가해 거짓 '정상'을
+                        # 보고하므로, None 센티넬로 '검증 불가'를 표시하고 정상/부족 판정에서 제외한다.
+                        filtered_count = None
 
             except sqlite3.Error as e:
                 self.logger.warning(f"필터링된 조합 테이블 쿼리 실패: {e}")
@@ -626,7 +631,16 @@ class {class_name}:
 
             conn.close()
 
-            if filtered_count < self.thresholds['filtered_pool_min_size']:
+            if filtered_count is None:
+                # [health-repair-6] 통과 풀 크기 검증 보류(스키마에 included 컬럼 없음) - 정상/부족 판정에서 제외
+                self.health_results.append(HealthCheckResult(
+                    check_name="Filtered Pool",
+                    priority=Priority.MEDIUM,
+                    status=True,
+                    message="필터링된 풀 검증 불가: filtered_combinations에 'included' 컬럼이 없어 통과 조합 수를 판정할 수 없음",
+                    recovery_action="included 컬럼을 포함하도록 스키마 마이그레이션 또는 재필터링 필요"
+                ))
+            elif filtered_count < self.thresholds['filtered_pool_min_size']:
                 self.health_results.append(HealthCheckResult(
                     check_name="Filtered Pool",
                     priority=Priority.HIGH,
@@ -748,7 +762,9 @@ class {class_name}:
                     if size_mb > self.thresholds['log_file_mb']:
                         oversized_logs.append((log_file.name, size_mb))
 
-                except Exception:
+                except Exception as e:
+                    # [health-repair-7] 개별 로그 파일 점검 실패는 건너뛰되 원인을 debug로 남긴다
+                    self.logger.debug(f"로그 파일 점검 건너뜀({log_file}): {e}")
                     continue
 
             if oversized_logs:
@@ -1116,7 +1132,9 @@ class {class_name}:
             cache_dir = self.project_root / 'cache'
             cleaned_size = self._clean_old_cache_files(cache_dir)
             return cleaned_size > 0
-        except Exception:
+        except Exception as e:
+            # [health-repair-7] 복구 실패를 삼키지 말고 원인을 남긴다
+            self.logger.warning(f"캐시 크기 문제 자동복구 실패: {e}")
             return False
 
     def _fix_memory_issue(self) -> bool:
@@ -1124,7 +1142,9 @@ class {class_name}:
         try:
             gc.collect()
             return True
-        except Exception:
+        except Exception as e:
+            # [health-repair-7] 복구 실패를 삼키지 말고 원인을 남긴다
+            self.logger.warning(f"메모리 문제 자동복구 실패: {e}")
             return False
 
     def _fix_log_file_issue(self) -> bool:
@@ -1143,7 +1163,9 @@ class {class_name}:
                 return rotated_count > 0
 
             return True
-        except Exception:
+        except Exception as e:
+            # [health-repair-7] 복구 실패를 삼키지 말고 원인을 남긴다
+            self.logger.warning(f"로그 파일 문제 자동복구 실패: {e}")
             return False
 
     def _fix_disk_space_issue(self) -> bool:
@@ -1154,7 +1176,9 @@ class {class_name}:
             log_cleaned = self._fix_log_file_issue()
 
             return cache_cleaned or log_cleaned
-        except Exception:
+        except Exception as e:
+            # [health-repair-7] 복구 실패를 삼키지 말고 원인을 남긴다
+            self.logger.warning(f"디스크 공간 문제 자동복구 실패: {e}")
             return False
 
     def schedule_periodic_checks(self, interval_hours: int = 6):

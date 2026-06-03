@@ -49,11 +49,11 @@ def add_indexes_to_db(db_path: str, indexes: list) -> dict:
                 # 인덱스 생성
                 cursor.execute(sql)
                 result['created'].append(idx_name)
-                logger.info(f"✅ 인덱스 생성: {idx_name}")
+                logger.info(f"[O] 인덱스 생성: {idx_name}")
 
             except Exception as e:
                 result['failed'].append((idx_name, str(e)))
-                logger.error(f"❌ 인덱스 생성 실패 ({idx_name}): {e}")
+                logger.error(f"[X] 인덱스 생성 실패 ({idx_name}): {e}")
 
         conn.commit()
         conn.close()
@@ -183,9 +183,9 @@ def main():
     logger.info("\n" + "=" * 60)
     logger.info("인덱스 추가 완료!")
     logger.info("=" * 60)
-    logger.info(f"✅ 생성됨: {total_stats['created']}개")
-    logger.info(f"⏭️ 건너뜀 (이미 존재): {total_stats['skipped']}개")
-    logger.info(f"❌ 실패: {total_stats['failed']}개")
+    logger.info(f"[O] 생성됨: {total_stats['created']}개")
+    logger.info(f"[-] 건너뜀 (이미 존재): {total_stats['skipped']}개")
+    logger.info(f"[X] 실패: {total_stats['failed']}개")
 
     return total_stats
 

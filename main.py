@@ -380,27 +380,14 @@ class SystemHealthChecker:
                 if os.path.exists(config_file):
                     try:
                         with open(config_file, 'r', encoding='utf-8') as f:
-                            config = yaml.safe_load(f)
-                            
-                        # 워커 수 일관성 점검
-                        if 'filter_manager' in config:
-                            worker_count = config.get('filter_manager', {}).get('parallel_workers', 8)
-                            if worker_count != 14:  # 최적값으로 통일
-                                self.issues_found.append({
-                                    'type': 'config_inconsistency',
-                                    'details': f'워커 수 불일치: {worker_count} → 14 필요',
-                                    'repair': lambda cf=config_file: self._repair_config_inconsistency(cf)
-                                })
-                                
-                        # 배치 크기 점검
-                        batch_size = config.get('batch_size', 1000)
-                        if batch_size < 10000:  # 최적값
-                            self.issues_found.append({
-                                'type': 'batch_size_small',
-                                'details': f'배치 크기 작음: {batch_size} → 10000 권장',
-                                'repair': lambda cf=config_file: self._repair_config_inconsistency(cf)
-                            })
-                            
+                            yaml.safe_load(f)  # 문법 검증 목적 로드 (YAMLError는 아래에서 처리)
+
+                        # [health-repair-2 제거] 워커수/배치크기 "일관성" 자동수정 폐지.
+                        # 과거: parallel_workers != 14 또는 batch_size < 10000 이면 config.yaml을
+                        #   yaml.dump로 통째 재작성(주석/구조 파괴 + batch_size 60000->10000 덮어쓰기) +
+                        #   timestamp 백업 무한 생성. 하드코딩 14는 실제 권장값(12)과도 불일치였다.
+                        # config.yaml은 사용자가 직접 관리하는 단일 소스이므로 자동 재작성하지 않는다.
+
                     except yaml.YAMLError as e:
                         self.issues_found.append({
                             'type': 'invalid_config_syntax',
@@ -712,49 +699,11 @@ class SystemHealthChecker:
             self.logger.error(f"multiple 필터 임계값 조정 실패: {e}")
             return False
     
-    def _repair_config_inconsistency(self, config_file: str) -> bool:
-        """설정 파일 불일치 복구 (워커 수, 배치 크기 통일)"""
-        try:
-            # 백업 생성
-            backup_file = f"{config_file}.backup_{int(time.time())}"
-            import shutil
-            shutil.copy2(config_file, backup_file)
-            
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-            
-            # 워커 수 통일 (14개)
-            if 'filter_manager' in config:
-                old_workers = config.get('filter_manager', {}).get('parallel_workers', 8)
-                config.setdefault('filter_manager', {})['parallel_workers'] = 14
-                self.logger.info(f"워커 수 조정: {old_workers} → 14")
-            else:
-                config['filter_manager'] = {'parallel_workers': 14}
-                self.logger.info("워커 수 설정: 14")
-                
-            # 배치 크기 통일 (10000)
-            old_batch = config.get('batch_size', 1000)
-            config['batch_size'] = 10000
-            self.logger.info(f"배치 크기 조정: {old_batch} → 10000")
-            
-            # 기타 최적화 설정
-            if 'filtering' not in config:
-                config['filtering'] = {}
-            config['filtering']['use_parallel'] = True
-            config['filtering']['max_workers'] = 14
-            config['filtering']['batch_size'] = 10000
-            
-            # 수정된 설정 저장
-            with open(config_file, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-                
-            self.logger.info(f"[OK] {config_file} 설정 일관성 복구 완료")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"설정 파일 불일치 복구 실패: {e}")
-            return False
-    
+    # [health-repair-2 제거] _repair_config_inconsistency 메서드 삭제.
+    # config.yaml을 yaml.dump로 재작성하여 주석/구조를 파괴하고 batch_size를
+    # 60000->10000으로 덮어쓰며 워커수를 14로 강제하던 파괴적 자동복구였다.
+    # 호출처(_check_configuration_files의 일관성 트리거)와 함께 제거됨.
+
     def _repair_permissions(self, dir_name: str) -> bool:
         """파일 권한 복구"""
         try:
@@ -884,6 +833,7 @@ class AutoRepairSystem:
         self.monitoring = False
         self.repair_history = []
         self._last_memory_warning_time = 0  # 메모리 경고 쿨다운 타임스탬프
+        self._last_memory_repair_warning_time = 0  # 메모리 복구 무효 경고 쿨다운
 
     def start_monitoring(self):
         """실시간 모니터링 시작"""
@@ -1027,48 +977,91 @@ class AutoRepairSystem:
                 self.logger.error(f"자동 복구 오류 {issue}: {e}")
                 
     def _repair_database_connection(self) -> bool:
-        """데이터베이스 연결 문제 복구"""
+        """데이터베이스 연결 문제 복구 (싱글톤 제자리 재초기화)
+
+        주의: DatabaseManager는 싱글톤이라 DatabaseManager()는 '새 인스턴스'가 아니라
+        기존과 동일한 인스턴스를 반환한다. 따라서 단순 재할당만으로는 재연결 효과가 없다.
+        실제 재연결은 다음 순서로 이루어진다.
+          1) close_all_connections()가 lotto_db/combinations_db 등 속성을 삭제
+          2) DatabaseManager() 호출 시 __init__이 hasattr(self,'lotto_db')==False를 보고
+             '제자리에서' 연결을 다시 만든다 (동일 객체이므로 다른 참조에도 그대로 반영)
+        반환값은 재초기화로 핵심 연결이 실제 복구됐는지 실측해 판정한다(거짓 성공 금지).
+        """
         try:
-            # 데이터베이스 재연결 시도
-            if self.db_manager:
-                self.db_manager.close_all_connections()
-                time.sleep(2)
-                
-                # 새 연결 생성
-                from src.core.db_manager import DatabaseManager
-                self.db_manager = DatabaseManager()
-                
+            if not self.db_manager:
+                self.logger.warning("DB 매니저 참조가 없어 연결 복구를 건너뜁니다.")
+                return False
+
+            # 1) 기존 연결 종료(속성 삭제) -> 2) 동일 싱글톤 제자리 재초기화
+            self.db_manager.close_all_connections()
+            time.sleep(2)
+            from src.core.db_manager import DatabaseManager
+            # 동일 싱글톤 객체를 재초기화한다(다른 참조도 같은 객체이므로 자동 반영)
+            self.db_manager = DatabaseManager()
+
+            # 재연결 실측: 핵심 DB 속성이 복구되고 간단한 조회가 동작하는지 확인
+            if not hasattr(self.db_manager, 'lotto_db'):
+                self.logger.error("DB 재초기화 후에도 핵심 연결(lotto_db)이 복구되지 않았습니다.")
+                return False
+            # 가벼운 조회로 실제 동작 확인
+            self.db_manager.get_last_round()
+            self.logger.info("[OK] 데이터베이스 연결 복구 완료(싱글톤 제자리 재초기화)")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"데이터베이스 연결 복구 실패: {e}")
             return False
             
     def _repair_high_memory_usage(self) -> bool:
-        """높은 메모리 사용량 복구"""
+        """높은 메모리 사용량 복구 (복구 후 실측으로 성공 판정 - 거짓 성공 보고 금지)"""
         try:
-            # 캐시 정리
+            import psutil
+            mem_before = psutil.virtual_memory().percent
+        except Exception:
+            mem_before = None
+
+        try:
+            # 1) 가비지 컬렉션 (주의: 이 프로세스 메모리만 회수됨)
             import gc
             gc.collect()
-            
-            # 모델 캐시 정리
+
+            # 2) 모델 캐시의 임시(.tmp) 파일 정리
             cache_dir = 'cache/models'
             if os.path.exists(cache_dir):
-                import shutil
-                temp_files = []
                 for root, dirs, files in os.walk(cache_dir):
                     for file in files:
                         if file.endswith('.tmp'):
-                            temp_files.append(os.path.join(root, file))
-                            
-                for temp_file in temp_files:
-                    try:
-                        os.remove(temp_file)
-                    except:
-                        pass
-                        
-            return True
-            
+                            try:
+                                os.remove(os.path.join(root, file))
+                            except OSError:
+                                pass
+
+            # 3) 복구 효과 실측 -> 실제 하락 여부로 성공 판정
+            if mem_before is None:
+                self.logger.warning("psutil 미사용으로 메모리 복구 효과를 측정할 수 없습니다.")
+                return False
+
+            import psutil  # mem_before is not None -> 위에서 import 성공 보장
+            mem_after = psutil.virtual_memory().percent
+
+            if mem_after < 90:
+                self.logger.info(f"[OK] 메모리 복구: {mem_before:.1f}% -> {mem_after:.1f}%")
+                return True
+            if mem_before - mem_after >= 2.0:
+                self.logger.info(f"메모리 일부 회수: {mem_before:.1f}% -> {mem_after:.1f}% (여전히 높음)")
+                return True
+
+            # gc로 회수되지 않음 -> 외부 프로세스이거나 대형 배치/캐시. 거짓 성공 보고하지 않는다.
+            now = time.time()
+            if now - self._last_memory_repair_warning_time >= 600:
+                self.logger.warning(
+                    f"메모리 회수 미미: {mem_before:.1f}% -> {mem_after:.1f}%. "
+                    f"gc로 해소 불가(외부 프로세스이거나 대형 배치/캐시). "
+                    f"config.yaml batch_size 축소 또는 'python src/scripts/clear_model_cache.py' 권장."
+                )
+                self._last_memory_repair_warning_time = now
+            return False
+
         except Exception as e:
             self.logger.error(f"메모리 정리 실패: {e}")
             return False
@@ -1137,102 +1130,6 @@ def _is_duplicate_prediction(numbers, existing_predictions):
         if set(pred['numbers']) == numbers_set:
             return True
     return False
-
-
-def _generate_pattern_variants(failed_numbers, filtered_combos):
-    """비슷한 패턴의 다른 조합 생성"""
-    try:
-        variants = []
-        failed_features = extract_combination_features(failed_numbers)
-        if not failed_features:
-            return []
-
-        # 동일한 홀짝 패턴을 가진 조합들 찾기
-        target_odd_count = failed_features['odd_count']
-        target_sum_range = (failed_features['sum_total'] - 15, failed_features['sum_total'] + 15)
-
-        for combo_str in filtered_combos[:1500]:
-            try:
-                numbers = [int(n) for n in combo_str.split(',')]
-                features = extract_combination_features(numbers)
-                if (features and
-                    features['odd_count'] == target_odd_count and
-                    target_sum_range[0] <= features['sum_total'] <= target_sum_range[1]):
-
-                    # 직접 매칭 점수
-                    match_score = len(set(failed_numbers) & set(numbers)) / 6.0
-
-                    variants.append({
-                        'numbers': sorted(numbers),
-                        'match_score': match_score,
-                        'pattern_similarity': 0.8 + match_score * 0.2
-                    })
-            except:
-                continue
-
-        # 매칭 점수 순으로 정렬
-        variants.sort(key=lambda x: x['match_score'], reverse=True)
-        return variants[:3]
-
-    except Exception as e:
-        logging.error(f"패턴 변형 생성 실패: {str(e)}")
-        return []
-
-
-def _adjust_ml_prediction(failed_numbers, filtered_combos):
-    """ML 예측을 필터 통과 가능하도록 조정"""
-    try:
-        if not filtered_combos:
-            return None
-
-        # 실패한 예측에서 일부 수자를 교체하여 필터링된 조합에 가까이 만들기
-        failed_set = set(failed_numbers)
-
-        # 필터링된 조합에서 자주 등장하는 수자들 찾기
-        number_frequency = {}
-        for combo_str in filtered_combos[:500]:
-            try:
-                numbers = [int(n) for n in combo_str.split(',')]
-                for num in numbers:
-                    number_frequency[num] = number_frequency.get(num, 0) + 1
-            except:
-                continue
-
-        # 빈도순으로 정렬
-        frequent_numbers = sorted(number_frequency.items(), key=lambda x: x[1], reverse=True)
-
-        # 실패한 예측에서 가장 문제가 될 수 있는 수자들을 교체
-        adjusted = failed_numbers.copy()
-
-        # 가장 적게 등장하는 수자 1-2개를 자주 등장하는 수자로 교체
-        replaced_count = 0
-        for i, num in enumerate(adjusted):
-            if replaced_count >= 2:  # 최대 2개까지만 교체
-                break
-
-            # 현재 수자의 빈도가 평균보다 낮으면 교체 후보
-            current_freq = number_frequency.get(num, 0)
-            avg_freq = sum(number_frequency.values()) / len(number_frequency) if number_frequency else 0
-
-            if current_freq < avg_freq * 0.5:  # 평균의 50% 미만이면 교체
-                # 가장 빈도가 높은 수자 중 아직 사용하지 않은 것으로 교체
-                for freq_num, freq in frequent_numbers:
-                    if freq_num not in adjusted:
-                        adjusted[i] = freq_num
-                        replaced_count += 1
-                        break
-
-        # 조정된 결과가 유효한지 확인
-        if (len(set(adjusted)) == 6 and
-            all(1 <= n <= 45 for n in adjusted) and
-            set(adjusted) != failed_set):  # 원본과 달라야 함
-            return sorted(adjusted)
-
-        return None
-
-    except Exception as e:
-        logging.error(f"ML 예측 조정 실패: {str(e)}")
-        return None
 
 
 def generate_final_predictions_enhanced(db_manager, filter_manager, ml_predictions=None, num_sets=5, use_ml_priority_mode=True):
@@ -1347,7 +1244,11 @@ def generate_final_predictions_enhanced(db_manager, filter_manager, ml_predictio
                 prediction_confidence = pred.get('confidence', 0)
 
                 # 동적 완화 레벨 계산 (포함률이 낮으면 더 관대하게)
-                current_inclusion_rate = ml_inclusion_stats['passed'] / max(i, 1)
+                # 분모는 '지금까지 평가를 마친 예측 수'(= 현재 인덱스 i)로 명확히 한다.
+                # 첫 예측(i=0)은 아직 평가 표본이 없으므로 포함률을 0.0으로 두어
+                # max(i,1) 사용 시 발생하던 첫 예측 포함률 과대평가를 제거한다.
+                processed = i  # indices 0..i-1 만 이미 평가 완료
+                current_inclusion_rate = (ml_inclusion_stats['passed'] / processed) if processed > 0 else 0.0
                 need_more_relaxation = current_inclusion_rate < target_inclusion_rate
 
                 # 완화 레벨 결정 (3단계)
@@ -1859,6 +1760,22 @@ def combine_ml_predictions(lstm_predictions=None, ensemble_predictions=None,
         # 점수가 높은 번호들을 기반으로 조합 생성
         sorted_numbers = sorted(number_scores.items(), key=lambda x: x[1], reverse=True)
 
+        def _ensure_six(nums):
+            """선택 번호가 6개 미만이면 1~45 실제 번호 범위에서 보충해 항상 6개 보장.
+
+            NO FAKE: 더미값이 아니라 실제 로또 번호 범위(1~45) 중 아직 선택되지 않은
+            번호에서 균등 무작위로 보충한다. 모집단(고유 번호)이 6개 미만이라 전략이
+            조용히 실패(예외->continue)하던 문제를 방지.
+            """
+            unique = list(dict.fromkeys(int(n) for n in nums))  # 중복 제거(순서 유지)
+            if len(unique) >= 6:
+                return sorted(unique[:6])
+            remaining = [n for n in range(1, 46) if n not in unique]
+            if remaining:
+                need = 6 - len(unique)
+                unique.extend(random.sample(remaining, min(need, len(remaining))))
+            return sorted(unique[:6])
+
         # 다양한 전략으로 Combined 예측 생성
         strategies = [
             'top_scored',      # 최고 점수 번호들
@@ -1871,21 +1788,23 @@ def combine_ml_predictions(lstm_predictions=None, ensemble_predictions=None,
         for i, strategy in enumerate(strategies[:num_combined]):
             try:
                 if strategy == 'top_scored':
-                    # 상위 점수 번호 6개 선택
+                    # 상위 점수 번호 중 6개 선택 (모집단 부족 시 _ensure_six가 1~45에서 보충)
                     selected = [num for num, score in sorted_numbers[:8]]
-                    numbers = sorted(random.sample(selected, 6))
+                    picked = random.sample(selected, min(6, len(selected)))
+                    numbers = _ensure_six(picked)
 
                 elif strategy == 'balanced':
                     # 고점수 + 중간점수 + 저점수 균형
+                    # 각 구간이 비어 있을 수 있으므로 요청 개수를 구간 크기로 클램프
                     high = [num for num, score in sorted_numbers[:15]]
                     mid = [num for num, score in sorted_numbers[15:30]]
                     low = [num for num, score in sorted_numbers[30:45]]
 
                     numbers = []
-                    numbers.extend(random.sample(high, 3))
-                    numbers.extend(random.sample(mid, 2))
-                    numbers.extend(random.sample(low, 1))
-                    numbers = sorted(numbers)
+                    numbers.extend(random.sample(high, min(3, len(high))))
+                    numbers.extend(random.sample(mid, min(2, len(mid))))
+                    numbers.extend(random.sample(low, min(1, len(low))))
+                    numbers = _ensure_six(numbers)
 
                 elif strategy == 'model_consensus':
                     # 가장 많은 모델이 예측한 번호들 우선
@@ -1896,28 +1815,37 @@ def combine_ml_predictions(lstm_predictions=None, ensemble_predictions=None,
 
                     consensus_numbers = sorted(number_count.items(), key=lambda x: x[1], reverse=True)
                     selected = [num for num, count in consensus_numbers[:12]]
-                    numbers = sorted(random.sample(selected, 6))
+                    picked = random.sample(selected, min(6, len(selected)))
+                    numbers = _ensure_six(picked)
 
                 elif strategy == 'hybrid_random':
                     # 상위 점수와 랜덤 조합
                     high_scored = [num for num, score in sorted_numbers[:20]]
-                    numbers = random.sample(high_scored, 4)
+                    numbers = random.sample(high_scored, min(4, len(high_scored)))
 
-                    # 나머지 2개는 완전 랜덤
+                    # 나머지는 1~45 실제 범위에서 보충 (목표 6개)
                     remaining = [n for n in range(1, 46) if n not in numbers]
-                    numbers.extend(random.sample(remaining, 2))
-                    numbers = sorted(numbers)
+                    need = 6 - len(numbers)
+                    if need > 0 and remaining:
+                        numbers.extend(random.sample(remaining, min(need, len(remaining))))
+                    numbers = _ensure_six(numbers)
 
                 else:  # weighted_sample
-                    # 가중치 기반 샘플링
-                    weights = [score for num, score in sorted_numbers]
-                    selected_indices = np.random.choice(
-                        len(sorted_numbers),
-                        size=6,
-                        replace=False,
-                        p=np.array(weights) / sum(weights)
-                    )
-                    numbers = sorted([sorted_numbers[idx][0] for idx in selected_indices])
+                    # 가중치 기반 샘플링 (모집단이 6개 미만이면 가능한 만큼만 뽑고 보충)
+                    weights = np.array([score for num, score in sorted_numbers], dtype=float)
+                    weight_sum = weights.sum()
+                    sample_size = min(6, len(sorted_numbers))
+                    if sample_size > 0 and weight_sum > 0:
+                        selected_indices = np.random.choice(
+                            len(sorted_numbers),
+                            size=sample_size,
+                            replace=False,
+                            p=weights / weight_sum
+                        )
+                        picked = [sorted_numbers[idx][0] for idx in selected_indices]
+                    else:
+                        picked = [num for num, score in sorted_numbers[:sample_size]]
+                    numbers = _ensure_six(picked)
 
                 # 신뢰도 계산 (참여 모델 수와 평균 신뢰도 기반)
                 avg_confidence = sum(pred.get('confidence', 0) for pred in all_predictions) / len(all_predictions)
@@ -2051,169 +1979,6 @@ def analyze_number_characteristics(numbers):
     except Exception as e:
         logging.error(f"특성 분석 실패: {str(e)}")
         return characteristics
-
-
-def extract_combination_features(numbers):
-    """조합의 특성을 수치화하여 추출 (유사도 계산용)"""
-    try:
-        # numpy array를 리스트로 변환
-        if hasattr(numbers, 'tolist'):
-            numbers = numbers.tolist()
-        numbers = [int(n) for n in numbers]
-        numbers = sorted(numbers)
-        
-        # 특성 추출
-        features = {
-            'odd_count': sum(1 for n in numbers if n % 2 == 1),
-            'even_count': sum(1 for n in numbers if n % 2 == 0),
-            'sum_total': sum(numbers),
-            'average': sum(numbers) / 6,
-            'min_value': min(numbers),
-            'max_value': max(numbers),
-            'range': max(numbers) - min(numbers),
-            'consecutive_count': sum(1 for i in range(len(numbers)-1) if numbers[i+1] - numbers[i] == 1),
-            'sections': [0, 0, 0, 0, 0]  # 1-9, 10-19, 20-29, 30-39, 40-45
-        }
-        
-        # 구간별 개수
-        for num in numbers:
-            if num <= 9:
-                features['sections'][0] += 1
-            elif num <= 19:
-                features['sections'][1] += 1
-            elif num <= 29:
-                features['sections'][2] += 1
-            elif num <= 39:
-                features['sections'][3] += 1
-            else:
-                features['sections'][4] += 1
-        
-        return features
-    except Exception as e:
-        logging.error(f"특성 추출 실패: {str(e)}")
-        return None
-
-
-def calculate_similarity_score(features1, features2):
-    """두 조합의 특성 기반 유사도 점수 계산 (0~1)"""
-    if not features1 or not features2:
-        return 0
-    
-    score = 0
-    weights = {
-        'odd_count': 0.15,
-        'even_count': 0.15,
-        'sum_total': 0.15,
-        'average': 0.10,
-        'range': 0.10,
-        'consecutive_count': 0.10,
-        'sections': 0.25
-    }
-    
-    # 홀짝 개수 비교
-    if features1['odd_count'] == features2['odd_count']:
-        score += weights['odd_count']
-    elif abs(features1['odd_count'] - features2['odd_count']) == 1:
-        score += weights['odd_count'] * 0.5
-    
-    # 합계 비교 (±10 범위)
-    sum_diff = abs(features1['sum_total'] - features2['sum_total'])
-    if sum_diff <= 10:
-        score += weights['sum_total'] * (1 - sum_diff / 30)
-    
-    # 평균 비교
-    avg_diff = abs(features1['average'] - features2['average'])
-    if avg_diff <= 5:
-        score += weights['average'] * (1 - avg_diff / 15)
-    
-    # 범위 비교
-    range_diff = abs(features1['range'] - features2['range'])
-    if range_diff <= 10:
-        score += weights['range'] * (1 - range_diff / 30)
-    
-    # 연속 번호 개수 비교
-    if features1['consecutive_count'] == features2['consecutive_count']:
-        score += weights['consecutive_count']
-    elif abs(features1['consecutive_count'] - features2['consecutive_count']) == 1:
-        score += weights['consecutive_count'] * 0.5
-    
-    # 구간 분포 비교
-    section_score = 0
-    for i in range(5):
-        if features1['sections'][i] == features2['sections'][i]:
-            section_score += 0.2
-        elif abs(features1['sections'][i] - features2['sections'][i]) == 1:
-            section_score += 0.1
-    score += weights['sections'] * section_score
-    
-    return min(1.0, score)
-
-
-def find_similar_combinations(ml_prediction, filtered_combos, top_n=5):
-    """개선된 유사 조합 찾기 - 다양한 유사도 기준 사용"""
-    try:
-        ml_features = extract_combination_features(ml_prediction)
-        if not ml_features:
-            return []
-
-        similar_combos = []
-        ml_set = set(ml_prediction)
-
-        # 모든 필터링된 조합과 다양한 유사도 계산
-        for combo_str in filtered_combos[:2000]:  # 최대 2000개로 증가
-            try:
-                numbers = [int(n) for n in combo_str.split(',')]
-                combo_features = extract_combination_features(numbers)
-                if combo_features:
-                    # 1. 기존 특성 기반 유사도
-                    feature_similarity = calculate_similarity_score(ml_features, combo_features)
-
-                    # 2. 직접 수자 매칭 유사도
-                    combo_set = set(numbers)
-                    direct_match = len(ml_set & combo_set) / 6.0
-
-                    # 3. 근접 수자 유사도 (인접한 수자들도 고려)
-                    proximity_score = 0
-                    for ml_num in ml_prediction:
-                        for combo_num in numbers:
-                            if abs(ml_num - combo_num) <= 2:  # 인접한 수자 (+/-2 범위)
-                                proximity_score += 1
-                    proximity_similarity = min(1.0, proximity_score / 12.0)  # 정규화
-
-                    # 4. 종합 유사도 계산 (가중평균)
-                    combined_similarity = (
-                        feature_similarity * 0.4 +      # 특성 유사도
-                        direct_match * 0.4 +            # 직접 매칭
-                        proximity_similarity * 0.2      # 근접 유사도
-                    )
-
-                    similar_combos.append({
-                        'numbers': sorted(numbers),
-                        'similarity': combined_similarity,
-                        'feature_sim': feature_similarity,
-                        'direct_match': direct_match,
-                        'proximity_sim': proximity_similarity,
-                        'combo_str': combo_str
-                    })
-            except:
-                continue
-
-        # 종합 유사도 순으로 정렬
-        similar_combos.sort(key=lambda x: x['similarity'], reverse=True)
-
-        # 상위 N개 반환 (유사도 0.3 이상만)
-        result = [combo for combo in similar_combos[:top_n] if combo['similarity'] > 0.3]
-
-        if result:
-            logging.debug(f"ML 예측 {ml_prediction}에 대한 상위 유사 조합:")
-            for i, combo in enumerate(result[:3]):
-                logging.debug(f"  {i+1}. {combo['numbers']} (종합:{combo['similarity']:.3f}, 매칭:{combo['direct_match']:.2f})")
-
-        return result
-
-    except Exception as e:
-        logging.error(f"유사 조합 찾기 실패: {str(e)}")
-        return []
 
 
 def parse_args():
@@ -2351,7 +2116,9 @@ def start_web_dashboard(port=5001):
         try:
             webbrowser.open(f'http://127.0.0.1:{port}')
             print("[대시보드] 브라우저가 자동으로 열렸습니다.")
-        except:
+        except Exception as e:
+            # [health-repair-7] 베어 except 제거 - 자동 열기 실패 원인을 debug로 남긴다
+            logging.debug(f"브라우저 자동 열기 실패: {e}")
             print(f"[대시보드] 브라우저를 수동으로 열어주세요: http://127.0.0.1:{port}")
             
     except ImportError:
@@ -2448,8 +2215,9 @@ def run_24h_automation(db_manager, config_manager, args, auto_repair_system=None
                 logging.info(f"  설정변경: {status['stats']['config_changes']}회")
                 logging.info(f"  새회차: {status['stats']['new_rounds_detected']}회")
                 logging.info("="*60)
-            except:
-                pass
+            except Exception as e:
+                # [health-repair-7] 베어 except 제거 - 상태 출력 실패 원인을 debug로 남긴다
+                logging.debug(f"시스템 상태 출력 실패: {e}")
         
         def stop(self):
             if self.coordinator:
@@ -2508,9 +2276,24 @@ def main():
                     logging.info("[AutoScheduler] 스케줄러 종료 완료")
                 except Exception:
                     pass
+
+            # [dashboard-monitoring-3] EnsemblePerformanceMonitor 최종 영속화
+            # (record_prediction 주기적 flush 외에, 종료 시 마지막 부분 배치까지 저장)
+            try:
+                from src.monitoring.ensemble_monitor import get_ensemble_monitor
+                get_ensemble_monitor().save_history()
+                logging.info("[EnsembleMonitor] 히스토리 최종 저장 완료")
+            except Exception:
+                pass
         except Exception as e:
             logging.error(f"종료 처리 중 오류: {e}")
-    
+
+        # 시그널(Ctrl+C=SIGINT / SIGTERM)로 호출된 경우, 핸들러가 반환만 하면
+        # 메인 흐름이 계속 진행되어 즉시 멈추지 않는다. 실제로 프로세스를 종료한다 (orchestration-2).
+        # atexit 경로(signum=None)에서는 sys.exit 재진입이 혼란을 유발하므로 제외.
+        if signum is not None:
+            sys.exit(0)
+
     # 신호 핸들러 등록
     signal.signal(signal.SIGINT, graceful_shutdown)  # Ctrl+C
     signal.signal(signal.SIGTERM, graceful_shutdown)  # 종료 신호
@@ -2641,7 +2424,9 @@ def main():
         try:
             _eps = ErrorPreventionSystem()
             _eps_result = _eps.run_comprehensive_check()
-            _critical = [r for r in _eps_result.get('results', []) if not r.get('status', True)]
+            # run_comprehensive_check()는 실패 항목을 최상위 'failed_checks' 리스트로 반환한다.
+            # (과거 'results' 키 + boolean status 비교는 존재하지 않는 키라 항상 빈 리스트 -> 복구 미실행 버그)
+            _critical = _eps_result.get('failed_checks', [])
             if _critical:
                 logging.warning(f"[ErrorPrevention] {len(_critical)}개 잠재적 문제 감지 - 자동 복구 시도")
                 _eps.auto_fix_issues()
@@ -3392,7 +3177,7 @@ def main():
                 if args.lstm and ML_AVAILABLE:
                     try:
                         logging.info("\n[LSTM] 시계열 예측 모델 실행...")
-                        lstm_predictor = LSTMPredictor(sequence_length=50)
+                        lstm_predictor = LSTMPredictor(sequence_length=15)  # [ml-lstm-ensemble-6] ML-003: 50->15 단일소스(lstm_predictor 기본값)와 일치
                         
                         # 모델 학습 (필요시)
                         if not lstm_predictor.is_trained:
@@ -3406,7 +3191,7 @@ def main():
                         
                         # 예측 수행
                         lstm_predictions = lstm_predictor.predict_next_numbers(
-                            winning_numbers[-50:], 
+                            winning_numbers[-15:],  # [ml-lstm-ensemble-6] sequence_length=15와 결합 정합
                             num_predictions=args.predictions
                         )
                         
@@ -3681,8 +3466,11 @@ def main():
                     if filtered_count_after > 0:
                         logging.info(f"[O] 필터링 재실행 성공: {filtered_count_after:,}개 조합 생성")
                     else:
-                        logging.error(f"[X] 필터링 재실행 실패: 여전히 0개 조합")
-                        logging.info("  - 백테스팅은 이전 회차 데이터를 사용합니다")
+                        # [filters-16-6] 재필터링 후에도 0개 = 임계값 과강에 의한 '정상적 과제거' 가능성.
+                        # 같은 임계값으로는 반복해도 0개이므로 추가 재시도 없이 직전 풀로 진행한다.
+                        logging.warning(f"[X] 재필터링 후에도 0개 - 임계값 과강에 의한 과제거 가능성")
+                        logging.info("  - 추가 재시도 없이 백테스팅은 이전 회차 풀을 사용합니다 "
+                                     "(global_probability_threshold를 낮추면 풀이 복구됩니다)")
 
                 except Exception as regen_error:
                     logging.error(f"[X] 필터링 재실행 중 오류: {regen_error}")
@@ -4224,8 +4012,9 @@ def main():
         try:
             import matplotlib.pyplot as plt
             plt.close('all')
-        except:
-            pass
+        except Exception as e:
+            # [health-repair-7] 베어 except 제거 - 정리 실패는 무시 가능하나 원인을 debug로 남긴다
+            logging.debug(f"matplotlib 정리 실패(무시 가능): {e}")
 
 def _apply_hybrid_filtering(numbers, filter_manager, db_manager, relaxation_level, ml_threshold=None):
     """
@@ -4257,20 +4046,25 @@ def _apply_hybrid_filtering(numbers, filter_manager, db_manager, relaxation_leve
             1: {  # 기본 완화
                 'critical_only': ['odd_even'],
                 'skip_filters': ['consecutive', 'match', 'pattern'],
-                'relaxed_threshold': ml_threshold * 2,  # 0.6%
+                # relaxed_threshold = ml_threshold x 2 (예: 기준값 0.3% 가정 시 0.6%).
+                # 실제 값은 ThresholdManager의 동적 ml_relaxed_threshold에 비례.
+                'relaxed_threshold': ml_threshold * 2,
                 'max_failures': 2
             },
             2: {  # 중간 완화
                 'critical_only': ['odd_even'],
                 'skip_filters': ['consecutive', 'match', 'pattern', 'frequency', 'recent'],
-                'relaxed_threshold': ml_threshold,  # 0.3%
+                # relaxed_threshold = ml_threshold x 1 (동적 기준값 그대로 사용).
+                'relaxed_threshold': ml_threshold,
                 'max_failures': 1
             },
             3: {  # 최고 완화 (고신뢰도 ML용)
                 'critical_only': ['odd_even'],
                 'skip_filters': ['consecutive', 'match', 'pattern', 'frequency', 'recent',
                                'multiple', 'ten_section', 'digit_sum', 'arithmetic_sequence'],
-                'relaxed_threshold': ml_threshold * 0.5,  # 0.15%
+                # relaxed_threshold = ml_threshold x 0.5 (예: 기준값 0.3% 가정 시 0.15%).
+                # 실제 값은 ThresholdManager의 동적 ml_relaxed_threshold에 비례.
+                'relaxed_threshold': ml_threshold * 0.5,
                 'max_failures': 0
             }
         }

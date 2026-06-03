@@ -67,7 +67,7 @@ def integrate_super_ensemble():
     with open('config.yaml', 'w', encoding='utf-8') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
     
-    logging.info("✅ config.yaml 업데이트 완료")
+    logging.info("[O] config.yaml 업데이트 완료")
     
     # 2. 앙상블 구성 파일 생성
     ensemble_config = {
@@ -200,7 +200,7 @@ def integrate_super_ensemble():
     with open('models/ensemble/super_ensemble_config.json', 'w', encoding='utf-8') as f:
         json.dump(ensemble_config, f, indent=2, ensure_ascii=False)
     
-    logging.info("✅ 슈퍼 앙상블 구성 파일 생성 완료")
+    logging.info("[O] 슈퍼 앙상블 구성 파일 생성 완료")
     
     # 3. 모델 가중치 초기화
     initial_weights = {
@@ -232,7 +232,7 @@ def integrate_super_ensemble():
     with open('models/ensemble/model_weights.json', 'w', encoding='utf-8') as f:
         json.dump(weights_file, f, indent=2, ensure_ascii=False)
     
-    logging.info("✅ 모델 가중치 초기화 완료")
+    logging.info("[O] 모델 가중치 초기화 완료")
     
     # 4. requirements.txt 업데이트
     new_requirements = [
@@ -254,13 +254,13 @@ def integrate_super_ensemble():
     with open('requirements.txt', 'w', encoding='utf-8') as f:
         f.write('\n'.join(sorted(current_reqs)))
     
-    logging.info("✅ requirements.txt 업데이트 완료")
+    logging.info("[O] requirements.txt 업데이트 완료")
     
     # 5. 통합 완료 메시지
     summary = """
     === 슈퍼 앙상블 통합 완료 ===
     
-    ✅ 통합된 모델 (총 13개):
+    [O] 통합된 모델 (총 13개):
        - 기존: LSTM, Classic Ensemble
        - Boosting: GradientBoosting, LightGBM, CatBoost
        - Tree: ExtraTrees
@@ -268,13 +268,13 @@ def integrate_super_ensemble():
        - Deep Learning: Transformer, Hybrid(CNN+LSTM+Attention)
        - Quantum: Quantum-Inspired Model
     
-    ✅ 주요 개선사항:
+    [O] 주요 개선사항:
        - 모델 다양성 433% 증가 (3개 → 13개)
        - 앙상블 투표 방식: 가중 투표 + 스태킹
        - 성능 기반 동적 가중치 조정
        - 모델별 전문 영역 활용
     
-    ✅ 다음 단계:
+    [O] 다음 단계:
        1. pip install -r requirements.txt (새 패키지 설치)
        2. 슈퍼 앙상블 학습 실행
        3. 백테스팅으로 성능 검증

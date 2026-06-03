@@ -71,8 +71,8 @@ def analyze_duplicate_probability():
    - 불필요하게 {excluded_by_filters - draws_so_far:,}개를 더 제외함
    
    문제 2: 통계적 근거 부족
-   - "연속 4개 이상 제외" → 하지만 언젠가는 나올 수 있음
-   - "홀수 6개 제외" → 확률은 낮지만 가능함
+   - "연속 4개 이상 제외" -> 하지만 언젠가는 나올 수 있음
+   - "홀수 6개 제외" -> 확률은 낮지만 가능함
    
    문제 3: 확률 개선 미미
    - {improvement:.6f}% 개선은 사실상 무의미
@@ -113,22 +113,22 @@ def analyze_duplicate_probability():
         n += 1
     
     print(f"   - 50% 확률로 중복 발생: 약 {n:,}회 추첨 후")
-    print(f"   - 현재 {draws_so_far:,}회 → 중복 확률 {(1 - math.exp(-draws_so_far**2 / (2*total_combinations)))*100:.2f}%")
+    print(f"   - 현재 {draws_so_far:,}회 -> 중복 확률 {(1 - math.exp(-draws_so_far**2 / (2*total_combinations)))*100:.2f}%")
     print(f"   - 매주 1회 추첨 시: 약 {n//52:,}년 후 첫 중복 예상")
     
     # 결론
     print(f"\n8. 결론")
     print(f"""
-   ✅ 맞는 부분:
+   [O] 맞는 부분:
    - 기존 조합 제외는 수학적으로 타당
    - 확률이 아주 약간 개선됨 (0.014%)
    
-   ❌ 틀린 부분:
+   [X] 틀린 부분:
    - 다른 필터들은 과도하고 근거 부족
    - 복잡한 ML/AI는 무의미
    - 개선 효과가 너무 미미함
    
-   💡 현실적 조언:
+   [TIP] 현실적 조언:
    - 단순히 기존 {draws_so_far:,}개만 제외하면 충분
    - 나머지는 모두 동일한 확률
    - 복잡한 시스템은 불필요

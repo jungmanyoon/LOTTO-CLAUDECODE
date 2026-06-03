@@ -285,7 +285,7 @@ class LogOptimizer:
         if self.metric_violations:
             report.append("\n[메트릭 위반 사항]")
             for violation in self.metric_violations:
-                severity_icon = "🔴" if violation['severity'] == 'CRITICAL' else "🟡"
+                severity_icon = "[RED]" if violation['severity'] == 'CRITICAL' else "[YELLOW]"
                 report.append(f"{severity_icon} {violation['message']}")
                 report.append(f"   현재값: {violation['value']:.2f}, 임계값: {violation['threshold']:.2f}")
         

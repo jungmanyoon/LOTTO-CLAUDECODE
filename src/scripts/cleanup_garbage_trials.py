@@ -44,7 +44,8 @@ def cleanup_optuna_study(db_path: str = "data/threshold_optimization.db", score_
         cursor.execute("SELECT COUNT(*) FROM trial_values")
         total_count = cursor.fetchone()[0]
 
-        logger.info(f"[Optuna] score < {score_threshold} trial: {garbage_count}/{total_count}개 ({garbage_count/total_count*100:.1f}%)")
+        pct = (garbage_count / total_count * 100) if total_count > 0 else 0.0
+        logger.info(f"[Optuna] score < {score_threshold} trial: {garbage_count}/{total_count}개 ({pct:.1f}%)")
 
         if garbage_count == 0:
             logger.info("[Optuna] 정리할 데이터 없음")
@@ -86,11 +87,14 @@ def cleanup_optuna_study(db_path: str = "data/threshold_optimization.db", score_
         conn.close()
 
 
-def cleanup_continuous_improvement(db_path: str = "data/continuous_improvement.db", dry_run: bool = True):
-    """continuous_improvement.db에서 비정상 레코드 삭제
+def cleanup_continuous_improvement(db_path: str = "data/optimization.db", dry_run: bool = True):
+    """optimization.db (구: continuous_improvement.db)에서 비정상 레코드 삭제
+
+    [N-W20] 수정: data/continuous_improvement.db → data/optimization.db
+    (Phase 2 리팩토링에서 continuous_improvement.db가 optimization.db로 통합됨)
 
     Args:
-        db_path: DB 경로
+        db_path: DB 경로 (기본값: data/optimization.db)
         dry_run: True면 실제 변경 없이 확인만
     """
     if not os.path.exists(db_path):

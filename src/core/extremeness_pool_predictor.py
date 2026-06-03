@@ -115,7 +115,13 @@ class ExtremenessPoolPredictor:
 
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         try:
-            np.savez_compressed(cache_path, combos=self._pool_combos, quality=self._pool_quality)
+            # 원자적 쓰기 (extremeness-pool-1): 임시파일에 쓴 뒤 os.replace로 교체.
+            # 동일 파라미터로 동시 build_pool(force) 시 부분 작성된 npz를 읽어
+            # 캐시가 깨지는 것을 방지한다. file 핸들로 넘겨 .npz 자동접미사 문제 회피.
+            tmp_cache = cache_path + '.tmp'
+            with open(tmp_cache, 'wb') as f:
+                np.savez_compressed(f, combos=self._pool_combos, quality=self._pool_quality)
+            os.replace(tmp_cache, cache_path)
         except Exception as e:
             self.logger.warning(f"[극단풀] 캐시 저장 실패({e})")
 
@@ -134,7 +140,13 @@ class ExtremenessPoolPredictor:
         any_pred = False
         items = []
         if isinstance(ml_predictions, dict):
+            # 'combined'은 개별 모델(lstm/ensemble/monte_carlo/bayesian/fractal)의 종합
+            # 결과이므로, 개별 모델과 함께 합산하면 같은 신호가 이중 카운팅된다.
+            # 따라서 dict 입력에서는 집계 키('combined')를 제외하고 개별 모델만 합산한다.
+            _aggregate_keys = {'combined'}
             for _m, preds in ml_predictions.items():
+                if _m in _aggregate_keys:
+                    continue
                 if preds:
                     items.extend(preds)
         elif isinstance(ml_predictions, list):

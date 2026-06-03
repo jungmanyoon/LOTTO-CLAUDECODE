@@ -413,7 +413,7 @@ def setup_logging(config_path: str = None):
         logging.error(f"로그 설정 중 오류 발생: {str(e)}")
         logging.warning("기본 로깅 설정을 사용합니다.")
 
-        # ✅ FIX: except 블록에서도 플래그 설정 (중복 호출 방지)
+        # [O] FIX: except 블록에서도 플래그 설정 (중복 호출 방지)
         setup_logging._initialized = True
 
     # 항상 로거 반환 (None 반환 버그 수정)

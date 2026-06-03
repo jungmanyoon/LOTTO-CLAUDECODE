@@ -435,7 +435,7 @@ def main():
     with open('analyze_system/dynamic_filter_report.json', 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     
-    print("\n✅ 분석 결과가 analyze_system/dynamic_filter_report.json에 저장되었습니다.")
+    print("\n[O] 분석 결과가 analyze_system/dynamic_filter_report.json에 저장되었습니다.")
 
 if __name__ == "__main__":
     main()

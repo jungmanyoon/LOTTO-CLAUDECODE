@@ -95,13 +95,13 @@ def continue_generation():
     
     conn.close()
     
-    print(f"\n✅ 저장 완료!")
+    print(f"\n[O] 저장 완료!")
     print(f"최종 조합 수: {final_count:,}개")
     
     if final_count == 8145060:
-        print("🎉 전체 8,145,060개 조합이 성공적으로 저장되었습니다!")
+        print("[O] 전체 8,145,060개 조합이 성공적으로 저장되었습니다!")
     else:
-        print(f"⚠️ {8145060 - final_count:,}개가 부족합니다.")
+        print(f"[WARN] {8145060 - final_count:,}개가 부족합니다.")
 
 if __name__ == "__main__":
     try:

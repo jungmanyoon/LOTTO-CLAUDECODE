@@ -59,7 +59,7 @@ def fix_cascade_filtering():
             after_count = len(remaining_combinations)
             removed = before_count - after_count
             
-            logging.info(f"{filter_name}: {before_count:,} → {after_count:,} "
+            logging.info(f"{filter_name}: {before_count:,} -> {after_count:,} "
                        f"({removed:,}개 제거, {removed/before_count*100:.1f}%)")
             
             # 조합이 너무 적으면 중단
@@ -183,7 +183,7 @@ def main():
     quick_script = create_quick_filter_script()
     
     print("\n" + "="*60)
-    print("🚨 긴급 개선사항")
+    print("[ALERT] 긴급 개선사항")
     print("="*60)
     
     print("\n1. 캐스케이드 필터링 문제:")
@@ -201,7 +201,7 @@ def main():
     print("   - 필터 결과 캐싱")
     print("   - 병렬 처리 최적화")
     
-    print("\n⚡ 즉시 적용 가능한 명령어:")
+    print("\n[FAST] 즉시 적용 가능한 명령어:")
     print("python quick_filter.py")
     print("="*60)
 

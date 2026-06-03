@@ -58,6 +58,9 @@ class DatabaseConnectionManager:
         conn = None
         retry_delay = 1.0
 
+        # Phase 1: 연결 생성 (retry 적용)
+        # FIX: @contextmanager는 yield를 1회만 허용하므로,
+        #       retry 루프는 연결 생성에만 적용하고 yield는 루프 밖에서 수행
         for attempt in range(max_retries):
             try:
                 # 연결 생성 - WAL 모드가 동시 접근을 내부적으로 처리
@@ -85,14 +88,18 @@ class DatabaseConnectionManager:
                 cursor.execute('PRAGMA locking_mode = NORMAL')
                 cursor.execute('PRAGMA foreign_keys = ON')
 
-                # 연결 반환
-                yield conn
-                break  # 성공시 루프 종료
+                break  # 연결 생성 성공, 루프 종료
 
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
                     wait_time = retry_delay * (attempt + 1) + random.uniform(0, 2)
                     logging.warning(f"데이터베이스 잠금 발생, 재시도 중... (시도 {attempt + 1}/{max_retries}, {wait_time:.1f}초 대기)")
+                    if conn:
+                        try:
+                            conn.close()
+                        except sqlite3.Error:
+                            pass
+                        conn = None
                     time.sleep(wait_time)
                 else:
                     logging.error(f"데이터베이스 연결 실패: {str(e)}")
@@ -100,13 +107,16 @@ class DatabaseConnectionManager:
             except Exception as e:
                 logging.error(f"예상치 못한 데이터베이스 연결 오류: {str(e)}")
                 raise
-            finally:
-                # 연결 정리
-                if conn:
-                    try:
-                        conn.close()
-                    except sqlite3.Error as e:
-                        logging.debug(f"연결 닫기 실패 (무시): {e}")
+
+        # Phase 2: 연결 사용 (caller에게 제공, retry 미적용)
+        try:
+            yield conn
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except sqlite3.Error as e:
+                    logging.debug(f"연결 닫기 실패 (무시): {e}")
 
     @staticmethod
     def execute_with_retry(db_path: str, query: str, params: tuple = None,
@@ -132,8 +142,11 @@ class DatabaseConnectionManager:
                     else:
                         cursor.execute(query)
                     
-                    # SELECT 쿼리인 경우 결과 반환
-                    if query.strip().upper().startswith('SELECT'):
+                    # FIX(db-5): query 문자열 prefix(startswith('SELECT')) 판별 제거.
+                    # cursor.description은 실행 후 결과셋(컬럼)이 존재할 때만 not None이 된다.
+                    # 이로써 SELECT뿐 아니라 WITH(CTE), PRAGMA(조회형) 등 결과셋을 반환하는
+                    # 모든 쿼리를 정확히 처리하고, 그 외(INSERT/UPDATE/DELETE/DDL 등)는 commit한다.
+                    if cursor.description is not None:
                         return cursor.fetchall()
                     else:
                         # FIX: DEFERRED 모드에서는 commit 필요

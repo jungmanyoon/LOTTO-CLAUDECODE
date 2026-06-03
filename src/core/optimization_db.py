@@ -165,6 +165,22 @@ class OptimizationDB:
                 "ON optimization_trials(session_date)"
             )
 
+            # [optimization-1] 스키마 수렴 마이그레이션:
+            # PerformanceTracker(continuous_improvement_engine)도 같은 data/optimization.db에
+            # performance_history/optimization_sessions를 '다른 스키마'로 CREATE IF NOT EXISTS 한다.
+            # 먼저 만든 쪽 스키마로 고정되므로, 누락될 수 있는 컬럼을 ALTER로 보강해
+            # 양쪽 INSERT가 "no such column"으로 실패하지 않도록 한다(멱등).
+            for _table, _ddl in [
+                ('performance_history', 'filter_pass_rate REAL'),
+                ('performance_history', 'is_best_pass_rate BOOLEAN DEFAULT 0'),
+                ('performance_history', "source TEXT DEFAULT 'unified_optimizer'"),
+                ('optimization_sessions', 'session_date TEXT'),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE {_table} ADD COLUMN {_ddl}")
+                except sqlite3.OperationalError:
+                    pass  # 이미 존재하는 컬럼은 무시
+
             conn.commit()
 
     # ─────────────────────────────────────────
@@ -206,6 +222,21 @@ class OptimizationDB:
 
     def save_performance(self, metrics: Dict) -> int:
         """성능 결과 저장, rowid 반환"""
+        # 0값 쓰레기 데이터 방어: avg_matches=0이면 저장 거부
+        avg = metrics.get('avg_matches', 0)
+        threshold = metrics.get('threshold', 0)
+        if avg == 0 and threshold == 0:
+            self.logger.warning(
+                f"[OptimizationDB] save_performance 거부: avg_matches=0, threshold=0 "
+                f"(source={metrics.get('source', 'unknown')}) - 쓰레기 데이터 차단"
+            )
+            return -1
+        if avg == 0:
+            self.logger.warning(
+                f"[OptimizationDB] save_performance 거부: avg_matches=0 "
+                f"(source={metrics.get('source', 'unknown')}) - 백테스팅 실패 데이터 차단"
+            )
+            return -1
         try:
             with sqlite3.connect(self.db_path, timeout=30) as conn:
                 conn.execute("PRAGMA journal_mode=WAL")

@@ -124,7 +124,15 @@ class DigitSumFilter(BaseFilter):
                 max_range=self._criteria.get("max_digit_sum_range", 100)
             )
         except Exception as e:
+            # [filters-16-7] 필터가 예외로 "비활성화됨"을 상위 통계에서 구분할 수 있도록 신호 설정.
+            # 이 플래그가 True면 아래 전체 통과 반환은 "정상 제거 0건"이 아니라 "필터 예외로 무력화"를 의미한다.
+            # 안전상 전체 통과 폴백은 유지한다(청크 전체 손실 방지).
+            self._apply_failed = True
             logging.error(f"자릿수 합계 필터링 중 오류 발생: {str(e)}")
+            logging.warning(
+                f"[FILTER-DISABLED] {self.get_filter_name()} 필터가 예외로 비활성화됨 "
+                f"(전체 {len(combinations):,}개 통과 폴백): {str(e)}"
+            )
             return combinations
 
     # 사전 계산된 자릿수 합 룩업 테이블 (인덱스 0~45)
@@ -193,5 +201,8 @@ class DigitSumFilter(BaseFilter):
         Returns:
             당첨 번호 목록의 목록
         """
-        numbers_data = self.db_manager.lotto_db.get_recent_numbers(count)
-        return [[int(n) for n in numbers.split(",")] for _, numbers, _ in numbers_data] 
+        # 공개 API 사용: lotto_db 내부 구현에 직접 접근하지 않음
+        raw_data = self.db_manager.get_numbers_with_bonus()
+        # 최근 count개만 추출하고, 보너스 번호 제외한 본번호 6개만 반환
+        recent_data = raw_data[-count:] if len(raw_data) >= count else raw_data
+        return [list(entry[1][:6]) for entry in recent_data]

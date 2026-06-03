@@ -123,24 +123,29 @@ class ConfigWatcher:
                 old_config = self.last_values.get(name, {})
                 new_config = self._load_config(path)
                 
-                logging.info(f"[ConfigWatcher] ⚠️ {name} 변경 감지!")
-                
+                logging.info(f"[ConfigWatcher] [WARN] {name} 변경 감지!")
+
                 # 변경 내용 분석
                 changes = self._analyze_changes(name, old_config, new_config)
-                
-                # 이력 저장
-                self.change_history.append({
-                    'timestamp': datetime.now().isoformat(),
-                    'file': name,
-                    'changes': changes,
-                    'old_hash': self.file_hashes.get(name, "")[:8],
-                    'new_hash': current_hash[:8]
-                })
-                
-                # 콜백 트리거
-                self._trigger_callbacks(name, changes)
-                
-                # 해시 및 값 업데이트
+
+                # 의미 있는 변경이 있을 때만 이력 저장 + 콜백 트리거
+                # (주석/공백만 바뀐 해시 변경, 또는 감시하지 않는 키 변경은
+                #  빈 changes가 되므로 빈 이력 누적을 막는다.)
+                if changes:
+                    # 이력 저장
+                    self.change_history.append({
+                        'timestamp': datetime.now().isoformat(),
+                        'file': name,
+                        'changes': changes,
+                        'old_hash': self.file_hashes.get(name, "")[:8],
+                        'new_hash': current_hash[:8]
+                    })
+
+                    # 콜백 트리거
+                    self._trigger_callbacks(name, changes)
+
+                # 해시 및 값 업데이트 (의미 변경 여부와 무관하게 항상 갱신해
+                # 동일 변경을 매 주기 재감지하지 않도록 한다)
                 self.file_hashes[name] = current_hash
                 self.last_values[name] = new_config
     
@@ -159,7 +164,7 @@ class ConfigWatcher:
                     'new': new_threshold,
                     'impact': 'full_refilter_required'
                 }
-                logging.warning(f"[ConfigWatcher] 🔴 Threshold 변경: {old_threshold} → {new_threshold}")
+                logging.warning(f"[ConfigWatcher] [RED] Threshold 변경: {old_threshold} -> {new_threshold}")
             
             # 필터 활성화 상태 확인
             old_filters = old_config.get('filters', {})
@@ -175,7 +180,7 @@ class ConfigWatcher:
             
             if filter_changes:
                 changes['filters'] = filter_changes
-                logging.warning(f"[ConfigWatcher] 🔴 필터 설정 변경: {list(filter_changes.keys())}")
+                logging.warning(f"[ConfigWatcher] [RED] 필터 설정 변경: {list(filter_changes.keys())}")
             
             # dynamic_criteria 확인
             old_criteria = old_config.get('dynamic_criteria', {})
@@ -187,15 +192,49 @@ class ConfigWatcher:
                     'new': new_criteria,
                     'impact': 'filter_update_required'
                 }
-                logging.warning("[ConfigWatcher] 🔴 동적 기준 변경")
-        
+                logging.warning("[ConfigWatcher] [RED] 동적 기준 변경")
+
+        elif config_name == 'main_config':
+            # config.yaml(시스템 설정) 변경 분석
+            # 워커/배치/최적화/필터매니저 등 시스템 운영 파라미터가 바뀌면
+            # 의미 있는 변경으로 기록하고 config_changed 콜백을 발화시킨다.
+            # (이전에는 adaptive_config 전용 분석이라 main_config 변경이 빈 changes로
+            #  무시되어 빈 이력만 누적되고 콜백도 발화되지 않았다.)
+            watched_keys = [
+                'max_workers', 'batch_size', 'optimization', 'filter_manager',
+                'filtering', 'ml_models', 'ml_prediction', 'backtesting',
+                'parallel_processing', 'performance', 'database', 'cache'
+            ]
+            section_changes = {}
+            for key in watched_keys:
+                old_val = old_config.get(key)
+                new_val = new_config.get(key)
+                if old_val != new_val:
+                    section_changes[key] = {'old': old_val, 'new': new_val}
+
+            if section_changes:
+                changes['main_config_sections'] = section_changes
+                changes['impact'] = 'system_settings_reload_recommended'
+                logging.warning(
+                    f"[ConfigWatcher] [RED] 시스템 설정 변경: {list(section_changes.keys())}"
+                )
+
         return changes
     
     def _trigger_callbacks(self, config_name: str, changes: Dict[str, Any]):
         """변경에 따른 콜백 트리거"""
         if not changes:
             return
-        
+
+        # YAML 변경 감지 즉시 ThresholdManager 런타임 갱신 (N-W17)
+        if config_name == 'adaptive_config':
+            try:
+                from src.core.threshold_manager import ThresholdManager
+                ThresholdManager.get_instance().load_from_config()
+                logging.info("[ConfigWatcher] ThresholdManager 런타임 갱신 완료")
+            except Exception as e:
+                logging.error(f"[ConfigWatcher] ThresholdManager 갱신 실패: {e}")
+
         # threshold 변경
         if 'global_probability_threshold' in changes:
             for callback in self.callbacks['threshold_changed']:

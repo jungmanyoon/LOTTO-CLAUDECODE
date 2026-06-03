@@ -442,7 +442,7 @@ python src/scripts/analyze_lotto_statistics.py      # Analyze historical pattern
 
 #### Filter System (16 filters)
 All inherit from `BaseFilter` in `src/filters/base_filter.py`:
-- **Critical filters** (always applied): odd_even, consecutive, sum_range, max_gap
+- **Filter activation** (filters 토글이 SSOT, 코드에 'critical 강제 등록' 로직 없음): `configs/adaptive_filter_config.yaml`의 `filters` 섹션에서 `enabled: true`인 필터만 등록됨(`filter_core.py`). **odd_even/max_gap은 의도적 비활성(false)** — odd_even(6홀/6짝 제외)은 실제 당첨번호 약 2.85%(35/1226회)를 제거하는 정기 출현 패턴이라 핵심전략("출현율 극히 낮은 극단만 제거")에 위배되어 끔. (max_gap=0.16%만 제거하는 진짜 극단이라 True 복원은 백테스트 후 별도 검토)
 - **Relaxable filters** (ML bypass): average, prime_composite, fixed_step, multiple, ten_section, digit_sum, dispersion, last_digit, arithmetic_sequence, geometric_sequence, section
 - **Adaptive system**: `AdaptiveProbabilityFilter` in `src/core/adaptive_probability_filter.py` updates criteria dynamically
 - **Management layers**:
@@ -451,7 +451,7 @@ All inherit from `BaseFilter` in `src/filters/base_filter.py`:
   - `AdaptiveFilterOptimizer` (`src/optimization/adaptive_filter_optimizer.py`): Automatic criteria optimization
 
 #### ML Models
-- **LSTM**: Time-series on 50-round sequences (`src/ml/lstm_predictor.py`)
+- **LSTM**: Time-series on 15-round sequences (ML-003: 50→15, 과적합 방지·메모리 절감; 단일소스=`lstm_predictor.py` 기본값) (`src/ml/lstm_predictor.py`)
 - **Ensemble**: RF + XGBoost + NN (`src/ml/ensemble_predictor.py`)
 - **Monte Carlo**: 6,000 simulations with 8 parallel workers (`src/probabilistic/monte_carlo_simulator.py`)
 - **Bayesian**: Probabilistic inference (`src/probabilistic/bayesian_inference.py`)

@@ -188,7 +188,15 @@ class FilterOrchestrator(IFilterOrchestrator):
             # 필터 적용
             filtered_combinations = self._apply_all_filters(combinations, latest_round, initial_count)
 
+            # [filters-16-6] 종료 요청/필터 실패는 None -> 저장 없이 실패 반환
             if filtered_combinations is None:
+                return False
+
+            # [filters-16-6] 빈 풀(과제거)은 []로 구분 - 직전 풀 보존(저장 스킵), 무의미한 빈 저장 방지
+            if len(filtered_combinations) == 0:
+                logging.warning(
+                    "[필터 풀 과제거] 통과 조합 0개 - 직전 회차 풀을 유지하고 저장을 건너뜁니다."
+                )
                 return False
 
             # 모든 필터 적용 완료 후 최종 결과를 DB에 저장
@@ -498,10 +506,14 @@ class FilterOrchestrator(IFilterOrchestrator):
                 )
                 pbar.update(1)
 
-                # 모든 조합이 필터링된 경우
+                # [filters-16-6] 모든 조합이 필터링된 경우(과제거): None(종료/실패)과 구분해 빈 리스트 반환
                 if len(filtered_combinations) == 0:
-                    logging.warning("모든 조합이 필터링되었습니다. 필터 기준을 조정하세요.")
-                    return None
+                    logging.warning(
+                        "[필터 풀 과제거] 모든 조합이 필터링되어 통과 0개입니다. "
+                        "제거 강도(임계값)가 과합니다 - 직전 회차 풀을 유지합니다. "
+                        "global_probability_threshold를 낮추면 강도를 되돌릴 수 있습니다."
+                    )
+                    return []
 
         return filtered_combinations
 

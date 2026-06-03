@@ -104,7 +104,7 @@ class AutomationCoordinator:
             )
             self.monitor_thread.start()
             
-            logging.info("[AutomationCoordinator] 🚀 24시간 자동화 시스템 가동")
+            logging.info("[AutomationCoordinator] [START] 24시간 자동화 시스템 가동")
     
     def stop(self):
         """자동화 시스템 중지"""
@@ -138,7 +138,7 @@ class AutomationCoordinator:
         
         logging.warning(f"""
         ╔════════════════════════════════════════╗
-        ║  🔴 THRESHOLD 변경 감지                ║
+        ║  [RED] THRESHOLD 변경 감지              ║
         ║  {old_value} → {new_value}             ║
         ║  전체 재필터링을 시작합니다...         ║
         ╚════════════════════════════════════════╝
@@ -172,7 +172,7 @@ class AutomationCoordinator:
         """새 회차 감지 처리"""
         logging.warning(f"""
         ╔════════════════════════════════════════╗
-        ║  🆕 새 회차 감지: {round_num}          ║
+        ║  [NEW] 새 회차 감지: {round_num}        ║
         ║  데이터 수집 및 재필터링 시작...       ║
         ╚════════════════════════════════════════╝
         """)
@@ -228,7 +228,7 @@ class AutomationCoordinator:
             if result.returncode == 0:
                 logging.info(f"""
                 ╔════════════════════════════════════════╗
-                ║  ✅ 재필터링 완료                      ║
+                ║  [O] 재필터링 완료                     ║
                 ║  소요 시간: {elapsed/60:.1f}분         ║
                 ║  이유: {reason}                        ║
                 ╚════════════════════════════════════════╝
@@ -262,7 +262,7 @@ class AutomationCoordinator:
             
             if result.returncode == 0:
                 self.stats['predictions_generated'] += 1
-                logging.info("[AutomationCoordinator] ✅ 예측 생성 완료")
+                logging.info("[AutomationCoordinator] [O] 예측 생성 완료")
             else:
                 logging.error(f"[AutomationCoordinator] 예측 생성 실패: {result.stderr}")
                 
@@ -319,7 +319,7 @@ class AutomationCoordinator:
         status = self.get_status()
         logging.info(f"""
         ╔════════════════════════════════════════╗
-        ║  📊 자동화 시스템 상태                 ║
+        ║  [STAT] 자동화 시스템 상태             ║
         ╠════════════════════════════════════════╣
         ║  설정 변경: {status['stats']['config_changes']}회
         ║  재필터링: {status['stats']['refilters_triggered']}회

@@ -56,7 +56,50 @@ class WeightedFilterSystem:
         # 동적 조정 파라미터
         self.min_winning_pass_rate = 0.7  # 최소 당첨번호 통과율 70%
         self.adjustment_factor = 0.9      # 조정 계수
-        
+
+        # Optuna에서 전달된 파라미터 저장 (update_config 참조용)
+        self.probability_threshold = 1.0
+        self.ml_bypass_filters = 10
+        self.ml_weight = 0.7
+
+    def update_config(self, probability_threshold: float = None,
+                      ml_bypass_filters: int = None, ml_weight: float = None):
+        """
+        Optuna에서 제안된 파라미터를 WeightedFilterSystem에 반영한다.
+
+        probability_threshold → pass_threshold 매핑:
+          낮은 임계값(0.3%) = 엄격한 필터링 = 높은 pass_threshold
+          높은 임계값(3.0%) = 관대한 필터링 = 낮은 pass_threshold
+          매핑 공식: pass_threshold = 60 - (threshold / 3.0) * 40
+          결과 범위: threshold=0.3 → ~56점, threshold=3.0 → 20점
+
+        Args:
+            probability_threshold: Optuna 확률 임계값 (0.3~3.0)
+            ml_bypass_filters: ML 바이패스 필터 수 (미사용 - 로그만)
+            ml_weight: ML 가중치 (미사용 - 로그만)
+        """
+        if probability_threshold is not None:
+            self.probability_threshold = probability_threshold
+            # 임계값 → pass_threshold 선형 매핑 (20~56점 범위)
+            self.pass_threshold = max(20.0, 60.0 - (probability_threshold / 3.0) * 40.0)
+            self.logger.debug(
+                f"[WeightedFilterSystem] update_config: "
+                f"threshold={probability_threshold:.2f} → pass_threshold={self.pass_threshold:.1f}"
+            )
+        if ml_bypass_filters is not None:
+            self.ml_bypass_filters = ml_bypass_filters
+        if ml_weight is not None:
+            self.ml_weight = ml_weight
+        # 내부 filter_manager에도 전달 (IntegratedFilterManager 등)
+        if hasattr(self.filter_manager, 'update_config'):
+            self.filter_manager.update_config(
+                probability_threshold=probability_threshold,
+                ml_bypass_filters=ml_bypass_filters,
+                ml_weight=ml_weight
+            )
+        elif hasattr(self.filter_manager, 'probability_threshold') and probability_threshold is not None:
+            self.filter_manager.probability_threshold = probability_threshold
+
     def evaluate_combination(self, combination, round_num=None):
         """
         가중치 기반으로 조합 평가

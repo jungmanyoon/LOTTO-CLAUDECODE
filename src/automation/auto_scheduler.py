@@ -53,31 +53,45 @@ class AutoScheduler:
         logging.info("[AutoScheduler] 24시간 스케줄러 초기화 완료")
     
     def _setup_schedule(self):
-        """스케줄 작업 설정"""
-        # 토요일 저녁 8시 45분부터 9시 30분까지 1분마다 새 회차 확인
-        # (로또 추첨 시간: 토요일 저녁 8시 45분)
+        """스케줄 작업 설정
+
+        [automation-3 - 타임존 가정 명시]
+        아래 시각 지정 잡(특정 시:분에 실행)은 모두 "한국 표준시(KST)" 기준 시각이다.
+        그러나 schedule 모듈의 .at()는 별도 tz 인자를 주지 않으면 OS 로컬 시간을 사용하므로,
+        이 스케줄러는 "운영 호스트의 OS 로컬 타임존이 항상 KST(Asia/Seoul)로 고정되어 있다"는
+        전제 하에 동작한다. (로또 추첨/발표가 한국 시간 기준이므로 KST 호스트가 정상 운영 환경)
+
+        - 토요일 20:45 = 로또 추첨 시각(KST)
+        - 일일 예측 09:00 / 주간 최적화 일요일 03:00 / 로그 정리 자정 00:00 모두 KST 기준
+
+        주의: 운영 호스트가 KST가 아닌 다른 타임존이라면 위 시각들이 의도와 어긋나 동작한다.
+              (schedule 1.1+ 의 .at(time, "Asia/Seoul") tz 인자로 고정 가능하나, 호스트 KST
+               전제가 유지되는 한 추가 변경 없이 안전하다.)
+        """
+        # 토요일 저녁 8시 45분부터 9시 30분까지 1분마다 새 회차 확인 (KST 기준)
+        # (로또 추첨 시간: 토요일 저녁 8시 45분 KST)
         for minute in range(45, 60):  # 8시 45분 ~ 8시 59분
             self.scheduler.every().saturday.at(f"20:{minute:02d}").do(self._check_new_round_intensive)
         for minute in range(0, 31):  # 9시 00분 ~ 9시 30분 (여유있게)
             self.scheduler.every().saturday.at(f"21:{minute:02d}").do(self._check_new_round_intensive)
 
-        # 다른 날은 3시간마다 확인 (토요일 제외)
+        # 다른 날은 3시간마다 확인 (토요일 제외) - 상대 간격이라 타임존 무관
         self.scheduler.every(3).hours.do(self._check_new_round_if_not_saturday)
 
-        # 매일 오전 9시: 일일 예측 실행
+        # 매일 오전 9시: 일일 예측 실행 (KST 기준 - 호스트 KST 전제)
         self.scheduler.every().day.at("09:00").do(self._run_daily_prediction)
 
-        # 매주 일요일 오전 3시: 시스템 최적화
+        # 매주 일요일 오전 3시: 시스템 최적화 (KST 기준 - 호스트 KST 전제)
         self.scheduler.every().sunday.at("03:00").do(self._run_weekly_optimization)
 
-        # 30분마다: 시스템 상태 체크
+        # 30분마다: 시스템 상태 체크 - 상대 간격이라 타임존 무관
         self.scheduler.every(30).minutes.do(self._health_check)
 
-        # 매일 자정: 로그 정리
+        # 매일 자정: 로그 정리 (KST 기준 - 호스트 KST 전제)
         self.scheduler.every().day.at("00:00").do(self._cleanup_logs)
 
-        logging.info("[AutoScheduler] 스케줄 설정 완료")
-        logging.info("[AutoScheduler] 토요일 20:45 ~ 21:30 집중 모니터링 활성화")
+        logging.info("[AutoScheduler] 스케줄 설정 완료 (시각 지정 잡은 KST 기준, 호스트 KST 전제)")
+        logging.info("[AutoScheduler] 토요일 20:45 ~ 21:30 (KST) 집중 모니터링 활성화")
     
     def register_callback(self, event_type: str, callback: Callable):
         """이벤트 콜백 등록"""
@@ -232,10 +246,8 @@ class AutoScheduler:
         try:
             logging.info(f"[AutoScheduler] {next_round}회차 예측 생성 중...")
 
-            # DataCollector를 사용하여 새 예측 생성
-            from src.data_collector import DataCollector
-            collector = DataCollector(self.db_manager)
-
+            # [automation-7 FIX] 미사용 DataCollector 생성/임포트 제거(죽은 코드).
+            # 실제 예측은 아래 subprocess(main.py --skip-fetch --ml-only)가 수행한다.
             # main.py의 예측 로직 실행
             result = subprocess.run(
                 ['python', 'main.py', '--skip-fetch', '--ml-only'],
@@ -629,12 +641,12 @@ class AutoScheduler:
             # IntegratedFilterManager를 통한 필터 업데이트
             from src.core.integrated_filter_manager import IntegratedFilterManager
 
-            # 설정에서 임계값 로드
-            import yaml
-            config_path = 'configs/adaptive_filter_config.yaml'
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-            threshold = config.get('global_probability_threshold', 2.0)
+            # [automation-4 FIX] 임계값을 직접 YAML 파싱(잘못된 기본값 2.0, 단일 소스 우회)하지 않고
+            # ThresholdManager 싱글톤(단일 소스 of truth)에서 조회한다.
+            # ThresholdManager는 첫 호출 시 adaptive_filter_config.yaml을 자동 로드하므로
+            # 항상 현재 적용 중인 실제 임계값과 일치한다.
+            from src.core.threshold_manager import get_threshold_manager
+            threshold = get_threshold_manager().get_threshold()
 
             filter_mgr = IntegratedFilterManager(self.db_manager, threshold)
             update_result = filter_mgr.update_filters_weekly(round_num)

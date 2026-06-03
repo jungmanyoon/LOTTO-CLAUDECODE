@@ -273,7 +273,7 @@ def main():
     correlations.sort(key=lambda x: x[2], reverse=True)
     
     for filter1, filter2, corr in correlations[:10]:
-        print(f"{filter1} ↔ {filter2}: {corr:.3f}")
+        print(f"{filter1} <-> {filter2}: {corr:.3f}")
     
     # 3. 필터 조합 효과 분석
     print("\n" + "="*60)
@@ -349,7 +349,7 @@ def main():
     with open('analyze_system/filter_correlation_result.json', 'w', encoding='utf-8') as f:
         json.dump(analysis_results, f, ensure_ascii=False, indent=2)
     
-    print("\n✅ 분석 결과가 analyze_system/filter_correlation_result.json에 저장되었습니다.")
+    print("\n[O] 분석 결과가 analyze_system/filter_correlation_result.json에 저장되었습니다.")
 
 if __name__ == "__main__":
     main()

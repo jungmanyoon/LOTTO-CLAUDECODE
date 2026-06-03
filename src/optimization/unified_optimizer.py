@@ -19,6 +19,15 @@ from src.core.optimization_db import get_optimization_db
 # 피드백 루프 실행 간격 (분) - 구 SmartAutoLearning.min_interval_minutes
 _FEEDBACK_INTERVAL_MINUTES = 30
 
+# [log-analysis-5] 한 사이클당 누적 trial 수 (기존 동작과 동일: 0->10->20...).
+# 단, optimize()를 이 값만큼 한 번에 호출하지 않고 _TRIALS_PER_SUBBATCH 단위로
+# 쪼개어 호출하여, 종료(stop_flag) 확인 빈도를 높인다(30초 join 내 안전 종료 보강).
+_TRIALS_PER_CYCLE = 10
+# optimize() 1회 호출에 넣는 trial 수. 작을수록 종료 확인이 잦아지지만(안전),
+# Optuna study persistence 덕분에 누적 학습 결과는 한 번에 10개 돌린 것과 동일하다.
+# (worst-case 미확인 블로킹 = trial 1개의 evaluate() 시간으로 제한)
+_TRIALS_PER_SUBBATCH = 2
+
 # [신 아키텍처 2026-05-31] 최적화 엔진 선택:
 #   'pool'(기본): PoolOptimizer v6 (극단성 점수 가중치 탐색, 목표 풀 K, 통과율 제약 없음)
 #   'threshold' : 구 AutoThresholdOptimizer v5 (global_probability_threshold 탐색) - 폴백용
@@ -70,7 +79,26 @@ class UnifiedOptimizer:
         return self._thread
 
     def run_optimization_cycle(self, n_trials: int = 10) -> Dict:
-        """단일 최적화 사이클 실행 (동기, 테스트 및 수동 호출용)"""
+        """단일 최적화 사이클 실행 (동기, 테스트 및 수동 호출용)
+
+        [optimization-3] _OPTIMIZER_MODE 분기 추가:
+          백그라운드 워커(_worker)와 동일하게 모드를 확인해 일관된 경로를 사용한다.
+          - 'pool'(기본): PoolOptimizer v6 (극단성 가중치 탐색, 통과율 제약 없음)
+          - 'threshold' : 구 AutoThresholdOptimizer v5 (threshold 탐색) - 폴백용
+        (이 메서드는 production 호출처가 없는 수동/테스트용이지만 모드 정합성을 맞춘다.)
+        """
+        if _OPTIMIZER_MODE == 'pool':
+            # _worker_pool과 동일한 pool 평가 경로 재사용
+            from src.core.pool_optimizer import PoolOptimizer
+            optimizer = PoolOptimizer(self.db_manager, target_K=_POOL_TARGET_K)
+            optimizer.set_shutdown_flag(self._stop_flag)
+            result = optimizer.optimize(n_trials=n_trials, study_name="pool_optimization_v6")
+            # 종료/취소가 아니면 최적 가중치를 저장 (예측 풀 캐시 무효화 트리거)
+            if not result.get('cancelled') and not self._stop_flag.get('stop', False):
+                optimizer.save_best(result)
+            return result
+
+        # ---- 구 v5 경로 (mode='threshold') ----
         from src.scripts.auto_threshold_optimizer import AutoThresholdOptimizer
         optimizer = AutoThresholdOptimizer()
         optimizer.set_shutdown_flag(self._stop_flag)
@@ -83,7 +111,10 @@ class UnifiedOptimizer:
             'stop_flag': self._stop_flag.get('stop', False),
             'last_best_params': self._opt_db.get_state('last_best_params'),
             'last_best_score': self._opt_db.get_state('last_best_score', 0),
-            'total_cycles': self._opt_db.get_state('total_cycles', 0),
+            # pool 워커는 'total_cycles_pool', threshold 워커는 'total_cycles'에 저장하므로
+            # 현재 모드에 맞는 키를 읽는다 (optimization-2). 반환 키 이름은 호환 위해 유지.
+            'total_cycles': self._opt_db.get_state(
+                'total_cycles_pool' if _OPTIMIZER_MODE == 'pool' else 'total_cycles', 0),
             'last_feedback_time': self._opt_db.get_state('last_feedback_time'),
         }
 
@@ -255,12 +286,30 @@ class UnifiedOptimizer:
                 if self._stop_flag.get('stop', False):
                     break
                 # ---- 1. PoolOptimizer 최적화 사이클 (10 trials 누적) ----
-                result = optimizer.optimize(n_trials=10, study_name="pool_optimization_v6")
+                # [log-analysis-5] optimize(n_trials=10)을 한 번에 호출하면, 종료 신호가
+                # 사이클 도중에 들어와도 10개 trial이 모두 끝날 때까지(또는 다음 trial 가지치기까지)
+                # 워커 루프로 제어가 돌아오지 않아 30초 join을 초과해 daemon 강제종료 경고가 났다.
+                # -> trial을 _TRIALS_PER_SUBBATCH(=2) 단위로 쪼개 호출하고, 각 호출 사이에서
+                #    stop_flag를 확인한다. Optuna study는 영속(SQLite, load_if_exists)이라
+                #    누적 결과는 한 번에 10개 돌린 것과 동일하며, 마지막 호출의 result가
+                #    study 전체의 best를 담는다(이후 저장/예측 로직 변경 없음).
+                #    worst-case 미확인 블로킹 = sub-batch 1회의 evaluate() 시간으로 축소.
+                result = None
+                _remaining = _TRIALS_PER_CYCLE
+                while _remaining > 0:
+                    if self._stop_flag.get('stop', False):
+                        break
+                    _n = min(_TRIALS_PER_SUBBATCH, _remaining)
+                    result = optimizer.optimize(n_trials=_n, study_name="pool_optimization_v6")
+                    _remaining -= _n
+                    # sub-batch가 종료/취소로 중단된 경우 즉시 사이클 중단
+                    if result is None or result.get('cancelled'):
+                        break
 
                 # [종료 가드] optimize()가 길게 블로킹되는 동안 stop이 켜졌거나 사이클이
                 # 취소(완료 trial 0개)된 경우, 저장/예측/피드백 등 모든 후처리를 생략하고 종료한다.
                 # 종료 중 0.000 백테스팅이 DB에 기록되는 문제의 핵심 차단점이다.
-                if self._stop_flag.get('stop', False) or result.get('cancelled'):
+                if self._stop_flag.get('stop', False) or result is None or result.get('cancelled'):
                     self.logger.info("[UnifiedOptimizer] 종료/취소 감지 - pool 사이클 후처리 생략")
                     break
 

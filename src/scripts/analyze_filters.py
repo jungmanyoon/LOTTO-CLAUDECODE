@@ -108,13 +108,13 @@ def main():
     
     # 당첨번호 데이터 로드
     winning_numbers = load_winning_numbers()
-    print(f"\n✅ {len(winning_numbers)}개 회차의 당첨번호 데이터 로드 완료")
+    print(f"\n[O] {len(winning_numbers)}개 회차의 당첨번호 데이터 로드 완료")
     
     # DB 매니저 및 필터 매니저 초기화
     db_manager = DatabaseManager()
     filter_manager = FilterManager(db_manager)
     
-    print(f"\n✅ {len(filter_manager.filters)}개의 필터가 등록되었습니다.")
+    print(f"\n[O] {len(filter_manager.filters)}개의 필터가 등록되었습니다.")
     
     # 각 필터별 분석 결과 저장
     filter_results = {}
@@ -176,7 +176,7 @@ def main():
     with open('filter_analysis_result.json', 'w', encoding='utf-8') as f:
         json.dump(analysis_result, f, ensure_ascii=False, indent=2)
     
-    print("\n✅ 분석 결과가 filter_analysis_result.json 파일로 저장되었습니다.")
+    print("\n[O] 분석 결과가 filter_analysis_result.json 파일로 저장되었습니다.")
     
     # 주요 통찰
     print("\n" + "="*60)
@@ -184,10 +184,10 @@ def main():
     print("="*60)
     
     if combined_result['passed_all_filters'] == 0:
-        print("⚠️  경고: 모든 필터를 동시에 적용하면 어떤 당첨번호도 통과하지 못합니다!")
-        print("   → 필터 기준을 완화하거나 선택적 적용이 필요합니다.")
+        print("[WARN] 경고: 모든 필터를 동시에 적용하면 어떤 당첨번호도 통과하지 못합니다!")
+        print("   -> 필터 기준을 완화하거나 선택적 적용이 필요합니다.")
     else:
-        print(f"✅ {combined_result['pass_rate']:.2f}%의 당첨번호가 모든 필터를 통과합니다.")
+        print(f"[O] {combined_result['pass_rate']:.2f}%의 당첨번호가 모든 필터를 통과합니다.")
     
     # 가장 엄격한 필터들
     print("\n가장 엄격한 필터 TOP 5:")

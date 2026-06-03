@@ -33,7 +33,13 @@ class EnsemblePerformanceMonitor:
         # 로그 파일 경로
         self.log_file = 'results/ensemble_performance.json'
         self.load_history()
-        
+
+        # [dashboard-monitoring-3] 주기적 영속화: record_prediction가 in-memory 누적만 하고
+        # save_history()가 어디서도 호출되지 않아 통계가 디스크에 남지 않던 문제 방지.
+        # N개 기록마다 자동 flush한다(장시간 실행 중에도 대시보드가 최신 통계를 읽도록).
+        self._flush_interval = 50
+        self._records_since_flush = 0
+
         logging.info("ENSEMBLE 모델 모니터링 시스템 초기화 완료")
     
     def record_prediction(self, 
@@ -82,7 +88,16 @@ class EnsemblePerformanceMonitor:
         
         # 실시간 알림
         self._send_alert(record)
-        
+
+        # [dashboard-monitoring-3] 주기적 디스크 영속화 (N개마다)
+        self._records_since_flush += 1
+        if self._records_since_flush >= self._flush_interval:
+            self._records_since_flush = 0
+            try:
+                self.save_history()
+            except Exception as e:
+                logging.debug(f"[EnsembleMonitor] 주기적 히스토리 저장 실패: {e}")
+
         return {
             'match_count': match_count,
             'matched_numbers': matched_numbers,
@@ -121,13 +136,13 @@ class EnsemblePerformanceMonitor:
         
         # 로그에 특별 기록
         if record['match_count'] == 5:
-            logging.info(f"🎯🎯🎯 ENSEMBLE 모델 대박 예측! 5개 일치!")
+            logging.info(f"[TARGET][TARGET][TARGET] ENSEMBLE 모델 대박 예측! 5개 일치!")
             logging.info(f"  회차: {record['round']}")
             logging.info(f"  예측: {record['prediction']}")
             logging.info(f"  실제: {record['actual']}")
             logging.info(f"  일치: {record['matched_numbers']}")
         elif record['match_count'] == 4:
-            logging.info(f"🎯 ENSEMBLE 모델 우수 예측! 4개 일치!")
+            logging.info(f"[TARGET] ENSEMBLE 모델 우수 예측! 4개 일치!")
             logging.info(f"  회차: {record['round']}, 일치: {record['matched_numbers']}")
     
     def _analyze_trend(self):
@@ -158,12 +173,12 @@ class EnsemblePerformanceMonitor:
         """실시간 알림"""
         if record['match_count'] >= 5:
             # 5개 이상 일치 시 중요 알림
-            alert_msg = f"⚠️ ENSEMBLE 모델 이상 성능 감지! {record['match_count']}개 일치"
+            alert_msg = f"[WARN] ENSEMBLE 모델 이상 성능 감지! {record['match_count']}개 일치"
             logging.warning(alert_msg)
             
             # 데이터 오염 가능성 체크
             if record['match_count'] == 6:
-                logging.error("🚨 데이터 오염 가능성! 6개 완전 일치 발생")
+                logging.error("[ALERT] 데이터 오염 가능성! 6개 완전 일치 발생")
     
     def get_performance_report(self) -> Dict:
         """성능 보고서 생성"""
@@ -196,13 +211,19 @@ class EnsemblePerformanceMonitor:
             return "D급 (개선 필요)"
     
     def save_history(self):
-        """히스토리 저장"""
+        """히스토리 저장 - 0값 통계는 저장 스킵"""
+        # [FIX N-W14] 초기화 직후 0값 통계를 JSON에 저장하는 문제 방지
+        # total_predictions가 0이면 아직 실제 데이터가 없으므로 저장 스킵
+        if self.statistics.get('total_predictions', 0) == 0:
+            logging.debug("[EnsembleMonitor] 예측 데이터 없음(0), 히스토리 저장 스킵")
+            return
+
         data = {
             'statistics': self.statistics,
             'performance_history': list(self.performance_history),
             'exceptional_predictions': self.exceptional_predictions
         }
-        
+
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         with open(self.log_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

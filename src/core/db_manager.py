@@ -555,24 +555,25 @@ class DatabaseManager:
     
     def close_all_connections(self):
         """모든 데이터베이스 연결 종료
-        
+
         각 데이터베이스의 연결을 안전하게 종료합니다.
+        종료 후 인스턴스 속성을 삭제하여 재초기화 시 AttributeError 방지.
         """
         try:
-            # 각 데이터베이스 연결 종료
+            # 각 데이터베이스 연결 종료 및 속성 삭제 (None 아닌 del 사용)
+            # hasattr 기반 재초기화 체크가 올바르게 동작하도록 속성 제거
             if hasattr(self, 'lotto_db'):
-                self.lotto_db = None
+                del self.lotto_db
             if hasattr(self, 'combinations_db'):
-                self.combinations_db = None
+                del self.combinations_db
             if hasattr(self, 'patterns_db'):
-                self.patterns_db = None
-            
+                del self.patterns_db
+
             # 필터 데이터베이스 연결 종료
             if hasattr(self, 'filter_dbs'):
-                for filter_name in self.filter_dbs:
-                    self.filter_dbs[filter_name] = None
                 self.filter_dbs.clear()
-            
+                del self.filter_dbs
+
             logging.info("모든 데이터베이스 연결이 종료되었습니다.")
         except Exception as e:
             logging.error(f"데이터베이스 연결 종료 중 오류: {e}")

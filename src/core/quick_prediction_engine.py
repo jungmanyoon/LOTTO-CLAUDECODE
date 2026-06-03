@@ -447,7 +447,7 @@ class QuickPredictionEngine:
         """
         필터링된 풀에서 추가 예측 가져오기 (통계 가중치 적용)
 
-        🔥 FIX: 간소화된 검증 대신 이미 필터링된 DB에서만 가져옴
+        [HOT] FIX: 간소화된 검증 대신 이미 필터링된 DB에서만 가져옴
         """
         predictions = []
 
@@ -502,10 +502,10 @@ class QuickPredictionEngine:
         """
         폴백: 필터링된 풀에서 랜덤 선택
 
-        🔥 FIX: 간소화된 검증으로 새로 생성하지 않고,
+        [HOT] FIX: 간소화된 검증으로 새로 생성하지 않고,
                이미 16개 필터를 통과한 조합에서만 선택
 
-        📌 filtered_combinations가 비어있으면 비상 폴백 사용
+        [PIN] filtered_combinations가 비어있으면 비상 폴백 사용
         """
         predictions = []
 
@@ -558,8 +558,8 @@ class QuickPredictionEngine:
         """
         비상 폴백: filtered_combinations가 없을 때 사용
 
-        ⚠️ 경고: 4개 기본 필터만 검증 (16개 전체 필터 미통과 가능)
-        📌 main.py를 먼저 실행하여 필터링 풀을 생성해야 함
+        [WARN] 경고: 4개 기본 필터만 검증 (16개 전체 필터 미통과 가능)
+        [PIN] main.py를 먼저 실행하여 필터링 풀을 생성해야 함
         """
         predictions = []
 

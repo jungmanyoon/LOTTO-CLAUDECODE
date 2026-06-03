@@ -153,6 +153,18 @@ class PerformanceTracker:
             except sqlite3.OperationalError:
                 pass  # 컬럼이 이미 존재하는 경우 무시
 
+            # [optimization-1] OptimizationDB와 스키마 수렴:
+            # OptimizationDB는 performance_history에 source, optimization_sessions에는 session_date를
+            # 다른 순서/구성으로 정의한다. 생성 순서에 따라 누락될 수 있는 컬럼을 멱등 보강한다.
+            try:
+                cursor.execute("ALTER TABLE performance_history ADD COLUMN source TEXT DEFAULT 'unified_optimizer'")
+            except sqlite3.OperationalError:
+                pass  # 이미 존재
+            try:
+                cursor.execute("ALTER TABLE optimization_sessions ADD COLUMN session_date TEXT")
+            except sqlite3.OperationalError:
+                pass  # 이미 존재
+
             conn.commit()
 
     def save_performance_result(self, metrics: PerformanceMetrics, round_number: int = None,
@@ -1058,7 +1070,10 @@ class ContinuousImprovementEngine:
     def get_status(self) -> Dict[str, Any]:
         """현재 상태 조회"""
         # 최근 세션 정보
+        # [optimization-1] 컬럼 순서 의존 제거: SELECT * 결과를 위치기반 zip 대신
+        # row_factory=sqlite3.Row 이름 접근으로 매핑(스키마 컬럼 추가/순서 변경에 견고)
         with sqlite3.connect(self.improvement_db_path) as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -1076,13 +1091,7 @@ class ContinuousImprovementEngine:
             'status': self.status.value,
             'is_running': self.is_running,
             'current_session_id': self.current_session_id,
-            'last_session': dict(zip([
-                'id', 'round_number', 'session_type', 'start_time', 'end_time',
-                'status', 'tests_count', 'improvements_found', 'best_threshold',
-                'best_ml_bypass', 'best_ml_weight', 'best_performance',
-                'baseline_performance', 'improvement_rate', 'applied',
-                'rollback_reason', 'created_at'
-            ], last_session)) if last_session else None,
+            'last_session': dict(last_session) if last_session else None,
             'performance_trends': trends[:5],  # 최근 5일
             'best_performance_ever': {
                 'avg_matches': best_performance.avg_matches,

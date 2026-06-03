@@ -191,6 +191,15 @@ class FilterManager:
     def reset_instance(cls):
         """싱글톤 인스턴스 초기화 (테스트용)"""
         with cls._lock:
+            if cls._instance is not None:
+                # ThresholdManager Observer 정리 - 메모리 누수 방지
+                try:
+                    from src.core.threshold_manager import ThresholdManager
+                    tm = ThresholdManager.get_instance()
+                    tm.unregister_observer(cls._instance._on_config_change)
+                    logging.debug("[FilterManager] ThresholdManager Observer 해제 완료")
+                except Exception as e:
+                    logging.debug(f"[FilterManager] ThresholdManager Observer 해제 중 오류 (무시): {e}")
             cls._instance = None
             cls._initialized = False
             logging.info("[FilterManager] 싱글톤 인스턴스 초기화 완료")

@@ -87,12 +87,12 @@ class FeedbackLoopSystem:
             
             # 수렴 또는 목표 달성 확인
             if current_performance >= self.loop_config['target_performance']:
-                logging.info("🎯 목표 성능 달성!")
+                logging.info("[TARGET] 목표 성능 달성!")
                 converged = True
                 break
             
             if self._check_convergence(current_performance):
-                logging.info("📊 성능이 수렴했습니다.")
+                logging.info("[STAT] 성능이 수렴했습니다.")
                 converged = True
                 break
             
@@ -107,12 +107,12 @@ class FeedbackLoopSystem:
             
             # 개선 확인
             if quick_validation_score > current_performance + self.loop_config['min_improvement']:
-                logging.info("✅ 성능 개선 확인! 모델 업데이트")
+                logging.info("[O] 성능 개선 확인! 모델 업데이트")
                 models = improved_models
                 self.best_performance = max(self.best_performance, quick_validation_score)
                 self.no_improvement_count = 0
             else:
-                logging.info("❌ 성능 개선 없음")
+                logging.info("[X] 성능 개선 없음")
                 self.no_improvement_count += 1
                 
                 if self.no_improvement_count >= self.loop_config['patience']:
@@ -168,10 +168,10 @@ class FeedbackLoopSystem:
             
             if optimization_result['optimized']:
                 improved_models[model_type] = model
-                logging.info(f"✅ {model_type} 모델 최적화 완료")
+                logging.info(f"[O] {model_type} 모델 최적화 완료")
             else:
                 improved_models[model_type] = model
-                logging.info(f"❌ {model_type} 모델 최적화 스킵: {optimization_result.get('reason', 'unknown')}")
+                logging.info(f"[X] {model_type} 모델 최적화 스킵: {optimization_result.get('reason', 'unknown')}")
         
         return improved_models
     

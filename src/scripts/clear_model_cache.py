@@ -50,9 +50,9 @@ def clear_model_cache():
             try:
                 shutil.rmtree(cache_dir)
                 os.makedirs(cache_dir, exist_ok=True)
-                logging.info(f"✅ {cache_dir} 정리 완료")
+                logging.info(f"[O] {cache_dir} 정리 완료")
             except Exception as e:
-                logging.error(f"❌ {cache_dir} 정리 실패: {e}")
+                logging.error(f"[X] {cache_dir} 정리 실패: {e}")
         else:
             logging.info(f"{cache_dir} 디렉토리가 존재하지 않습니다.")
     
@@ -72,7 +72,7 @@ def main():
     files, size = clear_model_cache()
     
     if files > 0:
-        print(f"\n✅ {files}개 파일 ({size/1024/1024:.2f} MB) 정리 완료!")
+        print(f"\n[O] {files}개 파일 ({size/1024/1024:.2f} MB) 정리 완료!")
         print("   main.py를 실행하면 새로운 캐시가 생성됩니다.")
     else:
         print("\n캐시 파일이 없습니다.")

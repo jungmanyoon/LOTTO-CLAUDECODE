@@ -435,10 +435,15 @@ class MonteCarloSimulator:
         
         # 상관관계를 사용하지 않는 경우 (더 빠름)
         if not self.probability_model['use_correlations']:
-            # NumPy의 벡터화된 샘플링 사용
-            indices = np.random.choice(45, size=(batch_size, 6), 
-                                     replace=False, p=probabilities)
-            combinations = [sorted((idx + 1).tolist()) for idx in indices]
+            # 행(조합) 단위로 6개 비복원 가중 추출 (ml-probabilistic-4)
+            # 주의: np.random.choice(size=(batch_size,6), replace=False, p=...)는
+            # batch_size*6개를 45개 모집단에서 '전체' 비복원 추출하므로
+            # batch_size>=8(48>45)에서 ValueError가 발생한다(기본 batch=750이라 항상 실패).
+            # 각 조합이 '서로 다른 6개 번호'가 되도록 행 단위로 추출해야 한다.
+            combinations = [
+                sorted((np.random.choice(45, size=6, replace=False, p=probabilities) + 1).tolist())
+                for _ in range(batch_size)
+            ]
         else:
             # 상관관계 사용하는 경우 (기존 방식)
             for _ in range(batch_size):
@@ -896,11 +901,11 @@ def main():
     simulator.load_historical_data(winning_numbers)
     
     print("="*60)
-    print("🚀 최적화된 Monte Carlo 시뮬레이터 성능 테스트")
+    print("[START] 최적화된 Monte Carlo 시뮬레이터 성능 테스트")
     print("="*60)
     
     # 성능 벤치마크
-    print("\n📊 성능 벤치마크 실행 중...")
+    print("\n[STAT] 성능 벤치마크 실행 중...")
     benchmark = simulator.performance_benchmark([1000, 2000, 5000])
     
     print("\n벤치마크 결과:")
@@ -909,16 +914,16 @@ def main():
               f"{result['elapsed']:.2f}초 ({result['rate']:.0f} sim/s)")
     
     early_test = benchmark['early_termination_test']
-    print(f"\n⚡ 조기 종료 효과: {early_test['improvement']} 단축 "
+    print(f"\n[FAST] 조기 종료 효과: {early_test['improvement']} 단축 "
           f"({early_test['elapsed']:.2f}초)")
     
     # 캐시 통계
     cache_stats = simulator.get_cache_stats()
-    print(f"\n💾 캐시 통계: {cache_stats['simulation_cache_size']}개 캐시됨, "
+    print(f"\n[SAVE] 캐시 통계: {cache_stats['simulation_cache_size']}개 캐시됨, "
           f"메모리 사용량: {cache_stats['memory_usage_mb']:.1f}MB")
     
     # 최적화된 시뮬레이션 실행 (조기 종료 활성화)
-    print(f"\n🎯 최적화된 시뮬레이션 실행 (최대 5,000회, 조기 종료 활성화)...")
+    print(f"\n[TARGET] 최적화된 시뮬레이션 실행 (최대 5,000회, 조기 종료 활성화)...")
     start_time = time.time()
     simulator.simulate_combinations(5000, enable_early_termination=True)
     elapsed = time.time() - start_time
@@ -928,7 +933,7 @@ def main():
     # 최적 조합 추출
     best_combinations = simulator.get_best_combinations(10, min_confidence=0.6)
     
-    print("\n🏆 최적 번호 조합 (신뢰도 순):")
+    print("\n[BEST] 최적 번호 조합 (신뢰도 순):")
     for i, combo in enumerate(best_combinations, 1):
         numbers = combo['numbers']
         score = combo['score']
@@ -943,7 +948,7 @@ def main():
     
     # 성능 개선 효과 요약
     print("\n" + "="*60)
-    print("📈 성능 최적화 효과 요약")
+    print("[UP] 성능 최적화 효과 요약")
     print("="*60)
     
     expected_old_time = 16.4  # 기존 시간
@@ -955,16 +960,16 @@ def main():
     print(f"• 처리 속도: {5000/elapsed:.0f} 시뮬레이션/초")
     
     # 최적화 기법 설명
-    print(f"\n🔧 적용된 최적화 기법:")
-    print(f"  ✅ 조기 종료 (수렴 감지)")
-    print(f"  ✅ 벡터화된 배치 처리")
-    print(f"  ✅ 결과 캐싱")
-    print(f"  ✅ 메모리 효율적 계산")
-    print(f"  ✅ 병렬 처리 오버헤드 제거")
+    print(f"\n[FIX] 적용된 최적화 기법:")
+    print(f"  [O] 조기 종료 (수렴 감지)")
+    print(f"  [O] 벡터화된 배치 처리")
+    print(f"  [O] 결과 캐싱")
+    print(f"  [O] 메모리 효율적 계산")
+    print(f"  [O] 병렬 처리 오버헤드 제거")
     
     # 결과 저장
     simulator.save_results('optimized_monte_carlo_results.json')
-    print(f"\n💾 결과가 optimized_monte_carlo_results.json에 저장되었습니다.")
+    print(f"\n[SAVE] 결과가 optimized_monte_carlo_results.json에 저장되었습니다.")
     
     return {
         'elapsed_time': elapsed,

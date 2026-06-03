@@ -65,26 +65,73 @@ class MatchFilter(BaseFilter):
                     converted_winning.append(list(map(int, nums.split(','))))
                 else:
                     converted_winning.append(nums)
-            
+
+            max_match = self.criteria['max_match']
+
+            # 조기 분기: max_match >= 6 이면 "6개 모두 일치(완전 일치)"한 조합만 제외 대상이다.
+            # 이때는 8.14M x 당첨번호 전수 numpy 루프가 불필요하므로, 과거 당첨번호와의
+            # 완전 일치 여부만 set 멤버십으로 단축 처리한다(수십초 -> 1초 미만).
+            # NOTE: max_match < 6 일 때는 기존 numpy 청크 처리 경로를 그대로 사용한다(동작 보존).
+            if max_match >= 6:
+                return self._exclude_exact_matches(combinations, converted_winning)
+
             winning_arrays = np.array(converted_winning, dtype=np.int8)
 
-            # 최적화된 청크 단위 처리 (모든 max_match 값에 동일하게 적용)
-            # NOTE: max_match=6이면 완전 일치만 제외 (실질적으로 필터링 거의 없음)
+            # 최적화된 청크 단위 처리 (max_match < 6 인 경우)
             return self.optimizer.optimize_filter(
                 combinations=combinations,
                 desc="match 필터 진행률",
                 winning_arrays=winning_arrays,
-                max_match=self.criteria['max_match']
+                max_match=max_match
             )
 
         except Exception as e:
+            # [filters-16-7] 필터가 예외로 "비활성화됨"을 상위 통계에서 구분할 수 있도록 신호 설정.
+            # 이 플래그가 True면 아래 전체 통과 반환은 "정상 제거 0건"이 아니라 "필터 예외로 무력화"를 의미한다.
+            # 안전상 전체 통과 폴백은 유지한다(청크 전체 손실 방지).
+            self._apply_failed = True
             logging.error(f"번호 일치 필터링 중 오류 발생: {str(e)}")
+            logging.warning(
+                f"[FILTER-DISABLED] {self.get_filter_name()} 필터가 예외로 비활성화됨 "
+                f"(전체 {len(combinations):,}개 통과 폴백): {str(e)}"
+            )
             return combinations
 
     # 기존 apply 메서드 유지
     def apply(self, combinations: List[str], round_num: int) -> List[str]:
         # apply_filter 메서드 호출하여 동일한 기능 유지
         return self.apply_filter(combinations, round_num)
+
+    @staticmethod
+    def _exclude_exact_matches(combinations: List[str],
+                               converted_winning: List[List[int]]) -> List[str]:
+        """max_match >= 6 전용 단축 경로: 과거 당첨번호와 6개 모두 일치하는 조합만 제외
+
+        기존 numpy 경로(max_match=6)는 각 조합이 임의의 당첨번호와 공유하는 번호 수의
+        최대값이 6(=완전 일치)인 경우만 제외한다. 로또 번호는 6개 모두 서로 다르므로
+        "6개 공유 = 집합 동일"이다. 따라서 순서 무관 set 멤버십으로 동일 결과를 낸다.
+
+        Args:
+            combinations: 필터링할 조합 목록 (str "1,2,..." 또는 정수 리스트)
+            converted_winning: 정수 리스트로 변환된 과거 당첨번호 목록
+
+        Returns:
+            List[str]: 완전 일치 조합을 제외한 목록
+        """
+        # 과거 당첨번호를 frozenset 집합으로 구성 (순서 무관 비교용)
+        winning_sets: Set[frozenset] = {frozenset(nums) for nums in converted_winning}
+
+        filtered: List[str] = []
+        for comb in combinations:
+            if isinstance(comb, str):
+                comb_set = frozenset(map(int, comb.split(',')))
+            else:
+                comb_set = frozenset(comb)
+            # 과거 당첨번호와 완전히 동일한 조합만 제외
+            if comb_set not in winning_sets:
+                filtered.append(comb)
+
+        return filtered
     
     @staticmethod
     def _process_chunk_wrapper(combinations_chunk: List[str], **kwargs) -> List[str]:

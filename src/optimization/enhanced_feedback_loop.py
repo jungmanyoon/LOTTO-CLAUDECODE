@@ -97,7 +97,11 @@ class EnhancedFeedbackLoop:
             'total_improvements': 0,
             'final_performance': None
         }
-        
+
+        # [log-analysis-3] 직전 반복과 동일한 백테스팅 결과(캐시 재사용)면 중복 추적/카운터
+        # 인플레이션을 막기 위해 비교할 성능 시그니처. 동일 시 track_backtest 호출 없이 조기 종료.
+        prev_signature = None
+
         while iteration < max_iterations and self.improvement_manager.should_continue_improvement():
             iteration += 1
             logging.info(f"\n[반복 {iteration}/{max_iterations}] 시작")
@@ -116,6 +120,23 @@ class EnhancedFeedbackLoop:
                     backtest_results.get('performance_metrics', {}).get('total_rounds', 0) == 0):
                 logging.info("[SHUTDOWN] 백테스팅 취소/0건 - 개선 추적·상태저장 생략(데이터 오염 방지)")
                 break
+
+            # [log-analysis-3] 직전 반복과 동일한 백테스팅 결과면(캐시 재사용 추정) 중복 추적을 막는다.
+            # 동일 결과 재투입은 total_backtest_count 인플레이션 + improvement_history 중복 레코드 +
+            # "1.102 -> 0.740" 같은 동일 출력 반복을 낳으므로, track_backtest 호출 없이 조기 종료한다.
+            _pm = backtest_results.get('performance_metrics', {})
+            _mp = _pm.get('model_performance', {})
+            current_signature = tuple(
+                round(float(_mp.get(m, {}).get('avg_matches', 0.0)), 6)
+                for m in ('lstm', 'ensemble', 'monte_carlo')
+            )
+            if prev_signature is not None and current_signature == prev_signature:
+                logging.info(
+                    f"[중복 가드] 백테스팅 결과가 직전 반복과 동일(캐시 재사용 추정, 시그니처={current_signature}). "
+                    f"중복 추적/카운터 인플레이션 방지를 위해 개선 사이클을 조기 종료합니다."
+                )
+                break
+            prev_signature = current_signature
 
             # Step 2: 개선 추적 및 판단
             logging.info("Step 2: 성능 평가 및 개선 판단...")

@@ -10,8 +10,6 @@ from typing import Dict, List, Set, Tuple, Any
 import json
 import numpy as np
 from collections import Counter
-from tqdm import tqdm
-
 from .base_filter import BaseFilter
 from ..filter_optimizer import FilterOptimizer
 
@@ -140,25 +138,21 @@ class DispersionFilter(BaseFilter):
                 criteria=self._criteria
             )
         except Exception as e:
+            # [filters-16-7] 필터가 예외로 "비활성화됨"을 상위 통계에서 구분할 수 있도록 신호 설정.
+            # 이 플래그가 True면 아래 전체 통과 반환은 "정상 제거 0건"이 아니라 "필터 예외로 무력화"를 의미한다.
+            # 안전상 전체 통과 폴백은 유지한다(청크 전체 손실 방지).
+            self._apply_failed = True
             logging.error(f"분산도 필터링 중 오류 발생: {str(e)}")
+            logging.warning(
+                f"[FILTER-DISABLED] {self.get_filter_name()} 필터가 예외로 비활성화됨 "
+                f"(전체 {len(combinations):,}개 통과 폴백): {str(e)}"
+            )
             return combinations
     
     @staticmethod
     def _process_chunk(combinations_chunk: List[str], criteria: Dict[str, Any]) -> List[str]:
         """청크 단위 벡터화된 필터링 처리"""
         try:
-            # 필터링 기준 로드
-            min_std = criteria.get("min_std_dev", 0)
-            max_std = criteria.get("max_std_dev", 50)
-            min_var = criteria.get("min_variance", 0)
-            max_var = criteria.get("max_variance", 1000)
-            min_min_gap = criteria.get("min_min_gap", 1)
-            max_min_gap = criteria.get("max_min_gap", 10)
-            min_max_gap = criteria.get("min_max_gap", 1)
-            max_max_gap = criteria.get("max_max_gap", 30)
-            min_avg_gap = criteria.get("min_avg_gap", 1)
-            max_avg_gap = criteria.get("max_avg_gap", 15)
-            
             # 배열로 변환 (벡터화 처리)
             chunk_arrays = []
             for comb in combinations_chunk:
@@ -167,32 +161,53 @@ class DispersionFilter(BaseFilter):
                 else:
                     chunk_arrays.append(comb)
             chunk_arrays = np.array(chunk_arrays, dtype=np.int8)
-            
+
             # 정렬된 배열 생성
             sorted_arrays = np.sort(chunk_arrays, axis=1)
-            
-            # 벡터화된 분산도 계산
-            std_devs = np.std(chunk_arrays, axis=1)
-            variances = np.var(chunk_arrays, axis=1)
-            
-            # 갭 계산 (벡터화)
-            gaps = np.diff(sorted_arrays, axis=1)
-            min_gaps = np.min(gaps, axis=1)
-            max_gaps = np.max(gaps, axis=1)
-            avg_gaps = np.mean(gaps, axis=1)
-            
-            # 벡터화된 조건 검사
-            valid_std = (std_devs >= min_std) & (std_devs <= max_std)
-            valid_var = (variances >= min_var) & (variances <= max_var)
-            valid_min_gap = (min_gaps >= min_min_gap) & (min_gaps <= max_min_gap)
-            valid_max_gap = (max_gaps >= min_max_gap) & (max_gaps <= max_max_gap)
-            valid_avg_gap = (avg_gaps >= min_avg_gap) & (avg_gaps <= max_avg_gap)
-            
-            # 모든 조건을 만족하는 인덱스
-            valid_indices = valid_std & valid_var & valid_min_gap & valid_max_gap & valid_avg_gap
-            
+
+            n = len(combinations_chunk)
+            valid_indices = np.ones(n, dtype=bool)
+
+            # [filters-16-1] config(criteria)에 명시된 기준만 적용한다.
+            # 과거: criteria.get(key, 하드코딩기본값)으로 gap/variance 기본값을 몰래 적용 ->
+            #   특히 max_max_gap=30이 큰 분산 조합({1,2,3,4,5,45} 등)을 조용히 배제.
+            #   사용자가 max_gap 필터를 명시적으로 껐는데도 dispersion이 covert 재적용하던 버그.
+            # 이제 criteria에 없는 키는 검사를 건너뛴다(숨은 기본값 금지, 설정 우선순위 원칙 준수).
+
+            # 표준편차
+            if 'min_std_dev' in criteria or 'max_std_dev' in criteria:
+                std_devs = np.std(chunk_arrays, axis=1)
+                lo = criteria.get('min_std_dev', -np.inf)
+                hi = criteria.get('max_std_dev', np.inf)
+                valid_indices &= (std_devs >= lo) & (std_devs <= hi)
+
+            # 분산
+            if 'min_variance' in criteria or 'max_variance' in criteria:
+                variances = np.var(chunk_arrays, axis=1)
+                lo = criteria.get('min_variance', -np.inf)
+                hi = criteria.get('max_variance', np.inf)
+                valid_indices &= (variances >= lo) & (variances <= hi)
+
+            # 갭 기준 (관련 키가 있을 때만 계산)
+            gap_keys = ('min_min_gap', 'max_min_gap', 'min_max_gap',
+                        'max_max_gap', 'min_avg_gap', 'max_avg_gap')
+            if any(k in criteria for k in gap_keys):
+                gaps = np.diff(sorted_arrays, axis=1)
+                if 'min_min_gap' in criteria or 'max_min_gap' in criteria:
+                    min_gaps = np.min(gaps, axis=1)
+                    valid_indices &= (min_gaps >= criteria.get('min_min_gap', -np.inf)) & \
+                                     (min_gaps <= criteria.get('max_min_gap', np.inf))
+                if 'min_max_gap' in criteria or 'max_max_gap' in criteria:
+                    max_gaps = np.max(gaps, axis=1)
+                    valid_indices &= (max_gaps >= criteria.get('min_max_gap', -np.inf)) & \
+                                     (max_gaps <= criteria.get('max_max_gap', np.inf))
+                if 'min_avg_gap' in criteria or 'max_avg_gap' in criteria:
+                    avg_gaps = np.mean(gaps, axis=1)
+                    valid_indices &= (avg_gaps >= criteria.get('min_avg_gap', -np.inf)) & \
+                                     (avg_gaps <= criteria.get('max_avg_gap', np.inf))
+
             # 유효한 조합만 반환
-            return [combinations_chunk[i] for i in range(len(combinations_chunk)) if valid_indices[i]]
+            return [combinations_chunk[i] for i in range(n) if valid_indices[i]]
             
         except Exception as e:
             logging.error(f"청크 처리 중 오류 발생: {str(e)}")
@@ -207,5 +222,8 @@ class DispersionFilter(BaseFilter):
         Returns:
             당첨 번호 목록의 목록
         """
-        numbers_data = self.db_manager.lotto_db.get_recent_numbers(count)
-        return [[int(n) for n in numbers.split(",")] for _, numbers, _ in numbers_data] 
+        # 공개 API 사용: lotto_db 내부 구현에 직접 접근하지 않음
+        raw_data = self.db_manager.get_numbers_with_bonus()
+        # 최근 count개만 추출하고, 보너스 번호 제외한 본번호 6개만 반환
+        recent_data = raw_data[-count:] if len(raw_data) >= count else raw_data
+        return [list(entry[1][:6]) for entry in recent_data]

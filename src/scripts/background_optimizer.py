@@ -10,6 +10,7 @@ import signal
 import logging
 import json
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from pathlib import Path
@@ -93,10 +94,13 @@ class BackgroundOptimizer:
         self.running = False
 
     def _update_status(self, status: Dict):
-        """상태 파일 업데이트"""
+        """상태 파일 업데이트 (원자적 쓰기 - 병렬 처리 중 파일 손상 방지)"""
+        # [N-W19] 수정: open('w') 직접 쓰기 → 임시 파일 후 os.replace()로 원자적 교체
         try:
-            with open(self.status_file, 'w', encoding='utf-8') as f:
+            tmp_path = self.status_file + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(status, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, self.status_file)
         except Exception as e:
             self.logger.error(f"상태 파일 업데이트 실패: {e}")
 
@@ -165,28 +169,42 @@ class BackgroundOptimizer:
             self.logger.info(f"최적화 시작 ({self.trials_per_run} trials)")
 
             # 백테스팅 함수 정의
-            def backtesting_func(config):
-                """백테스팅 실행 함수"""
-                # 임시 설정 저장
-                temp_config_path = "configs/temp_adaptive_filter_config.yaml"
-                import yaml
-                with open(temp_config_path, 'w', encoding='utf-8') as f:
-                    yaml.dump(config, f, allow_unicode=True)
+            def backtesting_func(config, start_round=None, end_round=None):
+                """백테스팅 실행 함수 (ThresholdOptimizer 호환: start_round/end_round 지원)"""
+                # start_round/end_round가 없으면 DB에서 자동 계산
+                if start_round is None or end_round is None:
+                    latest = self.backtester.db_manager.get_latest_round()
+                    if end_round is None:
+                        end_round = latest
+                    if start_round is None:
+                        start_round = max(1, latest - 29)
+
+                # config에서 파라미터 추출하여 백테스터에 적용
+                adaptive_opts = config.get('adaptive_options', config)
+                threshold = adaptive_opts.get('global_probability_threshold')
+                ml_bypass = adaptive_opts.get('ml_bypass_threshold')
+                ml_weight = adaptive_opts.get('ml_weight')
+
+                if any(v is not None for v in [threshold, ml_bypass, ml_weight]):
+                    self.backtester.update_parameters(
+                        threshold=threshold,
+                        ml_bypass=ml_bypass,
+                        ml_weight=ml_weight
+                    )
 
                 # 백테스팅 실행
-                try:
-                    backtester = OptimizedBacktestingFramework(
-                        config_path=temp_config_path
-                    )
-                    results = backtester.run_backtest(
-                        validation_rounds=50,
-                        parallel_workers=8
-                    )
-                    return results
-                finally:
-                    # 임시 파일 삭제
-                    if os.path.exists(temp_config_path):
-                        os.remove(temp_config_path)
+                result = self.backtester.run_backtest(
+                    start_round=start_round,
+                    end_round=end_round
+                )
+
+                # 반환값 표준화 (ThresholdOptimizer가 avg_matches 키 접근)
+                perf = result.get('performance_metrics', {})
+                return {
+                    'avg_matches': perf.get('overall_avg_matches', 0),
+                    'ml_inclusion_rate': result.get('ml_inclusion_rate', 0),
+                    'combination_count': result.get('combination_count', 0),
+                }
 
             # 최적화 실행
             results = self.optimizer.optimize(

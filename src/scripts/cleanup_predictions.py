@@ -44,7 +44,7 @@ def cleanup_json_predictions():
             with open(json_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
-            logging.info(f"✅ 최신 5개 예측만 유지 완료")
+            logging.info(f"[O] 최신 5개 예측만 유지 완료")
             
             # 정리된 예측 출력
             print("\n정리된 예측 (1186회차):")

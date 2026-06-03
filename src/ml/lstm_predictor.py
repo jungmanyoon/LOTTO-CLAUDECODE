@@ -51,7 +51,7 @@ class LSTMPredictor:
 
         # 모델 아키텍처 파라미터 (ML-003 개선: 경량화)
         self.lstm_units = [64, 32, 16]    # [128, 64, 32] → [64, 32, 16]
-        self.dropout_rate = 0.35  # ✅ FIX: 0.2 → 0.35 (과적합 방지)
+        self.dropout_rate = 0.35  # [O] FIX: 0.2 -> 0.35 (과적합 방지)
         self.learning_rate = 0.001
         
         # 데이터 전처리 파라미터
@@ -417,13 +417,13 @@ class LSTMPredictor:
             List[Dict[str, Any]]: 예측된 번호 조합과 확률
         """
         if not TENSORFLOW_AVAILABLE or not self.is_trained:
-            logging.warning("모델이 준비되지 않았습니다. 랜덤 예측을 반환합니다.")
-            return self._random_predictions(num_predictions)
-        
+            logging.warning("모델이 준비되지 않았습니다. 예측을 건너뜁니다.")
+            return []
+
         # 입력 데이터 검증
         if not recent_numbers or len(recent_numbers) == 0:
-            logging.warning("입력 데이터가 없습니다. 랜덤 예측을 반환합니다.")
-            return self._random_predictions(num_predictions)
+            logging.warning("입력 데이터가 없습니다. 예측을 건너뜁니다.")
+            return []
         
         # 입력 데이터 준비
         if len(recent_numbers) < self.sequence_length:
@@ -436,7 +436,7 @@ class LSTMPredictor:
                 recent_sequence = recent_numbers
             else:
                 logging.warning(f"입력 데이터 부족: {len(recent_numbers)}개 (최소 필요: 10개)")
-                return self._random_predictions(num_predictions)
+                return []
         else:
             temp_sequence_length = self.sequence_length
             recent_sequence = recent_numbers[-self.sequence_length:]
@@ -539,26 +539,83 @@ class LSTMPredictor:
             List[Dict[str, Any]]: 필터링된 풀 내에서 선택된 예측 번호들
         """
         if not filtered_pool:
-            logging.warning("필터링된 풀이 비어있습니다. 기본 예측 반환")
-            return self._random_predictions(num_predictions)
+            logging.warning("필터링된 풀이 비어있습니다. 예측을 건너뜁니다.")
+            return []
 
-        # 필터링된 풀에서 랜덤 선택 (간단한 구현)
-        # 실제로는 LSTM 예측 확률을 기반으로 선택해야 하지만
-        # 현재는 필터링된 풀에서 랜덤 선택
-        import random
+        # [FIX] LSTM 확률 벡터 기반 가중 선택 (기존: 순수 랜덤 → 신뢰도 0.0)
+        # 모델이 준비된 경우 LSTM 확률로 각 조합의 스코어를 계산
+        prob_vector = None
+        if self.model is not None and recent_numbers:
+            try:
+                # predict_next_numbers()와 동일한 전처리로 확률 벡터 계산
+                if len(recent_numbers) < self.sequence_length:
+                    recent_seq = recent_numbers
+                else:
+                    recent_seq = recent_numbers[-self.sequence_length:]
+
+                encoded_sequence = []
+                for nums_str in recent_seq:
+                    if isinstance(nums_str, (list, tuple)):
+                        numbers = [int(n) for n in nums_str]
+                    else:
+                        numbers = [int(n) for n in str(nums_str).split(',')]
+                    encoded = np.zeros(self.feature_dims)
+                    for num in numbers:
+                        if 1 <= num <= 45:
+                            encoded[num - 1] = 1
+                    encoded_sequence.append(encoded)
+
+                # 시퀀스 길이 맞추기 (패딩)
+                if len(encoded_sequence) < self.sequence_length:
+                    padding = [np.zeros(self.feature_dims)] * (self.sequence_length - len(encoded_sequence))
+                    encoded_sequence = padding + encoded_sequence
+
+                X = np.array([encoded_sequence])
+                prob_vector = self.model.predict(X, verbose=0)[0]  # shape: (45,)
+            except Exception as e:
+                logging.debug(f"LSTM 확률 벡터 계산 실패 (랜덤 폴백): {e}")
+                prob_vector = None
+
         predictions = []
-        selected_combos = random.sample(filtered_pool,
-                                      min(num_predictions, len(filtered_pool)))
+        if prob_vector is not None and len(filtered_pool) > 0:
+            # 각 조합의 스코어 = 해당 번호들의 LSTM 확률 합산
+            pool_array = np.array(filtered_pool)  # (N, 6)
+            # 번호 인덱스(0-based)로 확률 조회 후 합산
+            scores = np.sum(prob_vector[pool_array - 1], axis=1)  # (N,)
 
-        for combo in selected_combos:
-            predictions.append({
-                'numbers': sorted(combo),
-                'confidence': 0.8,  # 필터를 통과했으므로 높은 신뢰도
-                'probability_vector': [1/45] * 45,
-                'from_filtered_pool': True
-            })
+            # 음수 방지 후 정규화 (확률 기반 가중 샘플링)
+            scores = np.maximum(scores, 1e-9)
+            scores /= scores.sum()
 
-        logging.info(f"필터링된 풀({len(filtered_pool)}개)에서 {len(predictions)}개 예측 생성")
+            # 확률 기반 비복원 샘플링
+            n_select = min(num_predictions, len(filtered_pool))
+            selected_indices = np.random.choice(len(filtered_pool), size=n_select, replace=False, p=scores)
+
+            for idx in selected_indices:
+                combo = list(filtered_pool[idx])
+                confidence = float(scores[idx] * len(filtered_pool))  # 상대적 선호도 (1.0 기준)
+                predictions.append({
+                    'numbers': sorted(combo),
+                    'confidence': min(confidence, 1.0),
+                    'probability_vector': prob_vector.tolist(),
+                    'from_filtered_pool': True,
+                    'selection_method': 'lstm_weighted'
+                })
+        else:
+            # 모델 미준비 시 랜덤 폴백 (이 경우에만 랜덤)
+            import random
+            selected_combos = random.sample(list(filtered_pool), min(num_predictions, len(filtered_pool)))
+            for combo in selected_combos:
+                predictions.append({
+                    'numbers': sorted(combo),
+                    'confidence': 0.0,
+                    'probability_vector': [1/45] * 45,
+                    'from_filtered_pool': True,
+                    'selection_method': 'random_fallback'
+                })
+
+        logging.info(f"필터링된 풀({len(filtered_pool)}개)에서 {len(predictions)}개 예측 생성 "
+                     f"(방법: {'LSTM 확률 가중' if prob_vector is not None else '랜덤 폴백'})")
         return predictions
     
     def _save_training_history(self, history):
@@ -572,7 +629,7 @@ class LSTMPredictor:
         }
         
         history_path = self.model_path.replace('.h5', '_history.json')
-        with open(history_path, 'w') as f:
+        with open(history_path, 'w', encoding='utf-8') as f:
             json.dump(history_dict, f, indent=2)
         
         logging.info(f"학습 히스토리 저장됨: {history_path}")
@@ -660,10 +717,10 @@ class LSTMPredictor:
                     metrics=['mae']
                 )
                 
-                # Dummy 평가로 metrics 빌드
+                # Dummy 평가로 metrics 빌드 (모델 입력 shape: (1, seq_len, feature_dims=45))
                 import numpy as np
-                dummy_x = np.random.random((1, self.sequence_length, 6))
-                dummy_y = np.random.random((1, 6))
+                dummy_x = np.zeros((1, self.sequence_length, self.feature_dims))
+                dummy_y = np.zeros((1, self.feature_dims))
                 self.model.evaluate(dummy_x, dummy_y, verbose=0)
                 
             self.is_trained = True

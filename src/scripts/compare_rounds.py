@@ -64,7 +64,7 @@ def compare_filtering_rounds():
         if round_num == 1182:
             normal_count = final_count
         elif final_count < normal_count * 0.01:  # 1% 미만으로 떨어지면 문제
-            print(f"  ⚠️ 문제 발생! 정상 대비 {final_count/normal_count*100:.2f}%만 생존")
+            print(f"  [WARN] 문제 발생! 정상 대비 {final_count/normal_count*100:.2f}%만 생존")
 
 if __name__ == "__main__":
     compare_filtering_rounds()

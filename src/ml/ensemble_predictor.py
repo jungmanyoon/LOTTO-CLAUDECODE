@@ -65,7 +65,7 @@ class EnsemblePredictor:
         }
         
         # 최소 학습 데이터 요구사항 완화
-        self.min_train_samples = 80  # ✅ FIX: 30 → 80 (모델 안정성 향상)
+        self.min_train_samples = 80  # [O] FIX: 30 -> 80 (모델 안정성 향상)
         self.min_sequence_length = 10  # 최소 시퀀스 길이
 
         # 모델 초기화 및 캐시된 모델 로드
@@ -257,7 +257,7 @@ class EnsemblePredictor:
     def _build_xgboost(self):
         """XGBoost 모델 구축 - MultiOutput으로 감싸서 반환 (ML-002 개선)"""
         base_xgb = xgb.XGBClassifier(
-            n_estimators=100,         # 50 → 100 (충분한 부스팅 라운드)
+            n_estimators=150,         # 100 → 150 (예측 안정성 향상)
             max_depth=4,              # 2 → 4 (적절한 트리 깊이)
             learning_rate=0.05,       # 0.01 → 0.05 (적절한 학습률)
             subsample=0.8,            # 0.5 → 0.8 (더 많은 데이터 사용)
@@ -679,41 +679,31 @@ class EnsemblePredictor:
             nn_params: Neural Network 파라미터
         """
         # Random Forest 파라미터 업데이트
+        # 빌더(_build_random_forest)를 재사용해 MultiOutputClassifier 래핑을 유지한다.
+        # 하이퍼파라미터는 래퍼가 아닌 내부 추정기(estimator)에 estimator__ 접두사로 적용한다.
         if 'rf' not in self.models or not self.is_trained:
-            self.models['rf'] = RandomForestClassifier(
-                **rf_params,
-                random_state=42,
-                n_jobs=-1
+            self.models['rf'] = self._build_random_forest()
+        if rf_params:
+            self.models['rf'].set_params(
+                **{f'estimator__{param}': value for param, value in rf_params.items()}
             )
-        else:
-            # 기존 모델의 파라미터 업데이트
-            for param, value in rf_params.items():
-                setattr(self.models['rf'], param, value)
-        
-        # XGBoost 파라미터 업데이트
+
+        # XGBoost 파라미터 업데이트 (동일하게 MultiOutputClassifier 래핑 유지)
         if XGBOOST_AVAILABLE:
             if 'xgb' not in self.models or not self.is_trained:
-                self.models['xgb'] = xgb.XGBClassifier(
-                    **xgb_params,
-                    random_state=42,
-                    n_jobs=-1,
-                    use_label_encoder=False
+                self.models['xgb'] = self._build_xgboost()
+            if xgb_params:
+                self.models['xgb'].set_params(
+                    **{f'estimator__{param}': value for param, value in xgb_params.items()}
                 )
-            else:
-                for param, value in xgb_params.items():
-                    setattr(self.models['xgb'], param, value)
-        
-        # Neural Network 파라미터 업데이트
+
+        # Neural Network 파라미터 업데이트 (동일하게 MultiOutputClassifier 래핑 유지)
         if 'nn' not in self.models or not self.is_trained:
-            self.models['nn'] = MLPClassifier(
-                **nn_params,
-                random_state=42,
-                max_iter=1000,
-                early_stopping=True
+            self.models['nn'] = self._build_neural_network()
+        if nn_params:
+            self.models['nn'].set_params(
+                **{f'estimator__{param}': value for param, value in nn_params.items()}
             )
-        else:
-            for param, value in nn_params.items():
-                setattr(self.models['nn'], param, value)
         
         # 재학습 필요 플래그 - 모델이 이미 존재하면 trained 상태 유지
         # 파라미터만 업데이트하고 재학습은 필요시에만 수행
@@ -751,8 +741,8 @@ class EnsemblePredictor:
             np.ndarray: 각 번호의 출현 확률 (45차원)
         """
         if not self.is_trained:
-            logging.warning("모델이 학습되지 않았습니다.")
-            return np.ones(45) / 45  # 균등 분포
+            logging.warning("모델이 학습되지 않았습니다. 예측을 건너뜁니다.")
+            return np.zeros(45)
         
         predictions = {}
         
@@ -884,17 +874,21 @@ class EnsemblePredictor:
         
         return final_pred
     
-    def predict_next_numbers(self, winning_numbers: List[str], 
+    def predict_next_numbers(self, winning_numbers: List[str],
                            num_predictions: int = 10) -> List[Dict[str, Any]]:
         """다음 회차 번호 예측
-        
+
         Args:
             winning_numbers: 과거 당첨번호 리스트
             num_predictions: 생성할 예측 조합 수
-            
+
         Returns:
             List[Dict[str, Any]]: 예측된 번호 조합과 확률
         """
+        if not self.is_trained:
+            logging.warning("앙상블 모델이 학습되지 않았습니다. 예측을 건너뜁니다.")
+            return []
+
         # 특징 추출
         features = self.extract_features(winning_numbers)
         
@@ -913,8 +907,10 @@ class EnsemblePredictor:
         # 확률 배열 검증
         if not isinstance(probabilities, np.ndarray) or len(probabilities) != 45:
             logging.warning(f"예상치 못한 확률 형태: {type(probabilities)}, shape: {getattr(probabilities, 'shape', 'N/A')}")
-            # 기본 균등 분포 사용
-            probabilities = np.ones(45) / 45
+            return []
+        if probabilities.sum() == 0:
+            logging.warning("모델 확률 벡터가 모두 0입니다. 예측을 건너뜁니다.")
+            return []
         
         # 번호 조합 생성
         predictions = []
@@ -923,7 +919,11 @@ class EnsemblePredictor:
             # 확률 기반 샘플링
             # 상위 확률에 가중치를 둔 샘플링
             weights = probabilities ** 2  # 제곱으로 상위 확률 강조
-            weights = weights / weights.sum()
+            total = weights.sum()
+            if total == 0:
+                logging.warning("확률 벡터 합이 0입니다. 예측을 건너뜁니다.")
+                break
+            weights = weights / total
             
             # 중복 없이 6개 선택
             selected_indices = np.random.choice(
@@ -982,29 +982,64 @@ class EnsemblePredictor:
             logging.warning("필터링된 풀이 비어있습니다. 기본 예측 반환")
             return self.predict_next_numbers(winning_numbers_str, num_predictions)
 
-        # 필터링된 풀에서 선택 (앙상블 모델의 특징을 활용)
-        # 각 조합에 대해 점수를 계산하고 상위 선택
-        import random
+        # 앙상블 45차원 확률 벡터 계산 (predict_next_numbers와 동일 파이프라인)
+        # -> 각 조합의 스코어 = 해당 번호들의 확률 합. 가짜 신뢰도 하드코딩 금지.
+        prob_vector = None
+        if self.is_trained:
+            try:
+                features = self.extract_features(winning_numbers_str)
+                latest_features = features.iloc[-1:].values
+                if hasattr(self.scalers['features'], 'mean_'):
+                    latest_features = self.scalers['features'].transform(latest_features)
+                probabilities = self.predict_probability(latest_features)
+                if probabilities.ndim > 1:
+                    probabilities = probabilities[0]
+                if isinstance(probabilities, np.ndarray) and len(probabilities) == 45 and probabilities.sum() > 0:
+                    prob_vector = probabilities
+                else:
+                    logging.debug("앙상블 확률 벡터가 유효하지 않습니다(랜덤 폴백)")
+            except Exception as e:
+                logging.debug(f"앙상블 확률 벡터 계산 실패(랜덤 폴백): {e}")
+
         predictions = []
+        if prob_vector is not None:
+            # 각 조합의 스코어 = 해당 번호들의 앙상블 확률 합산 (LSTM과 동일 규약)
+            pool_array = np.array(filtered_pool)  # (N, 6)
+            scores = np.sum(prob_vector[pool_array - 1], axis=1)  # (N,)
 
-        # 간단한 구현: 필터링된 풀에서 랜덤 선택
-        # 실제로는 각 조합의 특징을 평가해서 선택해야 함
-        selected_combos = random.sample(filtered_pool,
-                                      min(num_predictions, len(filtered_pool)))
+            # 음수 방지 후 정규화 (확률 기반 가중 샘플링)
+            scores = np.maximum(scores, 1e-9)
+            scores /= scores.sum()
 
-        for combo in selected_combos:
-            predictions.append({
-                'numbers': sorted(combo),
-                'confidence': 0.85,  # 필터 + 앙상블 = 높은 신뢰도
-                'models': {
-                    'rf': 0.8,
-                    'xgb': 0.85,
-                    'nn': 0.9
-                },
-                'from_filtered_pool': True
-            })
+            # 확률 기반 비복원 샘플링
+            n_select = min(num_predictions, len(filtered_pool))
+            selected_indices = np.random.choice(len(filtered_pool), size=n_select, replace=False, p=scores)
 
-        logging.info(f"필터링된 풀({len(filtered_pool)}개)에서 {len(predictions)}개 앙상블 예측 생성")
+            for idx in selected_indices:
+                combo = list(filtered_pool[idx])
+                confidence = float(scores[idx] * len(filtered_pool))  # 상대적 선호도 (1.0 기준)
+                predictions.append({
+                    'numbers': sorted(combo),
+                    'confidence': min(confidence, 1.0),
+                    'probability_vector': prob_vector.tolist(),
+                    'from_filtered_pool': True,
+                    'selection_method': 'ensemble_weighted'
+                })
+        else:
+            # 모델 미준비/확률 실패 시에만 랜덤 폴백 (정직하게 confidence=0.0)
+            import random
+            selected_combos = random.sample(list(filtered_pool), min(num_predictions, len(filtered_pool)))
+            for combo in selected_combos:
+                predictions.append({
+                    'numbers': sorted(combo),
+                    'confidence': 0.0,
+                    'probability_vector': [1 / 45] * 45,
+                    'from_filtered_pool': True,
+                    'selection_method': 'random_fallback'
+                })
+
+        logging.info(f"필터링된 풀({len(filtered_pool)}개)에서 {len(predictions)}개 앙상블 예측 생성 "
+                     f"(방법: {'앙상블 확률 가중' if prob_vector is not None else '랜덤 폴백'})")
         return predictions
     
     def evaluate(self, X_test: np.ndarray, y_test: np.ndarray, 

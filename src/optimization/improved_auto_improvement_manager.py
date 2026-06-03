@@ -52,7 +52,7 @@ class ImprovedAutoImprovementManager:
         # 상태에 config 업데이트
         self.state['config'] = self.config
 
-        # ✨ NEW: Never-Stop Learning Mode 설정 로드 (config.yaml에서)
+        # [NEW] Never-Stop Learning Mode 설정 로드 (config.yaml에서)
         self._load_never_stop_learning_config()
 
         # 임계값 히스토리 로드
@@ -60,9 +60,9 @@ class ImprovedAutoImprovementManager:
 
         logging.info(f"개선된 자동 개선 관리자 초기화 완료. 총 백테스팅 횟수: {self.state['total_backtest_count']}")
 
-        # ✨ NEW: 무한 학습 모드 로그
+        # [NEW] 무한 학습 모드 로그
         if self.never_stop_learning:
-            logging.info(f"  ✨ [무한 학습 모드 활성화]")
+            logging.info(f"  [NEW] [무한 학습 모드 활성화]")
             logging.info(f"     - 주간 사이클 모드: {self.weekly_cycle_mode}")
             logging.info(f"     - 현재 사이클: {self.state.get('current_cycle', 0)}")
             logging.info(f"     - 사이클 시작 시간: {self.state.get('cycle_start_time', 'N/A')}")
@@ -72,9 +72,13 @@ class ImprovedAutoImprovementManager:
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, 'r', encoding='utf-8') as f:
-                    state = json.load(f)
+                    loaded = json.load(f)
                 logging.info(f"이전 상태를 불러왔습니다: {self.state_file}")
-                return state
+                # 구버전 state 파일에 누락된 신규 키(weekly_cycle_history 등)를 기본값으로 보강 (automation-5).
+                # 기본 상태 위에 로드값을 덮어써 기존 값은 보존하고 빠진 키만 채운다.
+                merged = self._create_new_state()
+                merged.update(loaded)
+                return merged
             except Exception as e:
                 logging.error(f"상태 파일 로드 실패: {e}")
 
@@ -92,7 +96,7 @@ class ImprovedAutoImprovementManager:
         return []
 
     def _load_never_stop_learning_config(self):
-        """✨ NEW: config.yaml에서 Never-Stop Learning Mode 설정 로드"""
+        """[NEW] config.yaml에서 Never-Stop Learning Mode 설정 로드"""
         try:
             config_yaml_path = "config.yaml"
             with open(config_yaml_path, 'r', encoding='utf-8') as f:
@@ -122,7 +126,7 @@ class ImprovedAutoImprovementManager:
     def _create_new_state(self) -> Dict[str, Any]:
         """새로운 상태 생성"""
         return {
-            'version': '2.1',  # ✨ 버전 업그레이드 (무한 학습 모드 지원)
+            'version': '2.1',  # [NEW] 버전 업그레이드 (무한 학습 모드 지원)
             'created_at': datetime.now().isoformat(),
             'last_updated': datetime.now().isoformat(),
             'total_backtest_count': 0,
@@ -157,7 +161,7 @@ class ImprovedAutoImprovementManager:
             'current_threshold': 1.0,  # 현재 임계값
             'threshold_performance_map': {},  # 임계값별 성능 매핑
 
-            # ✨ NEW: Weekly Cycle 관련 상태
+            # [NEW] Weekly Cycle 관련 상태
             'current_cycle': 0,  # 현재 사이클 번호 (회차 번호와 동일)
             'cycle_start_time': None,  # 사이클 시작 시간
             'cycle_start_round': 0,  # 사이클 시작 회차
@@ -213,21 +217,21 @@ class ImprovedAutoImprovementManager:
             # 모든 모델 성능이 0.0인지 확인
             all_zero = all(new_performance.get(m, 0.0) == 0.0 for m in ['lstm', 'ensemble', 'monte_carlo'])
             if all_zero:
-                logging.error("❌ 백테스팅 결과 오류: 모든 모델의 성능이 0.0입니다!")
+                logging.error("[X] 백테스팅 결과 오류: 모든 모델의 성능이 0.0입니다!")
                 logging.error(f"    - 백테스팅 결과 키: {list(backtest_results.keys())}")
                 logging.error(f"    - performance_metrics 존재: {'performance_metrics' in backtest_results}")
 
-                # 이전 성능을 유지 (0.0으로 덮어쓰지 않음)
-                if self.state['last_backtest_performance'].get('overall', 0.0) > 0:
-                    logging.warning("⚠️ 이전 유효한 성능 값 유지 - 0.0 결과 무시")
-                    return {
-                        'backtest_number': self.state['total_backtest_count'],
-                        'timestamp': datetime.now().isoformat(),
-                        'round': round_num,
-                        'error': 'all_performance_zero',
-                        'should_update': False,
-                        'skipped': True
-                    }
+                # all_zero인 경우 무조건 스킵 (종료 플래그로 인한 조기 중단 방지)
+                # 이전 last_backtest_performance 값에 관계없이 항상 무시
+                logging.warning("[WARN] 모든 모델 성능 0 - 종료 중단 결과로 판단, 상태 업데이트 스킵")
+                return {
+                    'backtest_number': self.state['total_backtest_count'],
+                    'timestamp': datetime.now().isoformat(),
+                    'round': round_num,
+                    'error': 'all_performance_zero',
+                    'should_update': False,
+                    'skipped': True
+                }
 
         # 이전 백테스팅 성능과 비교 (current_performance가 아닌 last_backtest_performance와 비교)
         old_performance = self.state['last_backtest_performance'].copy()
@@ -265,7 +269,7 @@ class ImprovedAutoImprovementManager:
             best_model_perf = best_model_data.get('performance', 0.0)
             
             if new_perf > best_model_perf:
-                logging.info(f"🏆 New Best {model_type.upper()} Score: {best_model_perf:.4f} -> {new_perf:.4f}")
+                logging.info(f"[BEST] New Best {model_type.upper()} Score: {best_model_perf:.4f} -> {new_perf:.4f}")
                 self.state['best_models'][model_type] = {
                     'performance': new_perf,
                     'round': round_num,
@@ -291,7 +295,7 @@ class ImprovedAutoImprovementManager:
 
         # [FIX] 성능 대폭 하락 시 롤백 트리거 (10% 이상 하락)
         elif overall_improvement < -0.10 and old_overall > 0:
-            logging.warning(f"⚠️ 성능 대폭 하락 감지: {overall_improvement:.1%}")
+            logging.warning(f"[WARN] 성능 대폭 하락 감지: {overall_improvement:.1%}")
             logging.warning(f"    - 이전 성능: {old_overall:.4f}")
             logging.warning(f"    - 현재 성능: {new_overall:.4f}")
 
@@ -305,10 +309,10 @@ class ImprovedAutoImprovementManager:
                 rollback_success = engine.rollback_to_best()
 
                 if rollback_success:
-                    logging.info("✅ 자동 롤백 완료 - 최고 성능 설정 복원됨")
+                    logging.info("[O] 자동 롤백 완료 - 최고 성능 설정 복원됨")
                     improvement_info['rollback_executed'] = True
                 else:
-                    logging.warning("⚠️ 자동 롤백 실패 - 백업 없음")
+                    logging.warning("[WARN] 자동 롤백 실패 - 백업 없음")
                     improvement_info['rollback_executed'] = False
             except Exception as e:
                 logging.error(f"롤백 호출 실패: {e}")
@@ -318,7 +322,7 @@ class ImprovedAutoImprovementManager:
         if new_overall > 0:
             self.state['last_backtest_performance'] = new_performance
         else:
-            logging.warning("⚠️ 성능 0.0 - 마지막 백테스팅 성능 업데이트 건너뜀")
+            logging.warning("[WARN] 성능 0.0 - 마지막 백테스팅 성능 업데이트 건너뜀")
 
         # 임계값별 성능 기록
         current_threshold = self.state.get('current_threshold', 1.0)
@@ -371,7 +375,7 @@ class ImprovedAutoImprovementManager:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
 
-            # ✅ PRECISION FIX: 임계값 업데이트 (round로 부동소수점 오차 제거)
+            # [O] PRECISION FIX: 임계값 업데이트 (round로 부동소수점 오차 제거)
             config['global_probability_threshold'] = round(threshold, 2)
 
             # 설정 저장
@@ -426,12 +430,12 @@ class ImprovedAutoImprovementManager:
 
         # [FIX] 조기 경고: metrics가 비어있는지 확인
         if not metrics:
-            logging.error("❌ 백테스팅 결과에 performance_metrics가 없습니다!")
+            logging.error("[X] 백테스팅 결과에 performance_metrics가 없습니다!")
             logging.error(f"    - 백테스팅 결과 키: {list(backtest_results.keys())}")
             return performance
 
         if not model_performance:
-            logging.error("❌ performance_metrics에 model_performance가 없습니다!")
+            logging.error("[X] performance_metrics에 model_performance가 없습니다!")
             logging.error(f"    - metrics 키: {list(metrics.keys())}")
             return performance
 
@@ -449,7 +453,7 @@ class ImprovedAutoImprovementManager:
                 empty_models.append(model_type)
 
         if empty_models:
-            logging.warning(f"⚠️ 일부 모델의 성능이 0.0입니다: {empty_models}")
+            logging.warning(f"[WARN] 일부 모델의 성능이 0.0입니다: {empty_models}")
 
         # 전체 성능 계산 (가중 평균) - 통합 함수 사용
         performance['overall'] = PerformanceMetrics.calculate_overall_score(
@@ -497,16 +501,16 @@ class ImprovedAutoImprovementManager:
         """현재 상태 보고서 생성"""
         report = []
         report.append("\\n" + "="*60)
-        report.append("🤖 개선된 자동 개선 시스템 상태 보고서")
+        report.append("[STAT] 개선된 자동 개선 시스템 상태 보고서")
         report.append("="*60)
 
         # 기본 정보
-        report.append(f"\\n📊 총 백테스팅 횟수: {self.state['total_backtest_count']}회")
-        report.append(f"📅 시스템 생성일: {self.state.get('created_at', 'N/A')}")
-        report.append(f"🔄 마지막 업데이트: {self.state.get('last_updated', 'N/A')}")
+        report.append(f"\\n[STAT] 총 백테스팅 횟수: {self.state['total_backtest_count']}회")
+        report.append(f"[LIST] 시스템 생성일: {self.state.get('created_at', 'N/A')}")
+        report.append(f"[SYNC] 마지막 업데이트: {self.state.get('last_updated', 'N/A')}")
 
         # 현재 성능
-        report.append(f"\\n📈 현재 성능:")
+        report.append(f"\\n[UP] 현재 성능:")
         current = self.state['current_performance']
         report.append(f"  • LSTM: {current.get('lstm', 0):.3f}")
         report.append(f"  • Ensemble: {current.get('ensemble', 0):.3f}")
@@ -514,17 +518,17 @@ class ImprovedAutoImprovementManager:
         report.append(f"  • 전체: {current.get('overall', 0):.3f}")
 
         # 최고 성능
-        report.append(f"\\n🏆 최고 성능:")
+        report.append(f"\\n[BEST] 최고 성능:")
         for model, data in self.state['best_models'].items():
             report.append(f"  • {model}: {data['performance']:.3f} (회차: {data.get('round', 'N/A')})")
 
         # 임계값 정보
-        report.append(f"\\n⚙️ 임계값 설정:")
+        report.append(f"\\n[CONFIG] 임계값 설정:")
         report.append(f"  • 현재 임계값: {self.state.get('current_threshold', 1.0):.2f}%")
         report.append(f"  • 동적 조정: {'활성화' if self.config.get('dynamic_threshold_enabled', True) else '비활성화'}")
 
         # 최근 개선 이력
-        report.append(f"\\n📊 최근 개선 이력:")
+        report.append(f"\\n[STAT] 최근 개선 이력:")
         recent_improvements = [h for h in self.state['improvement_history'][-5:]]
 
         for i, history in enumerate(recent_improvements, 1):
@@ -542,7 +546,7 @@ class ImprovedAutoImprovementManager:
             else:
                 date_only = 'N/A'
 
-            status = "✅ 개선" if should_update else "❌ 개선 없음"
+            status = "[O] 개선" if should_update else "[X] 개선 없음"
             report.append(f"\\n  [{i}회차] {date_only}")
 
             if should_update:

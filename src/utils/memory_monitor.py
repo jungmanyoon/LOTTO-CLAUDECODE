@@ -57,7 +57,7 @@ class MemoryMonitor:
             while self.monitoring:
                 snapshot = self.take_snapshot()
                 if self.enable_warnings and snapshot.rss_mb > self.threshold_mb:
-                    self.logger.warning(f"⚠️ 메모리 임계값 초과: {snapshot.rss_mb:.1f}MB > {self.threshold_mb}MB")
+                    self.logger.warning(f"[WARN] 메모리 임계값 초과: {snapshot.rss_mb:.1f}MB > {self.threshold_mb}MB")
                 time.sleep(interval)
 
         self.monitor_thread = threading.Thread(target=monitor_loop, daemon=True)
@@ -110,10 +110,10 @@ class MemoryMonitor:
 
         if self.baseline_mb:
             delta = snapshot.rss_mb - self.baseline_mb
-            self.logger.info(f"💾 [{stage}] 메모리: {snapshot.rss_mb:.1f}MB "
+            self.logger.info(f"[SAVE] [{stage}] 메모리: {snapshot.rss_mb:.1f}MB "
                            f"(+{delta:.1f}MB), 시스템: {snapshot.percent:.1f}%")
         else:
-            self.logger.info(f"💾 [{stage}] 메모리: {snapshot.rss_mb:.1f}MB, "
+            self.logger.info(f"[SAVE] [{stage}] 메모리: {snapshot.rss_mb:.1f}MB, "
                            f"시스템: {snapshot.percent:.1f}%")
 
     def get_report(self) -> str:
@@ -122,7 +122,7 @@ class MemoryMonitor:
             return "메모리 스냅샷이 없습니다."
 
         lines = ["=" * 60]
-        lines.append("📊 메모리 사용량 리포트")
+        lines.append("[STAT] 메모리 사용량 리포트")
         lines.append("=" * 60)
 
         if self.baseline_mb:
@@ -147,11 +147,16 @@ class MemoryMonitor:
                 if snapshot.description:
                     lines.append(f"  - {snapshot.description}: {snapshot.rss_mb:.1f}MB")
 
-        # 메모리 효율성
-        if self.baseline_mb and self.peak_mb:
-            efficiency = (1 - (self.peak_mb - self.baseline_mb) / self.threshold_mb) * 100
-            efficiency = max(0, min(100, efficiency))
-            lines.append(f"\n메모리 효율성: {efficiency:.1f}%")
+        # 임계값 대비 여유율 (피크 RSS 기준)
+        # 의미: 임계값(threshold_mb) 중 아직 남아있는 여유 비율.
+        #   100% = 피크 사용량이 0에 가까움(여유 충분), 0% = 피크가 임계값에 도달/초과.
+        # 과거 "메모리 효율성" 지표는 (peak-baseline)/threshold 라 서로 다른 척도를
+        # 섞어 임계값 초과 시 음수가 되어 의미가 모호했으므로, 절대 RSS 기준 여유율로 재정의.
+        if self.threshold_mb and self.peak_mb:
+            headroom_ratio = (1 - self.peak_mb / self.threshold_mb) * 100
+            headroom_ratio = max(0, min(100, headroom_ratio))
+            lines.append(f"\n임계값 대비 여유율(피크 기준): {headroom_ratio:.1f}% "
+                         f"(피크 {self.peak_mb:.1f}MB / 임계값 {self.threshold_mb:.1f}MB)")
 
         lines.append("=" * 60)
         return "\n".join(lines)
@@ -164,7 +169,7 @@ class MemoryMonitor:
         # 프로세스가 임계값 초과 또는 시스템 메모리 80% 이상 사용
         if current > self.threshold_mb or sys_mem.percent > 80:
             if self.enable_warnings:
-                self.logger.warning(f"⚠️ 메모리 압박 감지: "
+                self.logger.warning(f"[WARN] 메모리 압박 감지: "
                                   f"프로세스 {current:.1f}MB, 시스템 {sys_mem.percent:.1f}%")
             return True
         return False
@@ -173,12 +178,12 @@ class MemoryMonitor:
         """가비지 컬렉션 제안"""
         if self.check_memory_pressure():
             import gc
-            self.logger.info("🔧 가비지 컬렉션 실행...")
+            self.logger.info("[FIX] 가비지 컬렉션 실행...")
             before = self.get_current_memory()
             gc.collect()
             after = self.get_current_memory()
             freed = before - after
-            self.logger.info(f"✅ 메모리 {freed:.1f}MB 해제됨")
+            self.logger.info(f"[O] 메모리 {freed:.1f}MB 해제됨")
             return True
         return False
 

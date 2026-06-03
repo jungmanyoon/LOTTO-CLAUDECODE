@@ -62,7 +62,8 @@ class LottoConstants:
     MIN_NUMBER: Final[int] = 1
     MAX_NUMBER: Final[int] = 45
     COMBINATION_SIZE: Final[int] = 6
-    
+    TOTAL_COMBINATIONS: Final[int] = 8145060  # C(45, 6) = 이론적 전체 조합 수 (DB 실제 적재수가 아님)
+
     # 배치 처리 관련
     BATCH_SIZE: Final[int] = 10000
     MAX_BATCH_MEMORY: Final[int] = 1000000

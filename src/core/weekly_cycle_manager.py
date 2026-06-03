@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-✨ Weekly Cycle Manager - 주간 사이클 기반 무한 학습 관리자
+[NEW] Weekly Cycle Manager - 주간 사이클 기반 무한 학습 관리자
+
+[automation-1 / 미연결 - 의도적] 이 매니저는 UnifiedOptimizer(단일 백그라운드 최적화,
+src/optimization/unified_optimizer.py)로 **대체**되었으며, main.py에 의도적으로 연결하지 않는다.
+- on_new_round_detected() -> start_continuous_learning() 은 별도 데몬 스레드에서
+  ThresholdOptimizer.optimize()를 무한 반복하는데, 이는 UnifiedOptimizer가 이미 수행하는
+  백그라운드 최적화와 정확히 중복되어, 동시 실행 시 스레드/DB 경합과 임계값 이중 기록을 유발한다.
+- 따라서 SystemStateManager.set_weekly_cycle_manager()는 호출되지 않으며(주입 안 함),
+  weekly_cycle_mode/never_stop_learning 설정 플래그는 이 매니저 전용이 아니라
+  ThresholdOptimizer의 "무한 최적화" 동작 제어에 쓰이므로 그대로 둔다(False로 내리면 옵티마이저가 멈춤).
+- 재활성화하려면 UnifiedOptimizer와의 역할을 통합/택일한 뒤 연결할 것.
 
 새 로또 회차 발표 시 자동으로 1주일 사이클을 시작하고,
 사이클 내내 학습을 계속하여 마지막에 최고 성능으로 예측 생성
@@ -106,7 +116,7 @@ class WeeklyCycleManager:
 
             # 이전 사이클이 실행 중이면 종료
             if self.is_learning:
-                self.logger.warning(f"⚠️ 이전 사이클(#{self.current_cycle}) 실행 중 - 강제 종료")
+                self.logger.warning(f"[WARN] 이전 사이클(#{self.current_cycle}) 실행 중 - 강제 종료")
                 self.stop_cycle()
 
             # 새 사이클 시작
@@ -122,7 +132,7 @@ class WeeklyCycleManager:
 
             self.logger.info(f"")
             self.logger.info(f"╔{'═' * 78}╗")
-            self.logger.info(f"║ ✨ 새 사이클 시작: Round #{round_num}                                         ║")
+            self.logger.info(f"║ [NEW] 새 사이클 시작: Round #{round_num}                                         ║")
             self.logger.info(f"╠{'═' * 78}╣")
             self.logger.info(f"║   • 시작 시간: {self.cycle_start_time.strftime('%Y-%m-%d %H:%M:%S')}                           ║")
             self.logger.info(f"║   • 종료 예정: {self.cycle_end_time.strftime('%Y-%m-%d %H:%M:%S')}                           ║")
@@ -172,7 +182,7 @@ class WeeklyCycleManager:
         )
         self.learning_thread.start()
 
-        self.logger.info(f"✅ 무한 학습 스레드 시작: {self.learning_thread.name}")
+        self.logger.info(f"[O] 무한 학습 스레드 시작: {self.learning_thread.name}")
 
     def _infinite_learning_loop(self, backtesting_func: Callable):
         """
@@ -185,7 +195,7 @@ class WeeklyCycleManager:
 
         self.logger.info(f"")
         self.logger.info(f"{'=' * 80}")
-        self.logger.info(f"  ♾️  무한 학습 루프 시작 - 사이클 #{self.current_cycle}")
+        self.logger.info(f"  [INF]  무한 학습 루프 시작 - 사이클 #{self.current_cycle}")
         self.logger.info(f"{'=' * 80}")
         self.logger.info(f"")
 
@@ -196,7 +206,7 @@ class WeeklyCycleManager:
 
                 self.logger.info(f"")
                 self.logger.info(f"┌{'─' * 78}┐")
-                self.logger.info(f"│ 📦 배치 #{batch_count} 시작                                                  │")
+                self.logger.info(f"│ [PKG] 배치 #{batch_count} 시작                                                  │")
                 self.logger.info(f"├{'─' * 78}┤")
                 self.logger.info(f"│   • 시작 시간: {batch_start_time.strftime('%H:%M:%S')}                                            │")
                 self.logger.info(f"│   • Trial 수: {self.trial_batch_size}회                                              │")
@@ -223,7 +233,7 @@ class WeeklyCycleManager:
                         self.cycle_best_performance = results['best_score']
 
                         self.logger.info(f"")
-                        self.logger.info(f"🏆 사이클 최고 성능 갱신!")
+                        self.logger.info(f"[BEST] 사이클 최고 성능 갱신!")
                         self.logger.info(f"   {self.cycle_best_performance - improvement:.4f} → {self.cycle_best_performance:.4f} (↑{improvement:.4f})")
                         self.logger.info(f"   Threshold: {results['best_params']['threshold']:.2f}")
                         self.logger.info(f"   ML Bypass: {results['best_params']['ml_bypass']}")
@@ -235,7 +245,7 @@ class WeeklyCycleManager:
                         self.improvement_mgr.save_state()
 
                 self.logger.info(f"")
-                self.logger.info(f"✅ 배치 #{batch_count} 완료 ({batch_duration:.1f}초)")
+                self.logger.info(f"[O] 배치 #{batch_count} 완료 ({batch_duration:.1f}초)")
                 self.logger.info(f"   현재 사이클 최고 성능: {self.cycle_best_performance:.4f}")
                 self.logger.info(f"   누적 Trials: {self.cycle_total_trials}회")
 
@@ -243,13 +253,13 @@ class WeeklyCycleManager:
                 remaining_time = (self.cycle_end_time - datetime.now()).total_seconds()
                 if remaining_time <= 0:
                     self.logger.info(f"")
-                    self.logger.info(f"⏰ 사이클 종료 시간 도달 - 학습 중단")
+                    self.logger.info(f"[TIME] 사이클 종료 시간 도달 - 학습 중단")
                     break
 
                 # 다음 배치까지 대기 (또는 종료 신호 대기)
-                self.logger.info(f"⏳ 다음 배치까지 {self.batch_interval_seconds}초 대기...")
+                self.logger.info(f"[WAIT] 다음 배치까지 {self.batch_interval_seconds}초 대기...")
                 if self.stop_signal.wait(timeout=self.batch_interval_seconds):
-                    self.logger.info(f"🛑 종료 신호 수신 - 학습 중단")
+                    self.logger.info(f"[STOP] 종료 신호 수신 - 학습 중단")
                     break
 
             except Exception as e:
@@ -268,7 +278,7 @@ class WeeklyCycleManager:
 
         self.logger.info(f"")
         self.logger.info(f"╔{'═' * 78}╗")
-        self.logger.info(f"║ 🏁 사이클 #{self.current_cycle} 종료                                            ║")
+        self.logger.info(f"║ [FINISH] 사이클 #{self.current_cycle} 종료                                            ║")
         self.logger.info(f"╠{'═' * 78}╣")
         self.logger.info(f"║   • 실행 시간: {cycle_duration:.1f}시간                                           ║")
         self.logger.info(f"║   • 총 Trials: {self.cycle_total_trials}회                                       ║")
@@ -286,10 +296,11 @@ class WeeklyCycleManager:
             'best_performance': self.cycle_best_performance
         }
 
-        self.improvement_mgr.state['weekly_cycle_history'].append(cycle_record)
+        # 구버전 state 파일 호환: 키 부재 시 KeyError 방지 (automation-5, _load_state 병합과 이중 방어)
+        self.improvement_mgr.state.setdefault('weekly_cycle_history', []).append(cycle_record)
         self.improvement_mgr.save_state()
 
-        self.logger.info(f"✅ 사이클 히스토리 저장 완료")
+        self.logger.info(f"[O] 사이클 히스토리 저장 완료")
 
     def stop_cycle(self):
         """사이클 강제 종료"""
@@ -297,16 +308,16 @@ class WeeklyCycleManager:
             self.logger.warning("실행 중인 사이클이 없습니다")
             return
 
-        self.logger.info(f"🛑 사이클 #{self.current_cycle} 강제 종료 요청")
+        self.logger.info(f"[STOP] 사이클 #{self.current_cycle} 강제 종료 요청")
         self.stop_signal.set()
 
         # 스레드 종료 대기 (최대 30초)
         if self.learning_thread and self.learning_thread.is_alive():
             self.learning_thread.join(timeout=30)
             if self.learning_thread.is_alive():
-                self.logger.warning("⚠️ 학습 스레드가 30초 내에 종료되지 않음")
+                self.logger.warning("[WARN] 학습 스레드가 30초 내에 종료되지 않음")
             else:
-                self.logger.info("✅ 학습 스레드 정상 종료")
+                self.logger.info("[O] 학습 스레드 정상 종료")
 
     def get_cycle_status(self) -> Dict[str, Any]:
         """현재 사이클 상태 반환"""
@@ -347,14 +358,14 @@ class WeeklyCycleManager:
 
         # 최고 파라미터 적용
         self.logger.info(f"")
-        self.logger.info(f"🎯 사이클 최고 성능 파라미터로 예측 생성 시작")
+        self.logger.info(f"[TARGET] 사이클 최고 성능 파라미터로 예측 생성 시작")
         self.logger.info(f"   사이클 최고 성능: {self.cycle_best_performance:.4f}")
 
         # ThresholdOptimizer의 최적 파라미터 적용
         apply_success = self.optimizer.apply_best_params(validate=False)
 
         if not apply_success:
-            self.logger.error("❌ 최적 파라미터 적용 실패")
+            self.logger.error("[X] 최적 파라미터 적용 실패")
             return {'success': False, 'error': 'apply_params_failed'}
 
         # 예측 생성 (함수가 제공된 경우)
@@ -362,7 +373,7 @@ class WeeklyCycleManager:
         if prediction_generator_func:
             try:
                 predictions = prediction_generator_func()
-                self.logger.info(f"✅ 예측 생성 완료: {len(predictions) if predictions else 0}개")
+                self.logger.info(f"[O] 예측 생성 완료: {len(predictions) if predictions else 0}개")
             except Exception as e:
                 self.logger.error(f"예측 생성 실패: {e}")
 

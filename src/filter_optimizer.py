@@ -193,6 +193,11 @@ class FilterOptimizer(Generic[T]):
                     disable=not show_progress,
                     file=sys.stdout) as pbar:
 
+                # 결과를 청크 인덱스별로 임시 저장 (입력 순서 보존)
+                # as_completed는 완료 순서가 비결정적이므로 곧바로 합치면
+                # 실행마다 출력 순서가 달라진다. 인덱스로 모은 뒤 입력 순서대로 결합.
+                results_by_idx = {}
+
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                     future_to_idx = {}
                     for idx, chunk in enumerate(chunks):
@@ -204,15 +209,21 @@ class FilterOptimizer(Generic[T]):
                         chunk_size = len(chunks[idx])
                         try:
                             result = future.result()
-                            filtered_combs.extend(result)
+                            results_by_idx[idx] = result
                         except Exception as exc:
                             logging.warning(f"청크 병렬 처리 실패({type(exc).__name__}), 직렬 재시도")
                             try:
                                 result = self.process_func(chunks[idx], **kwargs)
-                                filtered_combs.extend(result)
+                                results_by_idx[idx] = result
                             except Exception as retry_exc:
                                 logging.error(f"청크 직렬 재시도도 실패: {retry_exc}")
+                                # 실패한 청크는 빈 결과로 처리 (순서 자리 유지)
+                                results_by_idx[idx] = []
                         pbar.update(chunk_size)
+
+                # 입력(청크) 순서대로 결합하여 결정적 출력 순서 보장
+                for idx in range(len(chunks)):
+                    filtered_combs.extend(results_by_idx[idx])
 
             return filtered_combs
 

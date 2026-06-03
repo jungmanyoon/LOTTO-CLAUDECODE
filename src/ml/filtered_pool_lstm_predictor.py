@@ -20,7 +20,7 @@ except ImportError:
 class FilteredPoolLSTMPredictor(LSTMPredictor):
     """필터링된 풀 기반 LSTM 예측기"""
 
-    def __init__(self, sequence_length: int = 50, model_path: str = None, filter_manager=None):
+    def __init__(self, sequence_length: int = 15, model_path: str = None, filter_manager=None):
         """
         Args:
             sequence_length: 입력 시퀀스 길이
@@ -46,7 +46,21 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
 
     def set_filtered_pool(self, filtered_combinations: List[List[int]]):
         """필터링된 풀 설정 (FilteredPoolEnsemblePredictor 호환 인터페이스)"""
-        self.filtered_pool = [tuple(sorted(combo)) for combo in filtered_combinations]
+        pool = []
+        for combo in filtered_combinations:
+            if isinstance(combo, str):
+                # "1,2,3,4,5,6" 형식 문자열 파싱
+                try:
+                    nums = tuple(sorted(int(n.strip()) for n in combo.split(',')))
+                    pool.append(nums)
+                except (ValueError, AttributeError):
+                    continue
+            else:
+                try:
+                    pool.append(tuple(sorted(int(n) for n in combo)))
+                except (ValueError, TypeError):
+                    continue
+        self.filtered_pool = pool
         self.pool_size = len(self.filtered_pool)
 
         # combination_to_idx, idx_to_combination 딕셔너리 생성
@@ -56,8 +70,55 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
 
         logging.info(f"FilteredPoolLSTMPredictor 풀 설정: {self.pool_size}개 조합")
 
+    def train_with_filtered_pool(self, historical_data: List[List[int]],
+                                 filtered_pool: Optional[List[List[int]]] = None,
+                                 epochs: int = 30, batch_size: int = 32,
+                                 validation_split: float = 0.2, **kwargs):
+        """필터링된 풀을 설정하고 부모 LSTM(45차원)을 학습한다.
+
+        예측 경로(predict_from_filtered_pool)는 부모 predict_next_numbers(45차원 sigmoid 모델)를
+        사용하고 그 결과를 풀에 매칭한다. 따라서 학습도 부모의 45차원 파이프라인으로 해야 한다.
+        주의: 자식 prepare_training_data의 y는 ml-probabilistic-5에서 부모와 동일한 45차원으로 통일됐으나,
+              입력 형식이 다르다(부모 train은 List[str], 자식은 List[List[int]]). 부모 train이 List[str]을
+              넘기므로 학습 동안에는 부모 prepare_training_data(List[str]->45차원)를 일시 사용한다.
+
+        Args:
+            historical_data: 과거 당첨조합 (List[List[int]] 또는 'a,b,..' 문자열 리스트)
+            filtered_pool: 필터 통과 풀 (제공 시 설정, 예측 매칭에 사용)
+            epochs/batch_size/validation_split: 부모 train 인자
+        Returns:
+            학습 history (TensorFlow 미사용/데이터 부족 시 None)
+        """
+        if filtered_pool:
+            self.set_filtered_pool(filtered_pool)
+
+        # 부모가 기대하는 List[str] 형식으로 정규화
+        historical_str = [
+            nums if isinstance(nums, str) else ','.join(map(str, nums))
+            for nums in historical_data
+        ]
+
+        # 학습 동안 부모의 45차원 prepare_training_data를 사용하도록 자식 오버라이드 일시 우회
+        had_instance_attr = 'prepare_training_data' in self.__dict__
+        self.prepare_training_data = lambda wn: LSTMPredictor.prepare_training_data(self, wn)
+        try:
+            return super().train(
+                historical_str, epochs=epochs,
+                batch_size=batch_size, validation_split=validation_split
+            )
+        finally:
+            # 인스턴스 속성 제거 -> 다시 클래스 메서드(자식 오버라이드)로 복원
+            if not had_instance_attr:
+                del self.prepare_training_data
+
     def prepare_training_data(self, historical_combinations: List[List[int]]) -> Tuple[np.ndarray, np.ndarray]:
-        """학습 데이터 준비 (시퀀스 기반)"""
+        """학습 데이터 준비 (시퀀스 기반, 45차원 멀티라벨)
+
+        부모 LSTM(45-sigmoid)과 동일하게 X=(이전 sequence_length개 조합의 45차원 이진벡터 시퀀스),
+        y=(다음 조합의 45차원 이진 멀티라벨)로 구성한다. 풀 제약은 예측 단계
+        (_find_best_match_in_pool)에서 적용하므로 학습 y는 풀-인덱스가 아닌 실제 다음 조합을 쓴다.
+        (ml-probabilistic-5: 과거 풀-인덱스 y는 45차원 출력 모델과 불일치해 학습이 무의미했음)
+        """
         if self.pool_size == 0:
             raise ValueError("필터링된 풀이 설정되지 않았습니다.")
 
@@ -65,9 +126,8 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
         y_list = []
 
         for i in range(self.sequence_length, len(historical_combinations)):
-            # 시퀀스 구성: 이전 sequence_length 개 조합의 번호를 평탄화하여 특징으로 사용
+            # 시퀀스 구성: 이전 sequence_length 개 조합을 각각 45차원 이진 벡터로
             seq = historical_combinations[i - self.sequence_length:i]
-            # 각 조합을 45차원 이진 벡터로 변환
             seq_features = []
             for combo in seq:
                 vec = np.zeros(45)
@@ -77,12 +137,12 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
                 seq_features.append(vec)
             X_list.append(seq_features)
 
-            # 다음 조합의 풀 인덱스를 레이블로
-            next_combo = tuple(sorted(historical_combinations[i]))
-            if next_combo in self.combination_to_idx:
-                y_list.append(self.combination_to_idx[next_combo])
-            else:
-                y_list.append(self._find_similar_combination(list(next_combo)))
+            # 다음 조합을 45차원 이진 멀티라벨 y로 (부모 모델 출력차원과 일치)
+            target = np.zeros(45)
+            for num in historical_combinations[i]:
+                if 1 <= num <= 45:
+                    target[num - 1] = 1.0
+            y_list.append(target)
 
         if not X_list:
             return np.array([]), np.array([])
@@ -90,18 +150,31 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
         return np.array(X_list), np.array(y_list)
 
     def _find_similar_combination(self, combo: List[int]) -> int:
-        """풀에서 가장 유사한 조합의 인덱스 반환"""
-        combo_set = set(combo)
-        best_idx = 0
-        best_score = -1
+        """풀에서 가장 유사한 조합(번호 교집합 최대)의 인덱스 반환 (numpy 벡터화).
 
-        for idx, combination in self.idx_to_combination.items():
-            intersection = len(combo_set & set(combination))
-            if intersection > best_score:
-                best_score = intersection
-                best_idx = idx
+        과거 순수 파이썬 이중 루프(O(pool))를 풀 이진행렬과 타깃 벡터의 행렬곱으로 대체.
+        동점 시 가장 작은 인덱스를 반환(np.argmax 규약 = 기존 strict-greater 루프와 동일).
+        """
+        n_pool = len(self.idx_to_combination)
+        if n_pool == 0:
+            return 0
 
-        return best_idx
+        # 풀 이진행렬 (pool_size x 45): 각 조합의 번호 위치를 1로
+        pool_matrix = np.zeros((n_pool, 45), dtype=np.float32)
+        for idx in range(n_pool):
+            for num in self.idx_to_combination[idx]:
+                if 1 <= num <= 45:
+                    pool_matrix[idx, num - 1] = 1.0
+
+        # 타깃 벡터 (45,)
+        target = np.zeros(45, dtype=np.float32)
+        for num in combo:
+            if 1 <= num <= 45:
+                target[num - 1] = 1.0
+
+        # 교집합 크기 = 행렬곱, 최대 인덱스 반환
+        intersections = pool_matrix @ target
+        return int(np.argmax(intersections))
 
     def update_filtered_pool(self, filtered_combinations: List[Tuple[int, ...]] = None):
         """필터링된 풀을 업데이트"""
@@ -152,8 +225,9 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
             )
 
         try:
-            # 기본 LSTM 예측 수행
-            base_predictions = self.predict(historical_data, num_predictions)
+            # 기본 LSTM 예측 수행 (predict_next_numbers: List[str] 형식으로 변환)
+            historical_str = [','.join(map(str, nums)) for nums in historical_data]
+            base_predictions = self.predict_next_numbers(historical_str, num_predictions)
 
             if not base_predictions:
                 logging.warning("기본 LSTM 예측 실패 - 랜덤 폴백")
@@ -165,8 +239,9 @@ class FilteredPoolLSTMPredictor(LSTMPredictor):
             # 필터링된 풀에서 가장 유사한 조합 찾기
             result = []
             for prediction in base_predictions:
-                best_match = self._find_best_match_in_pool(prediction)
-                numbers = list(best_match) if best_match else list(prediction)
+                target = prediction['numbers'] if isinstance(prediction, dict) else prediction
+                best_match = self._find_best_match_in_pool(target)
+                numbers = list(best_match) if best_match else list(target)
                 result.append({
                     'numbers': sorted(numbers),
                     'confidence': 0.5,

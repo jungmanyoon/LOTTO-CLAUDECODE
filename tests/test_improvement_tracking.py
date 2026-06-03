@@ -84,5 +84,47 @@ def test_improvement_tracking():
     
     print("\nSUCCESS: Improvement tracking verified.")
 
+def test_legacy_manager_rollback_symmetry(tmp_path):
+    """[log-analysis-4] 구버전 AutoImprovementManager(실사용 경로)가 성능 대폭 하락(>10%) 시
+    신버전(ImprovedAutoImprovementManager)과 동일하게 롤백을 트리거하는지(대칭화) 검증.
+
+    수정 전: 구버전은 개선 분기만 있어 -33%/-66% 하락을 조용히 무시(비대칭).
+    수정 후: elif overall_improvement < -0.10 분기로 경고 + ContinuousImprovementEngine.rollback_to_best 호출.
+    """
+    from unittest.mock import patch
+    from src.optimization.auto_improvement_manager import AutoImprovementManager
+
+    state_file = str(tmp_path / "legacy_auto_improvement_state.json")
+    manager = AutoImprovementManager(state_file=state_file)
+
+    # 1) 기준선 수립: 높은 성능 -> current_performance 설정 (0에서 개선되므로 should_update=True)
+    high = {'performance_metrics': {'model_performance': {
+        'lstm': {'avg_matches': 1.5},
+        'ensemble': {'avg_matches': 1.5},
+        'monte_carlo': {'avg_matches': 1.5},
+    }}}
+    info1 = manager.track_backtest(high)
+    assert info1['should_update'] is True
+    assert manager.state['current_performance']['overall'] > 0
+
+    # 2) 대폭 하락(1.5 -> 0.5, 약 -66%): 롤백 트리거 검증 (지연 import 대상 모킹)
+    low = {'performance_metrics': {'model_performance': {
+        'lstm': {'avg_matches': 0.5},
+        'ensemble': {'avg_matches': 0.5},
+        'monte_carlo': {'avg_matches': 0.5},
+    }}}
+    with patch('src.core.continuous_improvement_engine.ContinuousImprovementEngine') as MockEngine:
+        mock_engine = MockEngine.return_value
+        mock_engine.rollback_to_best.return_value = True
+        info2 = manager.track_backtest(low)
+
+    # 하락 시 업데이트는 안 하되, 롤백을 트리거해야 함 (신버전과 대칭)
+    assert info2['should_update'] is False
+    assert info2.get('should_rollback') is True
+    assert info2.get('rollback_executed') is True
+    mock_engine.rollback_to_best.assert_called_once()
+    print("\nSUCCESS: Legacy manager rollback symmetry verified.")
+
+
 if __name__ == "__main__":
     test_improvement_tracking()

@@ -109,7 +109,7 @@ def main():
     print(f"  - 평균: {patterns['sum_stats']['mean']:.1f}")
     print(f"  - 표준편차: {patterns['sum_stats']['std']:.1f}")
     print(f"  - 범위: {patterns['sum_stats']['min']} ~ {patterns['sum_stats']['max']}")
-    print(f"  - 권장 범위 (평균±2σ): "
+    print(f"  - 권장 범위 (평균+-2s): "
           f"{patterns['sum_stats']['mean'] - 2*patterns['sum_stats']['std']:.0f} ~ "
           f"{patterns['sum_stats']['mean'] + 2*patterns['sum_stats']['std']:.0f}")
     
@@ -137,10 +137,10 @@ def main():
         print("   - 이 필터들은 성능만 저하시킴")
     
     print("\n3. **동적 임계값 설정 권장**")
-    print(f"   - 합계 범위: 현재 65~215 → "
+    print(f"   - 합계 범위: 현재 65~215 -> "
           f"권장 {patterns['sum_stats']['mean'] - 2*patterns['sum_stats']['std']:.0f}~"
           f"{patterns['sum_stats']['mean'] + 2*patterns['sum_stats']['std']:.0f}")
-    print(f"   - 홀짝 비율: 6:0 제외 → 홀수 {patterns['odd_even_most_common']}개가 가장 흔함")
+    print(f"   - 홀짝 비율: 6:0 제외 -> 홀수 {patterns['odd_even_most_common']}개가 가장 흔함")
     
     print("\n4. **선택적 필터 적용**")
     print("   - 모든 필터를 항상 적용하면 유효한 조합이 없음")
@@ -180,7 +180,7 @@ def main():
     with open('filter_optimization_summary.json', 'w', encoding='utf-8') as f:
         json.dump(optimization_summary, f, ensure_ascii=False, indent=2)
     
-    print("\n✅ 분석 결과가 filter_optimization_summary.json 파일로 저장되었습니다.")
+    print("\n[O] 분석 결과가 filter_optimization_summary.json 파일로 저장되었습니다.")
 
 if __name__ == "__main__":
     main()

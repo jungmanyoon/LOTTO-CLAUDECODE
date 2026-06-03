@@ -34,22 +34,34 @@ class MultiObjectiveOptimizer:
         })
     
     def optimize(self, initial_solution: Any, max_iterations: int = 100) -> Dict[str, Any]:
-        """다목적 최적화 실행"""
-        # 실제 구현에서는 NSGA-II 또는 유사한 알고리즘 사용
-        # 현재는 간단한 더미 결과 반환
-        
+        """다목적 최적화 실행
+
+        [N-C13] TODO: NSGA-II 또는 동등한 다목적 최적화 알고리즘 구현 필요.
+        현재는 랜덤값 반환 대신 등록된 목적함수로 initial_solution을 실제 평가.
+        목적함수가 없으면 기본값 0.0 반환 (np.random.random() 제거).
+        """
+        logging.warning(
+            "[MultiObjectiveOptimizer] optimize() 미구현: "
+            "NSGA-II 알고리즘 대신 initial_solution 단일 평가만 수행"
+        )
+        # [N-C13] 수정: np.random.random() 제거 → 실제 목적함수 평가로 대체
+        objective_values = self.evaluate_solution(initial_solution)
+
+        # 목적함수가 없는 경우 기본값 0.0
+        if not objective_values:
+            logging.warning("[MultiObjectiveOptimizer] 등록된 목적함수 없음. 빈 결과 반환.")
+            objective_values = {}
+
         result = {
             'best_solution': initial_solution,
-            'objective_values': {
-                name: np.random.random() for name in self.objectives
-            },
-            'iterations': max_iterations,
-            'converged': True
+            'objective_values': objective_values,
+            'iterations': 1,  # 실제 반복 없이 단일 평가
+            'converged': False  # 실제 최적화 미수행이므로 False
         }
-        
+
         # Pareto front 업데이트
         self.pareto_front.append(result)
-        
+
         return result
     
     def get_pareto_front(self) -> List[Dict[str, Any]]:

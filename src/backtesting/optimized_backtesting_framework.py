@@ -280,6 +280,11 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         self.model_cache = ModelCache()
         self.prediction_cache = {}
         self.processed_rounds = set()  # 중복 체크용 세트 추가
+        # 라운드별 DB 풀 존재 여부 캐시 (round_num -> bool)
+        # 한 라운드에서 모델별 예측마다 동일한 COUNT(*) 쿼리가 20회+ 중복 실행되는 것을 방지.
+        # 백테스팅 중 이 프레임워크는 filtered_combinations 를 읽기만 하므로(쓰기 없음) 캐시 안전.
+        # 풀 재생성 경로가 추가되면 invalidate_db_pool_cache() 로 무효화할 것.
+        self._db_pool_cache = {}
         
         # 병렬 처리 설정 (CPU 사용률 최적화)
         # 최대 8코어로 제한하여 CPU 사용률을 낮춤
@@ -883,9 +888,15 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             unique, counts = np.unique(all_numbers, return_counts=True)
             number_freq = np.zeros(45)
             number_freq[unique - 1] = counts
-            
-            # 확률 계산
-            probs = number_freq / number_freq.sum()
+
+            # 확률 계산 (라플라스 스무딩)
+            # (number_freq + 1) / sum 으로 45개 번호 모두 비영 확률을 보장한다.
+            # 작은 학습 윈도우에서 비영 항목이 6개 미만이면
+            # np.random.choice(replace=False)가 ValueError 를 던져
+            # try/except 가 조용히 빈 리스트를 반환(예측 무력화)하던 문제를 제거.
+            # 빈도 기반 정당한 보정으로 가짜 데이터가 아님(NO FAKE DATA).
+            smoothed_freq = number_freq + 1.0
+            probs = smoothed_freq / smoothed_freq.sum()
             
             # 병렬 시뮬레이션 (벡터화)
             n_simulations = 2000  # 10000에서 2000으로 감소
@@ -931,12 +942,34 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         
         return unique_combined[:5]
     
+    def invalidate_db_pool_cache(self, round_num: Optional[int] = None) -> None:
+        """라운드별 DB 풀 존재 여부 캐시를 무효화한다.
+
+        풀이 재생성되어 filtered_combinations 가 변경되는 경로가 추가될 경우 호출.
+
+        Args:
+            round_num: 특정 라운드만 무효화. None 이면 전체 캐시 초기화.
+        """
+        if round_num is None:
+            self._db_pool_cache = {}
+        else:
+            self._db_pool_cache.pop(round_num, None)
+
     def _round_has_db_pool(self, round_num: int) -> bool:
         """Check if filtered pool exists for this round in database
+
+        한 라운드에서 모델별 예측마다 호출되어 동일한 COUNT(*) 쿼리가
+        20회+ 중복 실행되던 것을 라운드 단위 dict 캐시로 1회로 줄인다.
+        백테스팅 중 풀(filtered_combinations)은 읽기 전용이라 캐시가 안전하다.
 
         Returns:
             bool: True if DB pool data exists for this round, False otherwise
         """
+        # 캐시 히트 시 즉시 반환 (쿼리 생략)
+        cached = self._db_pool_cache.get(round_num)
+        if cached is not None:
+            return cached
+
         try:
             db_manager = DatabaseManager()
             filter_db = db_manager.combinations_db
@@ -949,8 +982,12 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                 )
                 result = cursor.fetchone()
                 count = result[0] if result else 0
-                return count > 0
+                has_pool = count > 0
+                # 쿼리 결과를 캐시에 저장 (미스 -> 1회 쿼리 후 재사용)
+                self._db_pool_cache[round_num] = has_pool
+                return has_pool
         except Exception as e:
+            # 예외 시에는 캐시에 저장하지 않음(일시적 DB 락 등 재시도 허용)
             logging.debug(f"DB pool check error: {e}")
             return False
 

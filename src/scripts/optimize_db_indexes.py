@@ -67,9 +67,9 @@ class DatabaseIndexOptimizer:
                     ON lotto_numbers(round)
                 """)
                 conn.commit()
-                logger.info("✅ Index created: idx_lotto_numbers_round")
+                logger.info("[O] Index created: idx_lotto_numbers_round")
             else:
-                logger.info("✅ Index already exists: idx_lotto_numbers_round")
+                logger.info("[O] Index already exists: idx_lotto_numbers_round")
 
             # draw_date 컬럼 인덱스 추가
             if 'idx_lotto_numbers_draw_date' not in existing_indexes:
@@ -79,9 +79,9 @@ class DatabaseIndexOptimizer:
                     ON lotto_numbers(draw_date)
                 """)
                 conn.commit()
-                logger.info("✅ Index created: idx_lotto_numbers_draw_date")
+                logger.info("[O] Index created: idx_lotto_numbers_draw_date")
             else:
-                logger.info("✅ Index already exists: idx_lotto_numbers_draw_date")
+                logger.info("[O] Index already exists: idx_lotto_numbers_draw_date")
 
             # 쿼리 성능 측정 (인덱스 추가 후)
             after_time = self._measure_query_time(cursor, """
@@ -134,16 +134,16 @@ class DatabaseIndexOptimizer:
                     ON predictions(round)
                 """)
                 conn.commit()
-                logger.info("✅ Index created: idx_predictions_round")
+                logger.info("[O] Index created: idx_predictions_round")
             else:
-                logger.info("✅ Index already exists: idx_predictions_round")
+                logger.info("[O] Index already exists: idx_predictions_round")
 
             # prediction_date 컬럼 인덱스는 prediction_tracker.py에서 생성함 (idx_predictions_date)
             # 중복 방지: 이미 idx_predictions_date가 존재하므로 여기서는 생성하지 않음
             if 'idx_predictions_date' in existing_indexes:
-                logger.info("✅ Index already exists: idx_predictions_date (created by PredictionTracker)")
+                logger.info("[O] Index already exists: idx_predictions_date (created by PredictionTracker)")
             else:
-                logger.warning("⚠️ Expected index idx_predictions_date not found - should be created by PredictionTracker")
+                logger.warning("[WARN] Expected index idx_predictions_date not found - should be created by PredictionTracker")
 
             # 복합 인덱스 추가 (round + prediction_date)
             if 'idx_predictions_round_date' not in existing_indexes:
@@ -153,9 +153,9 @@ class DatabaseIndexOptimizer:
                     ON predictions(round, prediction_date DESC)
                 """)
                 conn.commit()
-                logger.info("✅ Index created: idx_predictions_round_date")
+                logger.info("[O] Index created: idx_predictions_round_date")
             else:
-                logger.info("✅ Index already exists: idx_predictions_round_date")
+                logger.info("[O] Index already exists: idx_predictions_round_date")
 
             # 쿼리 성능 측정 (인덱스 추가 후)
             after_time = self._measure_query_time(cursor, """
@@ -219,14 +219,14 @@ class DatabaseIndexOptimizer:
                             WHERE type='index' AND name=?
                         """, (idx_name,))
                         if cursor.fetchone():
-                            logger.info(f"✅ Index created: {idx_name}")
+                            logger.info(f"[O] Index created: {idx_name}")
                             created_count += 1
                         else:
-                            logger.warning(f"⚠️ Index creation reported success but not found: {idx_name}")
+                            logger.warning(f"[WARN] Index creation reported success but not found: {idx_name}")
                     except sqlite3.OperationalError as e:
-                        logger.warning(f"❌ Could not create index {idx_name}: {e}")
+                        logger.warning(f"[X] Could not create index {idx_name}: {e}")
                 else:
-                    logger.info(f"✅ Index already exists: {idx_name}")
+                    logger.info(f"[O] Index already exists: {idx_name}")
 
             result = {
                 'database': 'performance_stats.db',
@@ -279,7 +279,7 @@ class DatabaseIndexOptimizer:
                 for key, value in result.items():
                     logger.info(f"  {key}: {value}")
 
-        logger.info("\n✅ All optimizations completed!")
+        logger.info("\n[O] All optimizations completed!")
 
         return results
 

@@ -24,17 +24,19 @@ class AutoAdjustmentSystemV2:
         self.config_path = 'configs/adaptive_filter_config.yaml'
         self.state_file = 'data/auto_adjustment_state_v2.json'
 
-        # ✅ ThresholdManager 통합 (Single Source of Truth)
+        # [O] ThresholdManager 통합 (Single Source of Truth)
         from .threshold_manager import get_threshold_manager
         self.threshold_manager = get_threshold_manager()
 
-        # 조정 전략 설정
+        # [FIX] 조정 전략 설정 - 방향 수정
+        # 핵심 전략: 성능 낮으면 threshold 낮춰서 더 많은 조합 허용 (당첨번호 포함 확률 UP)
+        # 성능 높으면 threshold 높여서 더 정밀한 필터링 (같은 예산으로 좁은 풀)
         self.adjustment_strategy = {
-            'excellent': {'threshold': 0.5, 'min_score': 0.8},   # 매우 좋음: 보수적 유지
-            'good': {'threshold': 0.75, 'min_score': 0.6},      # 좋음: 약간 보수적
-            'normal': {'threshold': 1.0, 'min_score': 0.4},     # 보통: 표준
-            'poor': {'threshold': 1.5, 'min_score': 0.2},       # 나쁨: 공격적
-            'very_poor': {'threshold': 2.0, 'min_score': 0.0}   # 매우 나쁨: 매우 공격적
+            'excellent': {'threshold': 2.0, 'min_score': 0.8},   # 매우 좋음: 공격적 필터링 (좁은 풀)
+            'good':      {'threshold': 1.5, 'min_score': 0.6},   # 좋음: 필터링 강화
+            'normal':    {'threshold': 1.0, 'min_score': 0.4},   # 보통: 표준
+            'poor':      {'threshold': 0.75, 'min_score': 0.2},  # [FIX] 나쁨: 완화 (더 많이 허용)
+            'very_poor': {'threshold': 0.5, 'min_score': 0.0}    # [FIX] 매우 나쁨: 최대 완화
         }
 
         # 상태 추적
@@ -47,7 +49,7 @@ class AutoAdjustmentSystemV2:
             'performance_history': []
         }
 
-        # ✅ FIX: 백테스팅 설정 로드
+        # [O] FIX: 백테스팅 설정 로드
         if config is None:
             from ..utils.config_manager import ConfigManager
             config = ConfigManager().config
@@ -72,7 +74,7 @@ class AutoAdjustmentSystemV2:
     def _get_current_threshold(self) -> float:
         """현재 설정된 임계값 읽기 (ThresholdManager 사용)"""
         try:
-            # ✅ ThresholdManager에서 가져오기 (Decimal 정밀도)
+            # [O] ThresholdManager에서 가져오기 (Decimal 정밀도)
             return float(self.threshold_manager.get_threshold())
         except Exception as e:
             logging.error(f"임계값 읽기 실패: {e}")
@@ -81,18 +83,18 @@ class AutoAdjustmentSystemV2:
     def _set_threshold(self, new_threshold: float) -> bool:
         """새로운 임계값 설정 (ThresholdManager 사용)"""
         try:
-            # ✅ ThresholdManager에 위임 (Decimal 정밀도 + Observer 패턴)
+            # [O] ThresholdManager에 위임 (Decimal 정밀도 + Observer 패턴)
             old_threshold = self.threshold_manager.get_threshold()
             self.threshold_manager.set_threshold(new_threshold, source="auto_adjustment_v2")
 
-            # ✅ 설정 파일에 저장 (ThresholdManager가 처리)
+            # [O] 설정 파일에 저장 (ThresholdManager가 처리)
             success = self.threshold_manager.save_to_config()
 
             if not success:
                 logging.error("임계값 저장 실패")
                 return False
             
-            logging.info(f"✅ 임계값 변경: {old_threshold}% → {new_threshold}%")
+            logging.info(f"[O] 임계값 변경: {old_threshold}% -> {new_threshold}%")
             
             # 상태 업데이트
             self.state['current_threshold'] = new_threshold
@@ -130,18 +132,41 @@ class AutoAdjustmentSystemV2:
             조정 결과
         """
         logging.info("\n" + "="*60)
-        logging.info("🔄 자동 임계값 조정 분석")
+        logging.info("[SYNC] 자동 임계값 조정 분석")
         if skip_backtest:
             logging.info("   (기존 백테스팅 결과 재사용)")
         logging.info("="*60)
 
+        # [FIX] Optuna 최적화가 최근에 임계값을 설정했으면 AutoAdjV2 조정 스킵
+        if self._is_optimizer_controlling():
+            logging.info("[AutoAdjV2] Optuna 최적화가 임계값 관리 중 - AutoAdjV2 조정 스킵")
+            return {
+                'performance_score': performance_score,
+                'current_threshold': self.state['current_threshold'],
+                'optimal_threshold': self.state['current_threshold'],
+                'adjusted': False,
+                'message': 'Optuna 최적화 중 - AutoAdjV2 조정 스킵'
+            }
+
+        previous_score = self.state.get('last_performance_score', 0.0)
         self.state['last_performance_score'] = performance_score
         if not skip_backtest:
             self.state['backtest_count'] += 1
 
         # 현재 성능 평가
-        logging.info(f"백테스팅 성능: {performance_score:.3f}")
-        
+        logging.info(f"백테스팅 성능: {performance_score:.3f} (이전: {previous_score:.3f})")
+
+        # [FIX] 성능이 이전보다 개선됐으면 현재 threshold 유지
+        if previous_score > 0.01 and performance_score >= previous_score:
+            logging.info(f"[AutoAdjV2] 성능 개선 또는 유지 - 현재 threshold 유지")
+            return {
+                'performance_score': performance_score,
+                'current_threshold': self.state['current_threshold'],
+                'optimal_threshold': self.state['current_threshold'],
+                'adjusted': False,
+                'message': f'성능 개선됨 ({previous_score:.3f}→{performance_score:.3f}) - threshold 유지'
+            }
+
         # 최적 임계값 결정
         optimal_threshold = self._determine_optimal_threshold(performance_score)
         current_threshold = self.state['current_threshold']
@@ -155,7 +180,7 @@ class AutoAdjustmentSystemV2:
         
         # 조정 필요 여부 판단
         if abs(optimal_threshold - current_threshold) > 0.01:  # 0.01% 이상 차이
-            logging.info(f"\n📊 임계값 조정 필요")
+            logging.info(f"\n[STAT] 임계값 조정 필요")
             logging.info(f"  현재: {current_threshold}%")
             logging.info(f"  권장: {optimal_threshold}%")
             
@@ -173,12 +198,26 @@ class AutoAdjustmentSystemV2:
             else:
                 result['message'] = "임계값 조정 실패"
         else:
-            logging.info(f"✅ 현재 임계값 {current_threshold}% 유지 (최적 상태)")
+            logging.info(f"[O] 현재 임계값 {current_threshold}% 유지 (최적 상태)")
             result['message'] = "임계값 조정 불필요"
         
         self._save_state()
         return result
     
+    def _is_optimizer_controlling(self) -> bool:
+        """Optuna 최적화가 최근에 임계값을 제어하고 있는지 확인"""
+        try:
+            history = self.threshold_manager.get_change_history(limit=3)
+            optimizer_sources = {'auto_threshold_optimizer', 'optimizer', 'lotto_threshold_v3',
+                                 'lotto_threshold_v4', 'unified_optimizer', 'threshold_optimizer'}
+            for change in history:
+                if change.parameter == 'global_probability_threshold':
+                    if any(s in str(change.source).lower() for s in optimizer_sources):
+                        return True
+            return False
+        except Exception:
+            return False
+
     def _determine_optimal_threshold(self, performance_score: float) -> float:
         """성능 점수에 따른 최적 임계값 결정"""
         
