@@ -238,21 +238,29 @@ class ExtremenessScorer:
         # (M,D)@(D,D) elementwise (M,D) -> sum axis1
         return np.einsum('ij,jk,ik->i', d, self.cov_inv, d).astype(np.float32)
 
+    def _penalty_one_dim(self, dim: str, vals: np.ndarray) -> np.ndarray:
+        """단일 페널티 차원 기여분 (가중치 적용 전 w*pen 그대로). penalty()/score()와
+        동일한 수식/순서/dtype을 보장하기 위한 내부 단일소스.
+
+        주의: w==0이면 0 배열을 반환한다. penalty()의 `continue`(아예 더하지 않음)와
+        수치적으로 완전히 동일하다(0을 더하는 것과 더하지 않는 것은 같음)."""
+        w = self.penalty_weights.get(dim, 1.0)
+        if w == 0:
+            return np.zeros(len(vals), dtype=np.float32)
+        table = self._penalty_tables[dim]
+        default = max(table.values())  # 미관측 값은 최대 페널티
+        # np.unique를 한 번만 계산해 pen/lut 모두 재사용 (결과 불변, 효율 개선)
+        uniq = np.unique(vals)
+        pen = np.array([table.get(int(v), default) for v in uniq], dtype=np.float32)
+        lut = {int(u): pen[i] for i, u in enumerate(uniq)}
+        return w * np.array([lut[int(v)] for v in vals], dtype=np.float32)
+
     def penalty(self, combos: np.ndarray) -> np.ndarray:
         disc = self._discrete_values(combos)
         out = np.zeros(combos.shape[0], dtype=np.float32)
         for dim in self.PENALTY_DIMS:
-            w = self.penalty_weights.get(dim, 1.0)
-            if w == 0:
-                continue
-            table = self._penalty_tables[dim]
-            default = max(table.values())  # 미관측 값은 최대 페널티
-            vals = disc[dim]
-            # np.unique를 한 번만 계산해 pen/lut 모두 재사용 (결과 불변, 효율 개선)
-            uniq = np.unique(vals)
-            pen = np.array([table.get(int(v), default) for v in uniq], dtype=np.float32)
-            lut = {int(u): pen[i] for i, u in enumerate(uniq)}
-            out += w * np.array([lut[int(v)] for v in vals], dtype=np.float32)
+            # _penalty_one_dim은 w==0이면 0 배열을 반환하므로 누적 결과 불변.
+            out += self._penalty_one_dim(dim, disc[dim])
         return out
 
     def score(self, combos, chunk_size: int = 1_000_000) -> np.ndarray:
@@ -271,6 +279,71 @@ class ExtremenessScorer:
             F = self._continuous_features(sub)
             out[s:e] = self.mahalanobis2(F) + self.penalty(sub)
         return out
+
+    def score_components(self, combos, chunk_size: int = 1_000_000) -> dict:
+        """score()와 '완전히 동일한 수식/순서/dtype'으로 점수를 계산하되, 성분별로 분해해
+        반환한다(진단/로그 전용). total은 score()와 비트 단위로 동일하다.
+
+        반환 dict:
+          {
+            'total': (M,) float32,                      # = mahalanobis2 + sum(penalty 차원)
+            'mahalanobis2': (M,) float32,
+            'pen_max_consecutive': (M,) float32,        # 가중치 적용 후 기여분 (w*penalty)
+            'pen_odd_count': (M,) float32,
+            'pen_max_same_last_digit': (M,) float32,
+            'pen_max_section_occupancy': (M,) float32,
+            'features': {                               # 직관 라벨용 이산 특징 (M,) int16
+                'max_consecutive', 'odd_count',
+                'max_same_last_digit', 'max_section_occupancy'
+            }
+          }
+
+        동일성 보장: total[s:e] = mahalanobis2(F) + sum_dim(_penalty_one_dim(dim))
+        이며, penalty()는 동일한 _penalty_one_dim을 동일 순서로 합산하므로
+        total == score() (np.testing.assert_allclose rtol=0 atol=0 통과)."""
+        if not self._fitted:
+            raise RuntimeError("fit() 먼저 호출 필요")
+        combos = self._to_array(combos)
+        M = combos.shape[0]
+
+        total = np.empty(M, dtype=np.float32)
+        maha = np.empty(M, dtype=np.float32)
+        pen_parts = {dim: np.empty(M, dtype=np.float32) for dim in self.PENALTY_DIMS}
+        feat_parts = {dim: np.empty(M, dtype=np.int16) for dim in self.PENALTY_DIMS}
+
+        for s in range(0, M, chunk_size):
+            e = min(s + chunk_size, M)
+            sub = combos[s:e]
+            F = self._continuous_features(sub)
+            m = self.mahalanobis2(F)
+            maha[s:e] = m
+            disc = self._discrete_values(sub)
+            # 동일성 보장(핵심): score()는 `mahalanobis2(F) + penalty(sub)`이고
+            # penalty()는 float32 0배열에서 PENALTY_DIMS 순서로 _penalty_one_dim을 누적한다.
+            # 따라서 여기서도 '동일하게' float32 0에서 동일 순서로 페널티를 합산한 뒤
+            # 마지막에 mahalanobis2를 더해야 부동소수 연산순서까지 일치한다.
+            pen_sum = np.zeros(e - s, dtype=np.float32)
+            for dim in self.PENALTY_DIMS:
+                p = self._penalty_one_dim(dim, disc[dim])
+                pen_parts[dim][s:e] = p
+                feat_parts[dim][s:e] = disc[dim].astype(np.int16)
+                pen_sum = pen_sum + p
+            total[s:e] = m + pen_sum
+
+        return {
+            'total': total,
+            'mahalanobis2': maha,
+            'pen_max_consecutive': pen_parts['max_consecutive'],
+            'pen_odd_count': pen_parts['odd_count'],
+            'pen_max_same_last_digit': pen_parts['max_same_last_digit'],
+            'pen_max_section_occupancy': pen_parts['max_section_occupancy'],
+            'features': {
+                'max_consecutive': feat_parts['max_consecutive'],
+                'odd_count': feat_parts['odd_count'],
+                'max_same_last_digit': feat_parts['max_same_last_digit'],
+                'max_section_occupancy': feat_parts['max_section_occupancy'],
+            },
+        }
 
     # ------------------------------------------------------------------
     # 풀 선택 / 커버리지

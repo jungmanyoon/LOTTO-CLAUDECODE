@@ -425,7 +425,16 @@ class AutoScheduler:
             
             # 4. ML 모델 재학습
             self._retrain_models()
-            
+
+            # 5. 극단성 풀 제거강도 K 자동 재탐색 (주간 데이터 기준 운영 K 갱신)
+            #    데이터fetch -> 가중치 재학습(위 단계) -> K curve 재계산 -> 정책 저장 순.
+            latest_round = None
+            try:
+                latest_round = self.db_manager.get_latest_round() if self.db_manager else None
+            except Exception:
+                latest_round = None
+            self._refresh_extremeness_k(latest_round or 0)
+
             logging.info("[AutoScheduler] 주간 최적화 완료")
             self._update_job_status(job_name, True)
             
@@ -609,10 +618,37 @@ class AutoScheduler:
             # 4. 시스템 상태 업데이트
             self._update_system_state(round_num)
 
+            # 5. 극단성 풀 제거강도 K 자동 재탐색 (새 데이터 -> 운영 K 갱신)
+            #    실패해도 기존 정책을 유지하므로 체인을 중단시키지 않는다.
+            self._refresh_extremeness_k(round_num)
+
             logging.info(f"[AutoScheduler] [O] 자동 업데이트 체인 완료: {round_num}회차")
 
         except Exception as e:
             logging.error(f"[AutoScheduler] 자동 업데이트 체인 실패: {e}")
+
+    def _refresh_extremeness_k(self, round_num: int):
+        """극단성 풀 제거강도 K(=임계값) 자동 재탐색 후 정책 json 저장.
+
+        흐름: 데이터fetch(이미 완료) -> (가중치 최적화는 별도 백그라운드) ->
+        walk-forward Wilson LCB 곡선 재계산 -> select_target_k -> 정책 json 저장.
+        예측은 이후 이 정책 json(SSOT)을 읽어 풀을 형성한다(ExtremenessPoolPredictor).
+
+        정직성: AUC ~ 0.51 약신호이므로 '수학적 최적 K'가 아니라 '현재 검증창에서 가장
+        방어 가능한 운영 K'를 고른다. 실패 시 기존 정책을 유지(방어).
+
+        주의(상주): 이 메서드는 --24h 상주 모드의 AutoScheduler 에서 새 회차/주간 시점에
+        호출된다. plain main.py(1사이클 후 종료)에서는 main.py 의 동기 stale 체크가 담당한다.
+        """
+        try:
+            logging.info("[AutoScheduler] 5\\5: 극단성 풀 K 자동 재탐색 시작...")
+            from src.core import extremeness_threshold_selector as sel
+            policy = sel.refresh_policy(self.db_manager)
+            logging.info(
+                f"[AutoScheduler] [O] K 재탐색 완료: effective_K={policy.get('effective_target_K'):,}, "
+                f"evidence={policy.get('evidence')} (round={policy.get('round')})")
+        except Exception as e:
+            logging.error(f"[AutoScheduler] 극단성 풀 K 재탐색 실패(기존 정책 유지): {e}")
 
     def _trigger_pattern_reanalysis(self, round_num: int):
         """패턴 재분석 트리거"""

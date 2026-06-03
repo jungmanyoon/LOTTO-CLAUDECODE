@@ -225,8 +225,14 @@ class EnsemblePerformanceMonitor:
         }
 
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
-        with open(self.log_file, 'w', encoding='utf-8') as f:
+        # [원자적 쓰기 2026-06-03] 데몬 스레드가 쓰는 도중 프로세스 종료/SIGINT로 끊기면 절단된 JSON이
+        # 남아 다음 실행의 load_history()가 파싱 실패(ERROR 'Expecting value: line N column M')했다.
+        # 임시파일에 먼저 쓴 뒤 os.replace로 원자적 교체하여 부분 작성 파일이 노출되지 않게 한다
+        # (프로젝트 기존 패턴: backtest_state.json 등과 동일).
+        tmp_file = self.log_file + '.tmp'
+        with open(tmp_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, self.log_file)
     
     def load_history(self):
         """히스토리 로드"""
@@ -242,6 +248,13 @@ class EnsemblePerformanceMonitor:
                 logging.info(f"ENSEMBLE 모니터링 히스토리 로드 완료: {len(self.performance_history)}개 기록")
             except Exception as e:
                 logging.error(f"히스토리 로드 실패: {e}")
+                # [복구 2026-06-03] 손상(절단) 파일을 .corrupt로 격리 -> 다음 실행부터 깨끗이 재축적.
+                # (근본원인 save_history 비원자적 쓰기는 위에서 원자적 쓰기로 교정함.)
+                try:
+                    os.replace(self.log_file, self.log_file + '.corrupt')
+                    logging.warning(f"손상된 히스토리 파일 격리: {self.log_file}.corrupt")
+                except Exception:
+                    pass
     
     def print_summary(self):
         """요약 출력"""

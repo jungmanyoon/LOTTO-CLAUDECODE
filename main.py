@@ -2046,6 +2046,7 @@ def parse_args():
     parser.add_argument('--no-parallel', action='store_true', help='병렬 처리 비활성화')
     parser.add_argument('--batch-size', type=int, default=50000, help='스트림 처리 배치 크기 (기본: 50,000)')
     parser.add_argument('--memory-limit', type=int, default=1500, help='메모리 제한 (MB, 기본: 1500)')
+    parser.add_argument('--rss-warn-mb', type=int, default=4000, help='[P3-4] 전체 프로세스 RSS 경고 임계값 (MB, 기본: 4000). 실측 피크 약 3455MB 기준 헤드룸 포함. --memory-limit(필터 청크 제한)와 별개')
 
     # 자동화 시스템 전용 옵션
     parser.add_argument('--predict-only', action='store_true', help='예측만 수행 (필터링 건너뛰기)')
@@ -2344,7 +2345,13 @@ def main():
         args.realtime_learning = True
         args.monitoring = True
         args.skip_optimization = False
-    
+        # [P3-2 FIX] fractal은 argparse default=False라, 무인자/--auto-improve 경로에서
+        # 2349 블록(realtime_learning이 이미 True라 스킵됨) 안의 args.fractal=True 대입에
+        # 도달하지 못해 조용히 비활성이었다. '모든 최적화 활성화' 의도대로 여기서 직접 켠다.
+        # (ML 자체를 끈 모드는 존중: 아래 2356 정책과 동일. --no-fractal로 끌 수 있음)
+        if not args.skip_ml and not args.predict_only:
+            args.fractal = True
+
     # 실시간 학습을 기본적으로 활성화 (명시적으로 비활성화하지 않은 경우)
     if not args.no_realtime_learning and not args.realtime_learning:
         args.realtime_learning = True
@@ -2370,7 +2377,9 @@ def main():
     start_time = time.time()
 
     # 메모리 모니터링 시작
-    memory_monitor = MemoryMonitor(threshold_mb=args.memory_limit if hasattr(args, 'memory_limit') else 1536)
+    # [P3-4] 전체 프로세스 RSS 경고 임계값은 --rss-warn-mb(기본 4000)로 분리.
+    #        --memory-limit(기본 1500)은 스트림 필터 청크 제한 전용이라 RSS 경고와 의미가 달라 섞지 않는다.
+    memory_monitor = MemoryMonitor(threshold_mb=getattr(args, 'rss_warn_mb', None) or 4000)
     memory_monitor.start_monitoring(interval=1.0)
     log_memory("프로그램 시작")
 
@@ -3145,19 +3154,28 @@ def main():
         # 필터링된 조합 개수 조회 (로그 표시용 - 이후 ML 예측에는 직접 사용 안 함)
         if not args.predict_only and not _fast_extreme and filter_manager:
             try:
-                filtered_count = filter_manager.get_filtered_count(latest_round)
+                # [P3-1] IntegratedFilterManager(기본 경로 래퍼)에는 get_filtered_count가 없어
+                #        매 실행 AttributeError -> "필터링 조합 수 조회 실패" warning이 떴음.
+                #        래퍼 타입과 무관하게 DB를 직접 COUNT하는 메서드로 교체(line 3445와 동일 API, 표시값 동일).
+                filtered_count = db_manager.combinations_db.get_filtered_combinations_count(latest_round)
                 if filtered_count and filtered_count > 0:
-                    # 실제 값 기반 표시 (절약률/속도배수를 하드코딩하지 않고 실측 계산)
+                    # [정직성 수정] 이 '구필터 통과 풀'은 최종 5세트 예측에 직접 쓰이지 않는다.
+                    #   실제 최종 예측 풀은 극단성 풀(ExtremenessPoolPredictor)이 담당한다.
+                    #   과거 "필터링된 조합 N개로 ML 예측 수행" 문구는 마치 이 풀로 예측하는 것처럼
+                    #   오해를 유발했으므로, 레거시 진단용임을 명시한다. (변수/흐름은 보존)
                     ratio = filtered_count / 8145060 * 100
-                    logging.info(f"\n[ML/AI] 필터링된 조합 {filtered_count:,}개로 ML 예측 수행")
-                    logging.info(f"  - 전체(8,145,060) 대비 {ratio:.1f}% (절약 {100 - ratio:.1f}%)")
-                    logging.info(f"  - 예상 속도 향상: {8145060 / filtered_count:.1f}배")
+                    logging.info(f"\n[참고] 구필터 통과 풀 {filtered_count:,}개 "
+                                 f"(레거시 진단용 - 최종 5세트 예측엔 미사용, 극단성 풀이 담당)")
+                    logging.info(f"  - 전체(8,145,060) 대비 {ratio:.1f}% (참고 지표)")
+                    logging.info(f"  - 실제 최종 예측 풀은 극단성 풀 (아래 [극단풀] 진단 로그 참조)")
                 else:
-                    logging.info(f"\n[ML/AI] 필터링된 조합으로 ML 예측 수행 (개수 조회값 0/미상)")
+                    logging.info(f"\n[참고] 구필터 통과 풀 개수 조회값 0/미상 "
+                                 f"(레거시 진단용 - 최종 예측은 극단성 풀이 담당)")
             except Exception as e:
                 # 가짜 '약 20만개' 하드코딩 대신, 조회 실패 사실과 원인을 정직하게 기록
                 filtered_count = 0
-                logging.warning(f"\n[ML/AI] 필터링 조합 수 조회 실패 - ML은 전체 필터 풀 사용 (원인: {e})")
+                logging.warning(f"\n[참고] 구필터 통과 풀 개수 조회 실패 "
+                                f"(레거시 진단용 - 최종 예측은 극단성 풀이 담당, 원인: {e})")
         else:
             filtered_count = 0
             logging.info(f"\n[ML/AI] 예측 전용 모드 - 필터링 없이 ML 예측 수행")
@@ -3750,7 +3768,9 @@ def main():
         if auto_adjustment:
             # AutoAdjustmentSystemV2는 get_status_report 대신 get_status 사용
             status = auto_adjustment.get_status()
-            logging.info(f"  백테스팅 횟수: {status['backtest_count']}회")
+            # [P3-6] 이 카운터는 '임계값 자동조정용 백테스트' 누적(별도 상태파일 auto_adjustment_state_v2.json).
+            #        '모델개선 피드백루프' 누적(total_backtest_count)과는 측정대상이 달라 값이 다른 게 정상.
+            logging.info(f"  [임계값 자동조정] 누적 백테스팅 횟수: {status['backtest_count']}회")
             logging.info(f"  마지막 성능: {status['last_performance']:.3f}")
             logging.info(f"  현재 임계값: {status['current_threshold']}%")
             logging.info(f"  모드: {status['mode']}")
@@ -3859,11 +3879,38 @@ def main():
         if _use_extreme_pool:
             try:
                 from src.core.extremeness_pool_predictor import ExtremenessPoolPredictor
-                _target_K = int(os.environ.get('LOTTO_TARGET_POOL_K', '1500000'))
-                _epp = ExtremenessPoolPredictor(db_manager, target_K=_target_K)
+
+                # [K 자동 재탐색 타이밍] 예측 직전에 정책 json(SSOT)이 stale(정책 round != 최신
+                # DB round)이면 walk-forward Wilson LCB 곡선으로 운영 K를 재탐색한다.
+                # 비용 주의: 재탐색은 fold별 8.14M 재채점이라 ~100s 소요.
+                # [기본 활성 2026-06-03 사용자결정] 데이터가 새로 들어왔을 때만(정책 round != 최신 DB round)
+                #   자동 재탐색하고, 데이터 무변경이면 비용 0으로 즉시 생략한다. 새 회차는 주 1회뿐이므로
+                #   대부분 실행은 0s 생략, 새 회차 직후 첫 실행만 ~100s. -> "실행 시 항상 최신 데이터 기준
+                #   K로 예측"이 보장된다(매 실행 자동 점검, 필요할 때만 재계산).
+                # 비활성화(빠른 테스트 등): 환경변수 LOTTO_REFRESH_K_ON_PREDICT=0.
+                # 참고: --24h 상주에서는 AutoScheduler(일요일3시/새회차)도 재탐색하나, stale 가드로 중복 무해.
+                if os.environ.get('LOTTO_REFRESH_K_ON_PREDICT', '1') != '0':
+                    try:
+                        from src.core import extremeness_threshold_selector as _sel
+                        _pol = _sel.load_policy()
+                        _latest = db_manager.get_latest_round()
+                        _pol_round = _pol.get('round') if _pol else None
+                        if _pol is None or _pol_round != _latest:
+                            logging.info(
+                                f"[최종 예측] 새 데이터 감지(정책 round={_pol_round}, 최신={_latest}) "
+                                f"-> K 자동 재탐색 실행(약 100s, 새 회차당 1회)")
+                            _sel.refresh_policy(db_manager)
+                        else:
+                            logging.info(
+                                f"[최종 예측] 정책 최신(round={_pol_round}) - K 재탐색 생략(데이터 무변경, 비용 0)")
+                    except Exception as _re:
+                        logging.warning(f"[최종 예측] K 재탐색 스킵(기존 정책 사용): {_re}")
+
+                # target_K 미지정 -> 정책 json(SSOT) effective_target_K 사용(하위호환).
+                _epp = ExtremenessPoolPredictor(db_manager)
                 _epp.build_pool()  # 학습회차+K 동일 시 디스크 캐시 재사용(0.2s)
                 final_predictions = _epp.predict(num_sets=5, ml_predictions=_ml_preds_bundle)
-                logging.info(f"[최종 예측] 극단성 풀 경로 사용 (K={_target_K:,})")
+                logging.info(f"[최종 예측] 극단성 풀 경로 사용 (K={_epp.target_K:,})")
             except Exception as _e:
                 logging.error(f"[최종 예측] 극단성 풀 경로 실패 - 구 경로로 폴백: {_e}")
                 final_predictions = None

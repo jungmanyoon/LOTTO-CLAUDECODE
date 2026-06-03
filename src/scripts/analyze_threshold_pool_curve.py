@@ -50,12 +50,74 @@ def kneedle(x: np.ndarray, y: np.ndarray) -> int:
     return int(np.argmax(diff))
 
 
+def run_walk_forward(args):
+    """walk-forward + Wilson LCB 기반 K 자동 재탐색 (selector 위임).
+
+    단일 hold-out 곡선(기존 main)과 달리, selector.evaluate_threshold_curve 로 fold별
+    재학습(과적합 차단) 곡선을 계산하고 select_target_k 규칙으로 운영 K(정책)를 산출한다.
+    중복 구현을 피하기 위해 핵심 계산은 모두 selector 모듈로 위임한다.
+    """
+    from src.core.db_manager import DatabaseManager
+    from src.core import extremeness_threshold_selector as sel
+
+    print("=" * 96)
+    print("극단성 점수 -> walk-forward Wilson LCB 곡선 + 운영 K 자동 재탐색 (selector 위임)")
+    print("=" * 96)
+
+    db = DatabaseManager()
+    t0 = time.time()
+    curve_result = sel.evaluate_threshold_curve(
+        db, grid=sel.DEFAULT_GRID, folds=args.folds, window=args.window)
+    print(f"  곡선 계산 완료: {time.time()-t0:.1f}s "
+          f"(folds={curve_result['folds']}, window={curve_result['window']}, "
+          f"n_total={curve_result['n_total']})")
+
+    print(f"\n  {'목표풀K':>10} {'풀비율':>7} {'hold커버':>8} {'관측':>6} {'기대':>6} "
+          f"{'Lift':>6} {'LiftLCB':>8} {'신뢰':>5}")
+    print("  " + "-" * 78)
+    for row in curve_result['report_grid'] + curve_result['curve']:
+        rel = '[O]' if row['reliable'] else '[X]'
+        print(f"  {row['target_K']:>10,} {row['pool_ratio']*100:6.2f}% "
+              f"{row['coverage']*100:7.1f}% {row['observed_hits']:6d} "
+              f"{row['expected_random_hits']:6.1f} {row['lift']:6.2f} "
+              f"{row['lift_lcb']:8.3f} {rel:>5}")
+    print("  " + "-" * 78)
+
+    prev = sel.load_policy()
+    policy = sel.select_target_k(curve_result, previous_policy=prev, grid=sel.DEFAULT_GRID,
+                                 selected_at=None, round_num=curve_result['latest_round'])
+    print(f"\n  [선택] effective_target_K = {policy['effective_target_K']:,} "
+          f"(raw={policy['raw_target_K']:,}, evidence={policy['evidence']}, "
+          f"hysteresis={policy['hysteresis']})")
+    m = policy['selected_metrics']
+    print(f"         coverage={m.get('coverage')}, lift={m.get('lift')}, lift_lcb={m.get('lift_lcb')}")
+    print(f"  [정직성] AUC ~ 0.51 약신호. '수학적 최적'이 아니라 '현재 검증창에서 가장 방어 가능한 운영 K'.")
+
+    if args.save:
+        from datetime import datetime
+        policy['selected_at'] = datetime.now().isoformat(timespec='seconds')
+        sel.save_curve(curve_result, round_num=curve_result['latest_round'])
+        sel.save_policy(policy)
+        print(f"  [저장] configs/extremeness_pool_policy.json + "
+              f"results/extremeness_threshold_curve_{curve_result['latest_round']}.json")
+    print("=" * 96)
+
+
 def main():
     parser = argparse.ArgumentParser(description="극단성 점수 -> 풀크기/커버리지 곡선")
     parser.add_argument('--holdout', type=int, default=150, help='hold-out 검증 회차 수(최근 N회)')
     parser.add_argument('--out', type=str, default='results/threshold_pool_curve.json')
     parser.add_argument('--tau', type=float, default=1.0, help='marginal knee 기준 (무작위=1.0)')
+    parser.add_argument('--walk-forward', action='store_true',
+                        help='walk-forward + Wilson LCB 기반 K 자동 재탐색 (selector 위임)')
+    parser.add_argument('--folds', type=int, default=5, help='walk-forward fold 수(--walk-forward)')
+    parser.add_argument('--window', type=int, default=150, help='fold당 hold-out 회차 수(--walk-forward)')
+    parser.add_argument('--save', action='store_true', help='정책/곡선 json 저장(--walk-forward)')
     args = parser.parse_args()
+
+    if args.walk_forward:
+        run_walk_forward(args)
+        return
 
     from src.core.db_manager import DatabaseManager
     from src.core.extremeness_scorer import ExtremenessScorer, TOTAL_COMBINATIONS
