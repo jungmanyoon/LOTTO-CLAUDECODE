@@ -3566,28 +3566,54 @@ def main():
 
                 # 임계값 정보를 백테스팅 결과에 추가
                 if backtest_results:
-                    # ML 포함률 계산
-                    performance_metrics = backtest_results.get('performance_metrics', {})
-                    model_performances = performance_metrics.get('model_performance', {})
-
-                    ml_total = 0
-                    ml_included = 0
-                    for model_name, metrics in model_performances.items():
-                        if any(x in model_name.lower() for x in ['ml', 'lstm', 'ensemble']):
-                            ml_total += metrics.get('total_predictions', 0)
-                            # 실제 필터 통과율은 약 8.5%로 추정
-                            ml_included += metrics.get('total_predictions', 0) * 0.085
-
-                    if ml_total > 0:
-                        threshold_info['ml_inclusion_rate'] = ml_included / ml_total
-
-                    # 조합 수 추정 (백테스팅에서는 전체를 사용하지 않으므로 추정값)
-                    threshold_info['combination_count'] = int(8145060 * (1 - threshold_info['probability_threshold'] / 100))
-
-                    # 백테스팅 결과에 임계값 정보 추가
+                    # [정직화 2026-06-06] 과거: ml_inclusion_rate를 '예측수*0.085'(하드코딩 8.5% 추정)로,
+                    # combination_count를 '8145060*(1-thr/100)'(추정)로 채워 metric으로 저장하려 했으나,
+                    # (1) 둘 다 실측이 아닌 가짜 추정값이고 (2) DB 저장은 run_backtest 내부에서 이미
+                    # 끝나 threshold_info가 도달하지 못해 항상 0/0.0으로 저장되던 죽은 코드였다(감사 확정).
+                    # 또한 이 두 지표는 '구 16필터' 통계로, 최종 예측(극단성 풀)과 무관하다.
+                    # -> 가짜 추정 계산을 제거한다. 실측이 필요하면 별도(필터 단계/풀 진단)에서 채운다.
+                    # threshold_info의 실제 임계값(probability_threshold 등)만 결과에 부착(표시용).
                     backtest_results['threshold_info'] = threshold_info
                 logging.info("백테스팅 최종 검증 완료")
-                
+
+                # [2026-06-06 정합] 풀-선택 백테스트: 사용자가 실제 받는 '1.5M 극단성 풀 5세트'를 blind 검증.
+                # 위 legacy 백테스트는 ML 모델(8.14M 자유예측)을 채점하지만, 최종 예측은 극단성 풀이
+                # 담당하므로 그 '실제 예측 경로'를 직접 채점한다(Codex gpt-5.5 + Gemini 3.1-pro 합의).
+                # 무작위(같은 풀 / 전체) 대비 lift로 '진짜 우위'를 정직하게 보고. 최종예측엔 영향 없음(표시용).
+                try:
+                    from src.scripts.backtest_extremeness_prediction import run_pool_selection_backtest
+                    _pool_bt = run_pool_selection_backtest(db_manager, folds=5, window=30)
+                    if _pool_bt:
+                        logging.info("\n" + "="*60)
+                        logging.info("[풀 백테스트] 최종 5세트(극단성 풀) blind 검증 - 사용자가 받는 실제 예측 경로")
+                        logging.info("="*60)
+                        logging.info(
+                            f"  - 등수적중률(어떤 티켓 3개+): {_pool_bt['rank_hit_rate']*100:.1f}% "
+                            f"(무작위 풀 {_pool_bt['rand_pool_hit']*100:.1f}% / 전체무작위 {_pool_bt['rand_all_hit']*100:.1f}%)")
+                        logging.info(
+                            f"  - 평균 best-match: {_pool_bt['mean_bm']:.3f} "
+                            f"(무작위 풀 {_pool_bt['rand_pool_bm']:.3f} / 전체무작위 {_pool_bt['rand_all_bm']:.3f})")
+                        logging.info(
+                            f"  - 무작위 대비 우위: 등수적중 {_pool_bt['lift_rounds_vs_all']:+d}회 "
+                            f"(다양성 순수이득 {_pool_bt['lift_rounds_vs_pool']:+d}회), n={_pool_bt['n']}")
+                        logging.info("="*60)
+                        globals()['_POOL_BACKTEST_SUMMARY'] = _pool_bt
+                except Exception as _pe:
+                    logging.warning(f"[풀 백테스트] 실행 실패(스킵, 최종예측엔 영향 없음): {_pe}")
+
+                # [정리 2026-06-06] prediction_details 무한증가 방지: 30일 지난 백테스트 상세기록만 삭제.
+                # (감사 확정: cleanup_old_data가 정의만 되고 호출처 0 -> 988MB/524만행 누적.)
+                # 학습 데이터(당첨번호/모델/OPTUNA)와 무관 - 오래된 '백테스트 채점 상세'만 정리.
+                # 주의: 첫 실행은 누적 backlog 삭제로 다소 시간 소요(이후 사이클은 소량). 파일 용량은
+                # VACUUM이라야 줄지만, 운영 중 VACUUM은 잠금위험이라 별도(프로그램 정지 시) 수행 권장.
+                try:
+                    _psm = getattr(backtesting_framework, 'performance_stats_manager', None)
+                    if _psm and hasattr(_psm, 'cleanup_old_data'):
+                        _psm.cleanup_old_data(keep_days=30)
+                        logging.info("[정리] 30일 경과 백테스트 상세기록 정리 완료(파일축소는 VACUUM 별도)")
+                except Exception as _ce:
+                    logging.warning(f"[정리] 백테스트 기록 정리 스킵: {_ce}")
+
                 # 자동 조정 시스템 V2: 백테스팅 성능에 따라 임계값 조정
                 if auto_adjustment and backtest_results:
                     try:
@@ -3600,8 +3626,10 @@ def main():
                             model_perf = metrics.get('model_performance', {}).get(model_name, {})
                             if model_perf:
                                 avg_matches = model_perf.get('avg_matches', 0)
-                                # 2개 일치를 1.0으로 정규화
-                                normalized = min(1.0, avg_matches / 2.0)
+                                # [정합 2026-06-06] 분산된 인라인 공식(min(1.0,avg/2.0)) 대신 통합
+                                # PerformanceMetrics.normalize_score 단일소스 사용(수식 동일, source-of-truth 통일).
+                                from src.core.performance_metrics import PerformanceMetrics as _PM
+                                normalized = _PM.normalize_score(avg_matches)
                                 total_score += normalized
                                 model_count += 1
                         
@@ -3643,9 +3671,13 @@ def main():
                         try:
                             logging.info("\n" + "="*60)
                             if args.enhanced_feedback:
-                                logging.info("[향상된 피드백 루프] 영구 상태 관리와 함께 자동 모델 개선...")
+                                # [정직화 2026-06-06] 감사 확정: 이 EnhancedFeedbackLoop.run_improvement_cycle은
+                                # 실질 no-op이다(resume 캐시 반환, AutoMLOptimizer 0회 호출, best_models.params={},
+                                # 개선 모델이 최종 예측(극단성 풀)에 도달하지 않음). 상태 영속/대시보드 표시 전용으로만 유지.
+                                # 실제 '실행할수록 좋아지는' 최적화는 PoolOptimizer(OPTUNA, 백그라운드 누적 trial)가 담당한다.
+                                logging.info("[피드백 루프(레거시)] 상태 영속 전용 - 실제 풀 최적화는 PoolOptimizer(OPTUNA)가 담당")
                             else:
-                                logging.info("[피드백 루프] 자동 모델 개선 프로세스 시작...")
+                                logging.info("[피드백 루프(레거시)] 상태 점검 - 실제 최적화는 PoolOptimizer가 담당")
                             logging.info("="*60)
                             
                             # 향상된 피드백 루프 사용
@@ -4004,6 +4036,19 @@ def main():
             })
         
         logging.info("\n" + "="*30)
+
+        # [2026-06-06] 백테스트 검증 요약 첨부 - 사용자에게 '검증된 풀 내 최선'임을 정직 제시.
+        # (Codex+Gemini 합의: '가장 높은 확률'은 절대 당첨확률이 아니라 극단 제거된 1.5M 풀 안에서
+        #  백테스트로 검증된 커버리지 최선 포트폴리오임을 명시.)
+        _pbt = globals().get('_POOL_BACKTEST_SUMMARY')
+        if _pbt:
+            logging.info(f"[검증] 위 5세트 '방식'의 최근 {_pbt['n']}회 blind 백테스트 성적:")
+            logging.info(
+                f"   - 등수적중률 {_pbt['rank_hit_rate']*100:.1f}% vs 무작위 {_pbt['rand_all_hit']*100:.1f}% "
+                f"= 무작위 대비 {_pbt['lift_rounds_vs_all']:+d}회 우위 (평균 best-match {_pbt['mean_bm']:.2f})")
+            logging.info(
+                "   - 참고: '가장 높은 확률'은 절대 당첨확률이 아니라, 8.14M에서 극단 패턴을 제거한 "
+                "1.5M 생존 풀 안에서 백테스트로 검증된 '커버리지 최선 5게임 포트폴리오'입니다.")
 
         # ================================================================
         # 예측 번호 데이터베이스 저장

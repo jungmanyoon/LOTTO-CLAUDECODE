@@ -2,27 +2,17 @@
 """
 최종 5세트(극단성 풀 + 다양성) 전용 blind 백테스트 - production-faithful 정식 도구
 
-배경(사용자 검증 요청 2026-06-05): 기존 run_backtest()는 ML 모델(LSTM/앙상블/MC)을
-검증하지, 사용자가 실제로 받는 '최종 5세트(극단성 풀 + 다양성 선택)'를 직접 검증하지
-않는 갭이 있었다. 본 도구는 그 갭을 메운다.
+배경(사용자 의도 2026-06-06): "8.14M에서 극단 제거 -> 1.5M 생존 풀 -> 이 풀로 백테스트/ML
+-> 가장 당첨확률 높은 5세트 출력". 기존 run_backtest()는 legacy ML 모델(8.14M 자유예측)을
+채점해 '실제 사용자에게 내는 1.5M 풀 5세트'를 검증하지 않는 괴리가 있었다. 본 도구는 그
+괴리를 메워, production 클래스 ExtremenessPoolPredictor 를 '그대로' 호출해 blind walk-forward
+로 최종 5세트를 검증한다.
 
-방법(정직한 blind walk-forward):
-  - production 클래스 ExtremenessPoolPredictor 를 '그대로' 호출(재구현 아님)한다.
-  - 각 fold 는 train = fold 시작 직전까지의 전체 회차, holdout = 이후 window 회차.
-    build_pool(train_until=fold_start-1) -> fold 시작 시점 데이터만으로 풀/가중치 형성
-    (미래정보 누설 차단). predict() 로 5세트 생성 후 holdout 실제 당첨번호로 채점.
-  - 비교 기준선:
-      RAND_POOL : 같은 극단성 풀에서 무작위 5장 (다양성 선택의 순수 이득 측정)
-      RAND_ALL  : 8.14M 전체에서 무작위 5장 (풀+다양성 결합 이득 측정)
-  - 지표: 5장 중 best-match 평균, P(best>=2/3/4/5), 등수 분포.
-
-주의/정직성:
-  - 가중치 파일 configs/extremeness_weights.json 은 전체 데이터로 적합된 현 운영값을
-    모든 fold 에 동일 적용한다(=production 동작과 동일). 이는 '특징 스케일' 파라미터일 뿐
-    당첨번호 누설이 아니며, 번호가중치(FrequencyAnalyzer)는 train_until 로 blind 처리된다.
-  - 티켓은 fold 당 1회 생성되어 window 동안 고정(frozen)된다(per-round 대비 약간 보수적).
-    EXP_MODE=perround 로 두면 최근 EXP_RECENT 회차를 매 회차 풀 재형성하여 가장 faithful
-    하게 평가한다(느림: 회차당 ~16s).
+설계 합의(Codex gpt-5.5 + Gemini 3.1-pro, 2026-06-06):
+  - blind: 각 fold 는 train=fold 시작 직전까지, build_pool(train_until=fold_start-1) -> 미래정보 차단.
+  - 비교 기준선: RAND_POOL(같은 풀 무작위 5장 = 다양성 선택의 순수 이득), RAND_ALL(8.14M 전체 무작위).
+  - 지표: 등수적중률 P(어떤 티켓 >=3매치), mean best-match, 무작위 대비 lift.
+  - ML 은 '자유 예측기'가 아니라 '풀 내부 번호 가중치(tie-breaker)'로만(ml_predictions 주입 시).
 
 ASCII 출력(Windows), UTF-8 인코딩, 이모지 금지.
 """
@@ -36,9 +26,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-logging.basicConfig(level=logging.ERROR, format='%(message)s')
-
-from src.core.db_manager import DatabaseManager
 from src.core.extremeness_pool_predictor import ExtremenessPoolPredictor
 
 
@@ -73,111 +60,122 @@ def eval_sets(sets, draw_set, bonus):
     return best_m, best_rank
 
 
-def summarize(name, best_matches, best_ranks, n):
-    arr = np.array(best_matches, dtype=float)
-    p2 = (arr >= 2).mean()
-    p3 = (arr >= 3).mean()
-    p4 = (arr >= 4).mean()
-    p5 = (arr >= 5).mean()
-    # 등수 적중 회차 수 (5등 이상=rank<=5 즉 not None)
-    win_rounds = sum(1 for r in best_ranks if r is not None)
-    print('%-10s | mean_bm=%.3f | P>=2=%.3f P>=3=%.3f P>=4=%.3f P>=5=%.4f | 등수적중 %d/%d (%.1f%%)'
-          % (name, arr.mean(), p2, p3, p4, p5, win_rounds, n, 100.0 * win_rounds / n))
-    return {'mean_bm': arr.mean(), 'p3': p3, 'win_rounds': win_rounds}
+def run_pool_selection_backtest(db_manager, folds: int = 5, window: int = 30,
+                                K: int = 1_500_000, num_sets: int = 5,
+                                ml_predictions=None, seed: int = 42,
+                                logger=None) -> dict:
+    """1.5M 극단성 풀 -> 5세트 선택의 blind walk-forward 백테스트.
 
+    production 클래스 ExtremenessPoolPredictor 를 그대로 호출(재구현 아님)하여,
+    '사용자가 실제 받는 예측'을 검증한다. fold 당 풀을 1회 형성(캐시 재사용)하고 window 회차로 평가.
 
-def main():
-    K = int(os.environ.get('EXP_K', '1500000'))
-    FOLDS = int(os.environ.get('EXP_FOLDS', '8'))
-    WINDOW = int(os.environ.get('EXP_WINDOW', '40'))
-    MODE = os.environ.get('EXP_MODE', 'fold')   # fold | perround
-    RECENT = int(os.environ.get('EXP_RECENT', '30'))
-    SEED = 42
+    반환 dict:
+      {n, mean_bm, rank_hit_rate, p4, rand_pool_bm, rand_pool_hit, rand_all_bm, rand_all_hit,
+       lift_bm_vs_all, lift_rounds_vs_all, lift_bm_vs_pool, lift_rounds_vs_pool, win_rounds,
+       rand_pool_rounds, rand_all_rounds, K, folds, window}
+    실패/데이터부족 시 None.
+    """
+    log = logger or logging.getLogger(__name__)
+    rng = np.random.RandomState(seed)
 
-    db = DatabaseManager()
-    # (round, sorted6, bonus)
     rows = []
-    for r, t in db.get_numbers_with_bonus():
+    for r, t in db_manager.get_numbers_with_bonus():
         nums = sorted(int(x) for x in t[:6])
         bonus = int(t[6]) if len(t) > 6 and t[6] is not None else None
         rows.append((int(r), nums, bonus))
     rows.sort(key=lambda x: x[0])
     total = len(rows)
-    rng = np.random.RandomState(SEED)
+    if total < window + 2:
+        return None
 
-    print('[backtest] 최종 5세트 전용 blind walk-forward | rounds=%d K=%d mode=%s'
-          % (total, K, MODE))
+    first = max(1, total - folds * window)
+    fold_specs = []
+    s = first
+    while s + window <= total:
+        fold_specs.append((s, s + window))
+        s += window
+    if not fold_specs:
+        return None
 
     prod_bm, prod_rank = [], []
     rp_bm, rp_rank = [], []
     ra_bm, ra_rank = [], []
 
-    # 8.14M 전체 무작위용 (RAND_ALL) - 풀과 무관, 매 평가마다 무작위 5장
     def random_all_sets():
-        sets = []
-        for _ in range(5):
-            sets.append(sorted(rng.choice(range(1, 46), 6, replace=False).tolist()))
-        return sets
+        return [sorted(rng.choice(range(1, 46), 6, replace=False).tolist()) for _ in range(num_sets)]
 
-    if MODE == 'perround':
-        targets = [rows[i] for i in range(total - RECENT, total)]
-        for (tr, nums, bonus) in targets:
-            train_until = tr - 1
-            epp = ExtremenessPoolPredictor(db, target_K=K)
+    for (a, b) in fold_specs:
+        train_until = rows[a - 1][0]
+        holdout = rows[a:b]
+        try:
+            epp = ExtremenessPoolPredictor(db_manager, target_K=K)
             epp.build_pool(train_until=train_until)
-            sets = epp.predict(num_sets=5, ml_predictions=None, seed=SEED)
-            pool = epp._pool_combos
-            draw = set(nums)
-            bm, rk = eval_sets([s['numbers'] for s in sets], draw, bonus)
-            prod_bm.append(bm); prod_rank.append(rk)
-            # RAND_POOL
-            idx = rng.choice(len(pool), 5, replace=False)
-            rsets = [sorted(int(x) for x in pool[j]) for j in idx]
-            bm2, rk2 = eval_sets(rsets, draw, bonus)
-            rp_bm.append(bm2); rp_rank.append(rk2)
-            # RAND_ALL
-            bm3, rk3 = eval_sets(random_all_sets(), draw, bonus)
-            ra_bm.append(bm3); ra_rank.append(rk3)
-            print('  회차 %d: prod best=%d(rank %s) | randpool=%d | randall=%d'
-                  % (tr, bm, rk, bm2, bm3))
-    else:
-        first_holdout = max(1, total - FOLDS * WINDOW)
-        s = first_holdout
-        fold_specs = []
-        while s + WINDOW <= total:
-            fold_specs.append((s, s + WINDOW))
-            s += WINDOW
-        for fi, (a, b) in enumerate(fold_specs):
-            train_until = rows[a - 1][0]  # fold 시작 직전 회차
-            holdout = rows[a:b]
-            epp = ExtremenessPoolPredictor(db, target_K=K)
-            epp.build_pool(train_until=train_until)
-            sets = epp.predict(num_sets=5, ml_predictions=None, seed=SEED)
+            sets = epp.predict(num_sets=num_sets, ml_predictions=ml_predictions, seed=seed)
             prod_sets = [s2['numbers'] for s2 in sets]
             pool = epp._pool_combos
-            for (tr, nums, bonus) in holdout:
-                draw = set(nums)
-                bm, rk = eval_sets(prod_sets, draw, bonus)
-                prod_bm.append(bm); prod_rank.append(rk)
-                idx = rng.choice(len(pool), 5, replace=False)
-                rsets = [sorted(int(x) for x in pool[j]) for j in idx]
-                bm2, rk2 = eval_sets(rsets, draw, bonus)
-                rp_bm.append(bm2); rp_rank.append(rk2)
-                bm3, rk3 = eval_sets(random_all_sets(), draw, bonus)
-                ra_bm.append(bm3); ra_rank.append(rk3)
-            print('[fold %d] train<=%d holdout %d~%d (n=%d)'
-                  % (fi, train_until, holdout[0][0], holdout[-1][0], len(holdout)))
+        except Exception as e:
+            log.warning(f"[풀백테스트] fold(train<={train_until}) 실패: {e}")
+            continue
+        for (_tr, nums, bonus) in holdout:
+            draw = set(nums)
+            m, r = eval_sets(prod_sets, draw, bonus)
+            prod_bm.append(m); prod_rank.append(r)
+            idx = rng.choice(len(pool), num_sets, replace=False)
+            rsets = [sorted(int(x) for x in pool[j]) for j in idx]
+            m2, r2 = eval_sets(rsets, draw, bonus)
+            rp_bm.append(m2); rp_rank.append(r2)
+            m3, r3 = eval_sets(random_all_sets(), draw, bonus)
+            ra_bm.append(m3); ra_rank.append(r3)
 
     n = len(prod_bm)
-    print('\n========== 집계 (n=%d 평가 회차) ==========' % n)
-    p = summarize('PROD(5세트)', prod_bm, prod_rank, n)
-    rp = summarize('RAND_POOL', rp_bm, rp_rank, n)
-    ra = summarize('RAND_ALL', ra_bm, ra_rank, n)
-    print('\n[lift] PROD vs RAND_ALL  : mean_bm %+.3f, 등수적중 %+d회'
-          % (p['mean_bm'] - ra['mean_bm'], p['win_rounds'] - ra['win_rounds']))
-    print('[lift] PROD vs RAND_POOL : mean_bm %+.3f, 등수적중 %+d회 (다양성 선택의 순수 이득)'
-          % (p['mean_bm'] - rp['mean_bm'], p['win_rounds'] - rp['win_rounds']))
-    print('\n[해석] PROD가 RAND_ALL/RAND_POOL보다 등수적중 회차/mean_bm이 높으면 실제 이득.')
+    if n == 0:
+        return None
+
+    def hits(rk):
+        return sum(1 for r in rk if r is not None)
+
+    prod_arr = np.array(prod_bm, dtype=float)
+    rp_arr = np.array(rp_bm, dtype=float)
+    ra_arr = np.array(ra_bm, dtype=float)
+    win = hits(prod_rank); rpw = hits(rp_rank); raw = hits(ra_rank)
+    return {
+        'n': n, 'K': K, 'folds': len(fold_specs), 'window': window,
+        'mean_bm': float(prod_arr.mean()),
+        'rank_hit_rate': float(win / n),
+        'p4': float((prod_arr >= 4).mean()),
+        'win_rounds': win,
+        'rand_pool_bm': float(rp_arr.mean()), 'rand_pool_hit': float(rpw / n), 'rand_pool_rounds': rpw,
+        'rand_all_bm': float(ra_arr.mean()), 'rand_all_hit': float(raw / n), 'rand_all_rounds': raw,
+        'lift_bm_vs_all': float(prod_arr.mean() - ra_arr.mean()),
+        'lift_rounds_vs_all': int(win - raw),
+        'lift_bm_vs_pool': float(prod_arr.mean() - rp_arr.mean()),
+        'lift_rounds_vs_pool': int(win - rpw),
+    }
+
+
+def main():
+    logging.basicConfig(level=logging.ERROR, format='%(message)s')
+    from src.core.db_manager import DatabaseManager
+    K = int(os.environ.get('EXP_K', '1500000'))
+    FOLDS = int(os.environ.get('EXP_FOLDS', '8'))
+    WINDOW = int(os.environ.get('EXP_WINDOW', '40'))
+    db = DatabaseManager()
+    res = run_pool_selection_backtest(db, folds=FOLDS, window=WINDOW, K=K)
+    if not res:
+        print('[backtest] 데이터 부족 또는 실패')
+        return
+    print('[backtest] 최종 5세트 전용 blind walk-forward | K=%d folds=%d window=%d n=%d'
+          % (res['K'], res['folds'], res['window'], res['n']))
+    print('%-12s | mean_bm=%.3f | 등수적중 %d/%d (%.1f%%)'
+          % ('PROD(5세트)', res['mean_bm'], res['win_rounds'], res['n'], res['rank_hit_rate'] * 100))
+    print('%-12s | mean_bm=%.3f | 등수적중 %d/%d (%.1f%%)'
+          % ('RAND_POOL', res['rand_pool_bm'], res['rand_pool_rounds'], res['n'], res['rand_pool_hit'] * 100))
+    print('%-12s | mean_bm=%.3f | 등수적중 %d/%d (%.1f%%)'
+          % ('RAND_ALL', res['rand_all_bm'], res['rand_all_rounds'], res['n'], res['rand_all_hit'] * 100))
+    print('[lift] PROD vs RAND_ALL : mean_bm %+.3f, 등수적중 %+d회'
+          % (res['lift_bm_vs_all'], res['lift_rounds_vs_all']))
+    print('[lift] PROD vs RAND_POOL: mean_bm %+.3f, 등수적중 %+d회 (다양성 순수 이득)'
+          % (res['lift_bm_vs_pool'], res['lift_rounds_vs_pool']))
 
 
 if __name__ == '__main__':
