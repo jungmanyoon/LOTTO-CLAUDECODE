@@ -1996,6 +1996,9 @@ def parse_args():
     
     # 24시간 자동화 시스템 옵션
     parser.add_argument('--24h', action='store_true', help='24시간 자동 실행 모드 (설정 변경 감지, 새 회차 감지, 자동 재필터링)')
+    parser.add_argument('--once', action='store_true',
+                        help='1회 실행 후 즉시 종료 (스크립트/CI/서브프로세스용). '
+                             '기본은 사이클 완료 후 상주하여 대시보드(5001)+백그라운드 최적화(OPTUNA)+새 회차 감지를 유지.')
     parser.add_argument('--automation-test', action='store_true', help='자동화 시스템 테스트 (5분 후 자동 종료)')
     parser.add_argument('--ignore-migration-errors', action='store_true', help='마이그레이션 오류를 무시하고 계속 진행합니다 (오류 발생 가능)')
     parser.add_argument('--force', action='store_true', help='모든 오류를 무시하고 강제로 실행 (위험)')
@@ -2326,7 +2329,21 @@ def main():
         logging.warning("   백그라운드 최적화가 main.py 실행 시 자동으로 시작됩니다.")
         logging.warning("="*60 + "\n")
 
-    # 웹 대시보드 시작 (opt-in, 기본값: OFF)
+    # [2026-06-06] 단일 실행파일 정책: plain `python main.py`(또는 인자 없는 F5)는 한 사이클로
+    # 예측을 즉시 생성한 뒤에도 '종료하지 않고 상주'하여 대시보드(5001) + 백그라운드 최적화
+    # (OPTUNA 누적) + 새 회차 자동 감지를 계속 유지한다. (--24h 플래그 없이도 '모두 실행')
+    # - 1회만 돌고 끝내려면: --once
+    # - 부분/자동 실행(--ml-only/--predict-only/--fetch-only/--skip-fetch/--automation-test)은
+    #   서브프로세스(예: AutoScheduler)에서 호출되므로 자동으로 1회 실행 후 종료(상주 안 함 -> hang 방지).
+    _one_shot = bool(
+        getattr(args, 'once', False) or args.ml_only or args.predict_only or args.fetch_only
+        or args.skip_fetch or getattr(args, 'automation_test', False)
+    )
+    _resident_mode = not _one_shot
+    if _resident_mode and not args.dashboard and not getattr(args, 'no_dashboard', False):
+        args.dashboard = True  # 상주 모드는 대시보드 항상 ON (단일 실행파일로 '모두 실행')
+
+    # 웹 대시보드 시작 (상주 모드는 자동 ON, 그 외 opt-in)
     if args.dashboard:
         start_web_dashboard(port=5001)  # 항상 포트 5001 사용
         logging.info("[대시보드] 백그라운드에서 실행 중입니다 (http://127.0.0.1:5001)")
@@ -3239,7 +3256,10 @@ def main():
                                 logging.info(f"  - 앙상블 캐시 회차({_cached_round}) != 최신({latest_round}) -> 재학습")
                                 ensemble_predictor.is_trained = False
                         except Exception as _load_e:
-                            logging.debug(f"  - 앙상블 캐시 로드 실패(정상 재학습): {_load_e}")
+                            # [가시화 2026-06-05] 재사용 실패가 debug로 묻히면 '불필요한 fresh 재학습 ->
+                            # 간헐적 사일런트0' 원인을 추적할 수 없다. WARNING으로 올려 다음 실행에서
+                            # 재사용 실패 사유(캐시 손상/메모리/회차불일치)를 즉시 보이게 한다.
+                            logging.warning(f"  - 앙상블 캐시 로드/재사용 실패 -> fresh 재학습: {_load_e}")
                             ensemble_predictor.is_trained = False
 
                         # 모델 학습 (필요시) - 클래스 불균형 예외 처리 추가
@@ -3292,13 +3312,31 @@ def main():
                             )
 
                         logging.info(f"  - 앙상블 예측 완료: {len(ensemble_predictions)}개 조합")
-                        # [가시화 2026-06-03] 학습은 성공했는데 예측이 0개면 사일런트 실패(scaler 입력
+                        # [복구 2026-06-05] fresh 재학습 모델이 간헐적으로 0개를 내는 사일런트 실패 방어.
+                        # 실측 진단: 디스크 캐시 앙상블 모델은 정상 동작(예측 10개 반환)이 확인됐다.
+                        # 따라서 fresh 예측이 0개면 '검증된 캐시 모델'을 별도 인스턴스로 로드해 재시도하여
+                        # ML 보조신호(번호 다양성 가중치 입력)를 복구한다. 캐시도 0개면 정직하게 빈 결과 유지.
+                        if not ensemble_predictions:
+                            try:
+                                _ens_recovery = EnsemblePredictor()
+                                _ens_recovery.load_models()
+                                if getattr(_ens_recovery, 'is_trained', False):
+                                    _rec_preds = _ens_recovery.predict_next_numbers(
+                                        winning_numbers, num_predictions=args.predictions)
+                                    if _rec_preds:
+                                        ensemble_predictions = _rec_preds
+                                        logging.info(
+                                            f"  - [복구] fresh 0개 -> 검증된 캐시 앙상블 모델로 "
+                                            f"{len(ensemble_predictions)}개 예측 복구")
+                            except Exception as _rec_e:
+                                logging.debug(f"  - 앙상블 캐시 복구 시도 실패: {_rec_e}")
+                        # [가시화 2026-06-03] 캐시 복구도 실패해 여전히 0개면 사일런트 실패(scaler 입력
                         # feature 차원 불일치 학습 vs 예측, 또는 샘플링 전수 제외) 가능성이 높다.
                         # INFO로만 묻히지 않게 WARNING으로 원인 진단을 유도한다.
                         # (최종 5세트는 극단성 풀이 생성하므로 결과엔 영향 없음 - ML 보조신호만 결손.)
                         if not ensemble_predictions:
                             logging.warning(
-                                "  - [진단] 앙상블 예측 0개 - 학습 성공했으나 예측이 비었음. "
+                                "  - [진단] 앙상블 예측 0개 (fresh+캐시 복구 모두 실패) - "
                                 "scaler feature 차원 불일치 또는 샘플링 전수 제외 가능성 -> 원인 점검 필요. "
                                 "최종 5세트는 극단성 풀이 생성하므로 결과엔 영향 없음(ML 보조신호만 결손).")
                         for i, pred in enumerate(ensemble_predictions[:3], 1):
@@ -4026,6 +4064,23 @@ def main():
         if args.dashboard:
             logging.info("\n[대시보드] 이미 백그라운드에서 실행 중입니다.")
             logging.info("[대시보드] 주소: http://127.0.0.1:5001")
+
+        # [2026-06-06] 상주 모드: 사이클 완료 후 종료하지 않고 대시보드 + 백그라운드 최적화(OPTUNA)
+        # + 새 회차 자동 감지를 계속 유지한다. 모든 백그라운드 작업은 daemon 스레드라 메인 스레드가
+        # 살아있어야 동작하므로 여기서 블록한다. Ctrl+C(SIGINT) 시 graceful_shutdown 이 최적화/
+        # 스케줄러를 정리하고 sys.exit 한다. (1회만 실행하려면 --once)
+        if _resident_mode:
+            logging.info("\n" + "="*60)
+            logging.info("[상주] 사이클 완료 - 종료하지 않고 상주합니다 (단일 실행파일로 모두 실행).")
+            logging.info("[상주] 대시보드: http://127.0.0.1:5001  |  '새 예측 생성'으로 언제든 예측")
+            logging.info("[상주] 백그라운드 최적화(OPTUNA) + 새 회차 자동 감지 유지 중")
+            logging.info("[상주] 종료: Ctrl+C  (1회만 실행하려면: python main.py --once)")
+            logging.info("="*60)
+            try:
+                while not optimization_stop_flag.get('stop', False):
+                    time.sleep(5)
+            except KeyboardInterrupt:
+                graceful_shutdown(signal.SIGINT, None)
         
     except Exception as e:
         logging.error(f"프로그램 실행 중 오류 발생: {str(e)}")

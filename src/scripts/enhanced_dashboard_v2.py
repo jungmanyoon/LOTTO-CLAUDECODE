@@ -1201,2219 +1201,1200 @@ class EnhancedLottoDashboard:
 # HTML 템플릿 v2 - 개선된 UI
 HTML_TEMPLATE_V2 = """
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>로또 예측 분석 대시보드 v2</title>
+    <title>로또 오라클 — AI 예측 분석</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+      // 테마를 페인트 전에 적용해 깜빡임(FOUC) 방지
+      (function () {
+        try {
+          var saved = localStorage.getItem('lotto-theme');
+          if (!saved) {
+            saved = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+          }
+          document.documentElement.setAttribute('data-theme', saved);
+        } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+      })();
+    </script>
     <style>
+      /* ========== 디자인 토큰 ========== */
       :root {
-        /* Toss Design Tokens */
-        --bg:          #F2F4F6;
-        --surface:     #E8EAED;
-        --card:        #FFFFFF;
-        --border:      #E5E8EB;
-        --border-hover:#C9CDD2;
-
-        /* Brand: Toss Blue */
-        --blue:        #3182F6;
-        --blue-dim:    #1B6EE4;
-        --blue-light:  #EBF3FE;
-        --blue-mid:    #A0CCFA;
-
-        /* Semantic */
-        --green:       #00C7AE;
-        --green-light: #E5FAF7;
-        --red:         #FF3B30;
-        --red-light:   #FFF0EF;
-        --orange:      #FF9500;
-        --orange-light:#FFF4E5;
-
-        /* Text */
-        --text:        #191F28;
-        --text-2:      #333D4B;
-        --text-3:      #4E5968;
-        --muted:       #8B95A1;
-        --muted-2:     #B0B8C1;
-
-        /* Shadows */
-        --shadow-sm:   0 1px 4px rgba(0,0,0,.06);
-        --shadow-card: 0 2px 12px rgba(0,0,0,.08);
-        --shadow-hover:0 4px 20px rgba(0,0,0,.12);
-        --shadow-blue: 0 4px 16px rgba(49,130,246,.25);
-
-        /* Radius */
-        --radius-sm:   8px;
-        --radius-md:   12px;
-        --radius-lg:   16px;
-        --radius-xl:   20px;
-        --radius-pill: 100px;
-
-        /* 로또 공 공식 색상 */
-        --b1: #f6c700;  /* 1-10 노랑 */
-        --b2: #69c8f2;  /* 11-20 파랑 */
-        --b3: #ff7272;  /* 21-30 빨강 */
-        --b4: #aaaaaa;  /* 31-40 회색 */
-        --b5: #b0d840;  /* 41-45 초록 */
+        --font-sans: 'Pretendard Variable','Pretendard',-apple-system,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;
+        --font-mono: 'JetBrains Mono','SFMono-Regular',Consolas,monospace;
+        --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
+        --gap: 16px;
+        /* 로또 공 공식 색상대 */
+        --b1: #F5C518; --b2: #4D9DE8; --b3: #F0556B; --b4: #9AA3AF; --b5: #7FC24A;
+      }
+      /* 라이트 테마 */
+      :root[data-theme="light"] {
+        --bg: #F4F6F9; --bg-grad1: #EAF0FB; --bg-grad2: #F4F6F9;
+        --elev: #FFFFFF; --elev-2: #FBFCFE; --inset: #EEF1F5;
+        --border: rgba(17,24,39,.08); --border-strong: rgba(17,24,39,.16);
+        --text: #14161B; --text-2: #3A4250; --muted: #7B8492;
+        --accent: #2F6BF6; --accent-2: #6E9BFF; --accent-weak: rgba(47,107,246,.10);
+        --good: #06B6A8; --good-weak: rgba(6,182,168,.12);
+        --warn: #E8910B; --warn-weak: rgba(232,145,11,.12);
+        --bad: #EC3B53; --bad-weak: rgba(236,59,83,.10);
+        --shadow-1: 0 1px 3px rgba(20,30,55,.06), 0 1px 2px rgba(20,30,55,.04);
+        --shadow-2: 0 8px 28px rgba(20,30,55,.10);
+        --ball-bg-mix: #ffffff; --ball-text: #15171c; --ball-mode-solid: 1;
+      }
+      /* 다크 테마 */
+      :root[data-theme="dark"] {
+        --bg: #07080B; --bg-grad1: #0E1018; --bg-grad2: #07080B;
+        --elev: #121319; --elev-2: #171922; --inset: #1C1F29;
+        --border: rgba(255,255,255,.08); --border-strong: rgba(255,255,255,.16);
+        --text: #ECEEF3; --text-2: #B4BcC9; --muted: #6C7585;
+        --accent: #4D8DFF; --accent-2: #7FB0FF; --accent-weak: rgba(77,141,255,.14);
+        --good: #1BD4C2; --good-weak: rgba(27,212,194,.12);
+        --warn: #FBBF24; --warn-weak: rgba(251,191,36,.12);
+        --bad: #FB5870; --bad-weak: rgba(251,88,112,.12);
+        --shadow-1: 0 1px 3px rgba(0,0,0,.4);
+        --shadow-2: 0 12px 40px rgba(0,0,0,.5);
+        --ball-bg-mix: #14161d; --ball-text: #14161d; --ball-mode-solid: 0;
       }
 
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+      html { scroll-behavior: smooth; }
       body {
-        font-family: 'Pretendard Variable', 'Pretendard', -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
-        background: var(--bg);
+        font-family: var(--font-sans);
+        color: var(--text);
+        background:
+          radial-gradient(1200px 600px at 80% -10%, var(--bg-grad1), transparent 60%),
+          var(--bg-grad2);
+        background-attachment: fixed;
         min-height: 100vh;
-        color: var(--text);
         -webkit-font-smoothing: antialiased;
+        transition: background-color .25s ease, color .25s ease;
       }
+      a { color: var(--accent); text-decoration: none; }
+      ::selection { background: var(--accent-weak); }
 
-      /* ━━ TOP NAV ━━ */
-      .top-nav {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        background: rgba(255,255,255,0.92);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border-bottom: 1px solid var(--border);
-        padding: 0 24px;
-        height: 56px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-      }
+      /* 스크롤바 */
+      ::-webkit-scrollbar { width: 9px; height: 9px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--r-pill); }
+      ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
-      .nav-brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-shrink: 0;
-      }
-      .nav-logo-icon {
-        width: 32px; height: 32px;
-        background: var(--blue);
-        border-radius: 10px;
-        display: flex; align-items: center; justify-content: center;
-        font-size: 16px;
-        color: white;
-        font-weight: 700;
-        font-family: 'JetBrains Mono', monospace;
-        letter-spacing: -1px;
-      }
-      .nav-logo-text {
-        font-size: 15px;
-        font-weight: 700;
-        color: var(--text);
-        letter-spacing: -0.3px;
-      }
-      .nav-logo-badge {
-        font-size: 10px;
-        font-weight: 600;
-        color: var(--blue);
-        background: var(--blue-light);
-        padding: 2px 7px;
-        border-radius: var(--radius-pill);
-        letter-spacing: 0;
-      }
-
-      .nav-controls {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: nowrap;
-      }
-
-      select {
-        height: 36px;
-        padding: 0 32px 0 12px;
-        border: 1.5px solid var(--border);
-        border-radius: var(--radius-sm);
-        font-size: 13px;
-        font-family: inherit;
-        color: var(--text-2);
-        background: var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238B95A1'/%3E%3C/svg%3E") no-repeat right 10px center;
-        -webkit-appearance: none;
-        appearance: none;
-        cursor: pointer;
-        outline: none;
-        transition: border-color .15s;
-        font-weight: 500;
-      }
-      select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-light); }
-
-      button {
-        height: 36px;
-        padding: 0 14px;
-        border-radius: var(--radius-sm);
-        border: 1.5px solid var(--border);
-        font-size: 13px;
-        font-family: inherit;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all .15s;
-        background: var(--card);
-        color: var(--text-2);
-        white-space: nowrap;
-      }
-      button:hover:not(:disabled) {
-        border-color: var(--border-hover);
-        background: var(--surface);
-      }
-      button:disabled { opacity: .45; cursor: not-allowed; }
-
-      button[onclick*="generateNewPredictions"],
-      .btn-generate {
-        background: var(--blue) !important;
-        border-color: var(--blue) !important;
-        color: white !important;
-        font-weight: 700 !important;
-        height: 40px !important;
-        padding: 0 20px !important;
-        font-size: 14px !important;
-        border-radius: var(--radius-sm) !important;
-        box-shadow: var(--shadow-blue) !important;
-      }
-      button[onclick*="generateNewPredictions"]:hover:not(:disabled),
-      .btn-generate:hover:not(:disabled) {
-        background: var(--blue-dim) !important;
-        border-color: var(--blue-dim) !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 6px 20px rgba(49,130,246,.35) !important;
-      }
-      button[onclick*="generateNewPredictions"]:disabled { transform: none !important; box-shadow: none !important; }
-
-      .save-button {
-        background: var(--surface) !important;
-        border-color: var(--border) !important;
-        color: var(--text-3) !important;
-      }
-      .save-button:hover:not(:disabled) {
-        background: var(--bg) !important;
-        border-color: var(--border-hover) !important;
-        color: var(--text-2) !important;
-      }
-
-      /* ━━ MAIN LAYOUT ━━ */
-      .container {
-        max-width: 1280px;
-        margin: 0 auto;
-        padding: 24px 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-
-      /* ━━ SECTION TITLES ━━ */
-      .section-title,
-      h2.section-title {
-        font-size: 13px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0 !important;
-        color: var(--muted) !important;
-        text-transform: uppercase !important;
-        letter-spacing: .06em !important;
-        margin-bottom: 12px !important;
-        padding-bottom: 0 !important;
-        border-bottom: none !important;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      /* JS-injected headings override */
-      #statsSection h3,
-      #statsSection h4,
-      #optimizerStatus summary,
-      #backtestPerformance h3,
-      #matchDistributionDetail h4 {
-        color: var(--blue) !important;
-        font-family: inherit !important;
-      }
-
-      /* ━━ CARD ━━ */
-      .card-panel,
-      .predictions-section,
-      .stats-section {
-        background: var(--card) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-xl) !important;
-        padding: 20px 24px !important;
-        box-shadow: var(--shadow-card) !important;
-        overflow: hidden !important;
-      }
-      .card-panel::before,
-      .predictions-section::before,
-      .stats-section::before { display: none; }
-
-      /* ━━ WINNING SECTION ━━ */
-      .winning-section {
-        background: linear-gradient(135deg, var(--blue) 0%, #1558C0 100%);
-        border-radius: var(--radius-xl);
-        padding: 24px 28px;
-        color: white;
-        box-shadow: var(--shadow-blue);
-      }
-      .winning-title {
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: .08em;
-        text-transform: uppercase;
-        opacity: .75;
-        margin-bottom: 14px;
-      }
-      .winning-info {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 16px;
-      }
-      .winning-numbers-display {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      .number-ball {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 46px;
-        height: 46px;
-        border-radius: 50%;
-        font-weight: 700;
-        font-size: 15px;
-        background: rgba(255,255,255,0.95);
-        color: #191F28;
-        box-shadow: 0 2px 8px rgba(0,0,0,.2);
-        font-family: 'JetBrains Mono', monospace;
-        transition: transform .15s;
-      }
-      .number-ball:hover { transform: scale(1.08); }
-      .bonus-ball {
-        background: rgba(255,255,255,.8);
-        color: #1558C0;
-        border: 2px solid rgba(255,255,255,.5);
-        position: relative;
-      }
-      .bonus-ball::after {
-        content: 'B';
-        position: absolute;
-        top: -6px; right: -6px;
-        font-size: 9px;
-        font-weight: 700;
-        color: white;
-        background: #1558C0;
-        width: 16px; height: 16px;
-        border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        border: 1.5px solid white;
-      }
-      .winning-stats {
-        background: rgba(255,255,255,.15);
-        padding: 14px 18px;
-        border-radius: var(--radius-md);
-        backdrop-filter: blur(8px);
-        font-size: 13px;
-        min-width: 150px;
-      }
-
-      /* ━━ FILTER WARNING ━━ */
-      .filter-warning {
-        background: var(--red-light);
-        border: 1px solid rgba(255,59,48,.25);
-        color: var(--red);
-        padding: 14px 18px;
-        border-radius: var(--radius-lg);
-        box-shadow: none;
-      }
-      .warning-content {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 14px;
-        font-weight: 700;
-        margin-bottom: 6px;
-        color: var(--red);
-      }
-      .warning-icon { animation: shake .5s infinite; }
-      @keyframes shake {
-        0%, 100% { transform: translateX(0); }
-        25% { transform: translateX(-3px); }
-        75% { transform: translateX(3px); }
-      }
-      .failed-filters {
-        margin-top: 8px;
-        padding-top: 8px;
-        border-top: 1px solid rgba(255,59,48,.2);
-        font-size: 12px;
-        color: var(--red);
-      }
-      .failed-filter-item {
-        padding: 3px 0;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .failed-filter-item::before {
-        content: '[X]';
-        font-size: .8em;
-        font-family: 'JetBrains Mono', monospace;
-        opacity: .7;
-      }
-
-      /* ━━ PREDICTIONS SECTION ━━ */
-      #predictionsContent {
-        max-height: 520px;
-        overflow-y: auto;
-        overflow-x: hidden;
-        padding-right: 4px;
-      }
-      #predictionsContent::-webkit-scrollbar { width: 4px; }
-      #predictionsContent::-webkit-scrollbar-track { background: transparent; }
-      #predictionsContent::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-pill); }
-      #predictionsContent::-webkit-scrollbar-thumb:hover { background: var(--blue); }
-
-      /* ━━ DATE GROUP ━━ */
-      .date-group {
-        margin-bottom: 16px;
-        border-left: 2px solid var(--blue);
-        padding-left: 14px;
-      }
-      .date-header {
-        font-weight: 700;
-        color: var(--blue);
-        margin-bottom: 8px;
-        font-size: .875em;
-        font-family: 'JetBrains Mono', monospace;
-        letter-spacing: .02em;
-      }
-
-      /* ━━ PREDICTIONS TABLE ━━ */
-      .predictions-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 10px;
-        font-size: 13px;
-      }
-      .predictions-table th {
-        background: var(--bg);
-        color: var(--muted);
-        padding: 8px 12px;
-        text-align: left;
-        font-weight: 600;
-        font-size: 11px;
-        letter-spacing: .05em;
-        text-transform: uppercase;
+      /* ========== 상단 네비 ========== */
+      .app-nav {
+        position: sticky; top: 0; z-index: 50;
+        display: flex; align-items: center; gap: 14px;
+        height: 60px; padding: 0 22px;
+        background: color-mix(in srgb, var(--elev) 78%, transparent);
+        backdrop-filter: saturate(160%) blur(16px);
+        -webkit-backdrop-filter: saturate(160%) blur(16px);
         border-bottom: 1px solid var(--border);
       }
-      .predictions-table th:first-child { border-radius: var(--radius-sm) 0 0 0; }
-      .predictions-table th:last-child  { border-radius: 0 var(--radius-sm) 0 0; }
-      .predictions-table td {
-        padding: 9px 12px;
-        border-bottom: 1px solid var(--border);
-        color: var(--text-3);
-        vertical-align: middle;
+      .brand { display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
+      .brand-mark {
+        width: 34px; height: 34px; border-radius: 10px;
+        display: grid; place-items: center;
+        font: 800 16px/1 var(--font-mono); color: #fff;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        box-shadow: 0 4px 14px var(--accent-weak);
       }
-      .predictions-table td.source-cell {
-        white-space: nowrap;
-        max-width: 120px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        font-size: 12px;
-        color: var(--muted);
+      .brand-name { font-size: 16px; font-weight: 800; letter-spacing: -.3px; }
+      .brand-badge {
+        font: 700 10px/1 var(--font-mono); color: var(--accent);
+        background: var(--accent-weak); padding: 4px 8px; border-radius: var(--r-pill);
+        letter-spacing: .04em;
       }
-      .predictions-table tr:last-child td { border-bottom: none; }
-      .predictions-table tbody tr:hover td { background: var(--blue-light); }
+      .nav-spacer { flex: 1; }
+      .nav-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
-      /* ━━ NUMBER BALLS ━━ */
-      .number-cell {
-        display: flex;
-        gap: 4px;
-        align-items: center;
-        flex-wrap: wrap;
+      /* 데이터 상태 pill */
+      .status-pill {
+        display: inline-flex; align-items: center; gap: 7px;
+        height: 30px; padding: 0 12px; border-radius: var(--r-pill);
+        font-size: 12px; font-weight: 600; color: var(--text-2);
+        background: var(--inset); border: 1px solid var(--border);
       }
-      .small-ball {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        font-size: 11px;
-        font-weight: 700;
-        background: var(--surface);
-        color: var(--text-2);
-        font-family: 'JetBrains Mono', monospace;
-        transition: transform .1s;
-      }
-      .small-ball:hover { transform: scale(1.1); }
+      .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+      .status-pill.is-ok   { color: var(--good); background: var(--good-weak); border-color: transparent; }
+      .status-pill.is-ok   .status-dot { background: var(--good); box-shadow: 0 0 0 4px var(--good-weak); animation: pulse 2s infinite; }
+      .status-pill.is-load { color: var(--accent); background: var(--accent-weak); border-color: transparent; }
+      .status-pill.is-load .status-dot { background: var(--accent); animation: pulse 1s infinite; }
+      .status-pill.is-err  { color: var(--bad); background: var(--bad-weak); border-color: transparent; }
+      .status-pill.is-err  .status-dot { background: var(--bad); }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
-      /* 일치 개수별 */
-      .match-0 { background: var(--surface); color: var(--muted-2); }
-      .match-1 { background: #EBF3FE; color: #1558C0; }
-      .match-2 { background: #E5FAF7; color: #00A08C; }
-      .match-3 { background: #FFF4E5; color: #D97D00; }
-      .match-4 { background: #FFF0EF; color: #D42E24; }
-      .match-5 { background: #FF3B30; color: white; }
-      .match-6 { background: #D42E24; color: white; }
+      /* 폼 컨트롤 */
+      select, .btn {
+        height: 38px; font-family: inherit; font-size: 13px; font-weight: 600;
+        border-radius: var(--r-sm); border: 1px solid var(--border);
+        background: var(--elev); color: var(--text-2);
+        cursor: pointer; outline: none; transition: all .15s ease;
+      }
+      select { padding: 0 32px 0 12px; appearance: none; -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237B8492'/%3E%3C/svg%3E");
+        background-repeat: no-repeat; background-position: right 11px center; }
+      select:hover, .btn:hover { border-color: var(--border-strong); }
+      select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+      .btn { padding: 0 14px; }
+      .btn:hover { background: var(--inset); }
+      .btn:active { transform: translateY(1px); }
+      .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+      .btn-primary {
+        color: #fff; border-color: transparent;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        box-shadow: 0 4px 16px var(--accent-weak);
+      }
+      .btn-primary:hover { filter: brightness(1.06); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+      .btn-icon { width: 38px; padding: 0; display: grid; place-items: center; }
+      .btn-icon svg { width: 17px; height: 17px; }
 
-      /* ━━ BADGES ━━ */
-      .confidence-bar {
-        width: 80px;
-        height: 4px;
-        background: var(--border);
-        border-radius: var(--radius-pill);
-        overflow: hidden;
+      /* ========== 벤토 레이아웃 ========== */
+      .bento {
+        max-width: 1320px; margin: 0 auto; padding: 22px;
+        display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--gap);
+        align-items: start;
       }
-      .confidence-fill {
-        height: 100%;
-        background: linear-gradient(90deg, var(--blue), var(--blue-mid));
-        transition: width .3s;
-      }
-      .match-badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: var(--radius-pill);
-        font-size: 11px;
-        font-weight: 700;
-        min-width: 48px;
-        text-align: center;
-        font-family: 'JetBrains Mono', monospace;
-        background: var(--surface);
-        color: var(--muted);
-      }
-      .rank-badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: var(--radius-pill);
-        font-size: 11px;
-        font-weight: 700;
-        color: white;
-        font-family: 'JetBrains Mono', monospace;
-      }
-      .rank-1 { background: #D42E24; }
-      .rank-2 { background: #FF6B35; }
-      .rank-3 { background: #FF9500; }
-      .rank-4 { background: #00C7AE; }
-      .rank-5 { background: #3182F6; }
+      .span-3 { grid-column: span 3; } .span-4 { grid-column: span 4; }
+      .span-5 { grid-column: span 5; } .span-6 { grid-column: span 6; }
+      .span-7 { grid-column: span 7; } .span-8 { grid-column: span 8; }
+      .span-12 { grid-column: span 12; }
 
-      /* ━━ STATS GRID (JS-injected override) ━━ */
-      .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 12px;
-        margin-top: 12px;
+      .card {
+        background: var(--elev); border: 1px solid var(--border);
+        border-radius: var(--r-lg); padding: 20px;
+        box-shadow: var(--shadow-1);
       }
-      .stat-card {
-        background: var(--bg) !important;
-        color: var(--text) !important;
-        padding: 18px 16px !important;
-        border-radius: var(--radius-lg) !important;
-        text-align: center !important;
-        box-shadow: none !important;
-        border: 1px solid var(--border) !important;
-        transition: box-shadow .15s, transform .15s !important;
+      .card-h {
+        display: flex; align-items: center; gap: 9px;
+        font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+        color: var(--muted); margin-bottom: 16px;
       }
-      .stat-card:hover {
-        box-shadow: var(--shadow-card) !important;
-        transform: translateY(-2px) !important;
-      }
-      .stat-card .stat-value,
-      .stat-card > .stat-value {
-        font-size: 28px !important;
-        font-weight: 700 !important;
-        margin-bottom: 4px !important;
-        font-family: 'JetBrains Mono', monospace !important;
-        color: var(--blue) !important;
-        letter-spacing: -1px !important;
-      }
-      .stat-card .stat-label,
-      .stat-card > .stat-label {
-        font-size: 11px !important;
-        color: var(--muted) !important;
-        font-weight: 600 !important;
-        letter-spacing: .03em !important;
-      }
+      .card-h .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+      .card-h .sub { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--text-2); font-size: 12px; }
 
-      /* Distribution chart */
-      .distribution-chart { margin-top: 18px; }
-      .bar-chart {
-        display: flex;
-        gap: 6px;
-        align-items: flex-end;
-        height: 130px;
-        padding: 12px 8px 8px;
-        background: var(--bg);
-        border-radius: var(--radius-lg);
+      /* ========== 당첨번호 hero ========== */
+      .hero {
+        position: relative; overflow: hidden;
+        background:
+          radial-gradient(600px 300px at 110% -40%, var(--accent-weak), transparent 70%),
+          var(--elev);
         border: 1px solid var(--border);
       }
-      .bar {
-        flex: 1;
-        background: linear-gradient(180deg, var(--blue) 0%, var(--blue-mid) 100%);
-        border-radius: 4px 4px 0 0;
-        position: relative;
-        min-height: 12px;
-        display: flex;
-        align-items: flex-end;
-        justify-content: center;
-        color: white;
-        font-weight: 700;
-        font-size: 10px;
-        font-family: 'JetBrains Mono', monospace;
-        padding-bottom: 3px;
-        transition: opacity .15s;
-      }
-      .bar:hover { opacity: .8; }
-      .bar-label {
-        position: absolute;
-        bottom: -18px;
-        left: 50%;
-        transform: translateX(-50%);
-        font-size: 10px;
-        color: var(--muted);
-        font-family: 'JetBrains Mono', monospace;
-        white-space: nowrap;
-      }
+      .hero-top { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; }
+      .hero-round { font: 800 22px/1 var(--font-sans); letter-spacing: -.4px; }
+      .hero-round b { color: var(--accent); font-family: var(--font-mono); }
+      .hero-date { margin-left: auto; font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+      .hero-balls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+      .hero-plus { font: 700 22px/1 var(--font-mono); color: var(--muted); margin: 0 2px; }
+      .hero-note { color: var(--text-2); font-size: 14px; line-height: 1.7; }
+      .hero-mini { display: flex; gap: 22px; margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--border); flex-wrap: wrap; }
+      .hero-mini .mv { font: 700 20px/1 var(--font-mono); color: var(--text); }
+      .hero-mini .ml { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
-      /* Optimizer panels */
-      #optimizerStatusGrid {
-        background: var(--bg) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-md) !important;
-        box-shadow: none !important;
+      /* ========== 로또 공 ========== */
+      .ball {
+        --bc: var(--muted);
+        position: relative; display: inline-grid; place-items: center;
+        width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+        font: 700 15px/1 var(--font-mono);
+        transition: transform .18s cubic-bezier(.34,1.56,.64,1);
       }
-      #optimizerHistory {
-        background: var(--bg) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-md) !important;
-        box-shadow: none !important;
+      .ball.lb-1 { --bc: var(--b1); } .ball.lb-2 { --bc: var(--b2); }
+      .ball.lb-3 { --bc: var(--b3); } .ball.lb-4 { --bc: var(--b4); }
+      .ball.lb-5 { --bc: var(--b5); }
+      .ball:hover { transform: translateY(-3px) scale(1.06); }
+      /* 라이트: 공식색 솔리드 + 내부 하이라이트 */
+      :root[data-theme="light"] .ball {
+        background: radial-gradient(circle at 34% 30%, color-mix(in srgb, var(--bc) 60%, #fff), var(--bc));
+        color: #1c1d22; box-shadow: 0 3px 10px color-mix(in srgb, var(--bc) 40%, transparent);
       }
-      #optimizerStatus summary {
-        background: var(--bg) !important;
-        border-radius: var(--radius-md) !important;
-        color: var(--blue) !important;
-        font-weight: 600 !important;
+      /* 다크: 어두운 바탕 + 색은 테두리/숫자/글로우에만 (퀀트 배지) */
+      :root[data-theme="dark"] .ball {
+        background: var(--ball-bg-mix); color: var(--bc);
+        border: 1.5px solid color-mix(in srgb, var(--bc) 70%, transparent);
+        box-shadow: inset 0 0 14px -6px var(--bc), 0 0 0 1px rgba(0,0,0,.3);
       }
-      #optimizerStatus[open] summary {
-        border-radius: var(--radius-md) var(--radius-md) 0 0 !important;
+      .ball.sm { width: 34px; height: 34px; font-size: 12px; }
+      .ball.is-bonus::after {
+        content: 'B'; position: absolute; top: -5px; right: -5px;
+        width: 17px; height: 17px; border-radius: 50%;
+        font: 700 9px/1 var(--font-mono); display: grid; place-items: center;
+        background: var(--accent); color: #fff; border: 2px solid var(--elev);
       }
+      .ball.is-hit { outline: 2px solid var(--good); outline-offset: 2px; }
 
-      /* ━━ LOADING ━━ */
-      .loading {
-        text-align: center;
-        padding: 40px;
-        color: var(--muted);
+      /* ========== KPI 미니 ========== */
+      .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .kpi {
+        background: var(--elev-2); border: 1px solid var(--border);
+        border-radius: var(--r-md); padding: 15px 16px;
+        transition: transform .15s, box-shadow .15s, border-color .15s;
       }
-      .spinner {
-        border: 3px solid var(--border);
-        border-top: 3px solid var(--blue);
-        border-radius: 50%;
-        width: 32px; height: 32px;
-        animation: spin 0.9s linear infinite;
-        margin: 0 auto 12px;
-      }
-      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-      @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .65; } }
+      .kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-1); border-color: var(--border-strong); }
+      .kpi .v { font: 700 26px/1 var(--font-mono); letter-spacing: -1px; color: var(--text); }
+      .kpi .v small { font-size: 13px; color: var(--muted); font-weight: 600; }
+      .kpi .l { font-size: 11px; color: var(--muted); font-weight: 600; margin-top: 7px; }
+      .kpi.accent .v { color: var(--accent); }
+      .kpi.good .v { color: var(--good); }
+      .kpi .trk { height: 3px; border-radius: var(--r-pill); background: var(--inset); margin-top: 9px; overflow: hidden; }
+      .kpi .trk i { display: block; height: 100%; border-radius: var(--r-pill); background: var(--accent); transition: width 1s cubic-bezier(.22,1,.36,1); }
+      .kpi.good .trk i { background: var(--good); }
 
-      /* ━━ SAVE OVERLAY ━━ */
-      .save-overlay {
-        position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(25,31,40,.55);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        z-index: 9999;
+      /* ========== 예측 카드 ========== */
+      .pred-summary { font-size: 13px; color: var(--text-2); margin-bottom: 16px; display: flex; gap: 16px; flex-wrap: wrap; }
+      .pred-summary b { color: var(--text); font-family: var(--font-mono); }
+      .pred-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 13px; }
+      .pred-card {
+        background: var(--elev-2); border: 1px solid var(--border);
+        border-radius: var(--r-md); padding: 16px 17px;
+        transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        animation: rise .4s ease both;
       }
-      .save-overlay.active { display: flex; }
-      .save-message {
-        background: var(--card);
-        padding: 28px 36px;
-        border-radius: var(--radius-xl);
-        text-align: center;
-        box-shadow: 0 16px 48px rgba(0,0,0,.2);
-        color: var(--text);
+      .pred-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-2); border-color: var(--accent); }
+      @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      .pc-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+      .pc-set { font: 800 13px/1 var(--font-mono); letter-spacing: .06em; color: var(--text); }
+      .pc-src {
+        font: 700 10px/1 var(--font-mono); letter-spacing: .03em;
+        padding: 5px 9px; border-radius: var(--r-pill);
+        background: var(--accent-weak); color: var(--accent);
       }
+      .pc-src.s-ml { background: var(--good-weak); color: var(--good); }
+      .pc-src.s-pool { background: var(--accent-weak); color: var(--accent); }
+      .pc-src.s-monte { background: var(--warn-weak); color: var(--warn); }
+      .pc-ring { margin-left: auto; }
+      .ring {
+        --p: 0; width: 40px; height: 40px; border-radius: 50%;
+        display: grid; place-items: center;
+        background: conic-gradient(var(--accent) calc(var(--p) * 1%), var(--inset) 0);
+      }
+      .ring::before { content: ''; grid-area: 1/1; width: 30px; height: 30px; border-radius: 50%; background: var(--elev-2); }
+      .ring span { grid-area: 1/1; font: 700 10px/1 var(--font-mono); color: var(--text-2); }
+      .pc-balls { display: flex; gap: 8px; flex-wrap: wrap; }
+      .pc-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+      .pc-wait { font-size: 12px; color: var(--muted); }
 
-      /* ━━ RESPONSIVE ━━ */
-      @media (max-width: 768px) {
-        .container { padding: 16px 12px; }
-        .top-nav { padding: 0 16px; }
-        .nav-controls { gap: 6px; }
-        .predictions-table { font-size: 11px; }
-        .small-ball { width: 24px; height: 24px; font-size: 10px; }
-        .stats-grid { grid-template-columns: 1fr 1fr; }
-        .winning-section { padding: 18px 20px; }
-        .number-ball { width: 38px; height: 38px; font-size: 13px; }
+      /* 칩/배지 */
+      .chip { font: 700 11px/1 var(--font-mono); padding: 5px 9px; border-radius: var(--r-pill); }
+      .chip-ok { background: var(--good-weak); color: var(--good); }
+      .chip-warn { background: var(--warn-weak); color: var(--warn); }
+      .chip-bad { background: var(--bad-weak); color: var(--bad); }
+      .chip-neutral { background: var(--inset); color: var(--muted); }
+      .match-badge { font: 700 11px/1 var(--font-mono); padding: 5px 9px; border-radius: var(--r-pill); background: var(--inset); color: var(--text-2); }
+      .match-badge.hi { background: var(--good-weak); color: var(--good); }
+      .rank-badge { font: 700 11px/1 var(--font-mono); padding: 5px 9px; border-radius: var(--r-pill); color: #fff; }
+      .rk-1 { background: #E0A100; } .rk-2 { background: #9AA3AF; } .rk-3 { background: #C77B3B; }
+      .rk-4 { background: var(--good); } .rk-5 { background: var(--accent); }
+
+      /* ========== 분포 차트 ========== */
+      .bar-chart { display: flex; gap: 7px; align-items: flex-end; height: 150px; padding: 14px 8px 26px; }
+      .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; position: relative; }
+      .bar { width: 100%; max-width: 38px; border-radius: 5px 5px 0 0; min-height: 4px;
+        background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 45%, transparent));
+        position: relative; transition: height 1s cubic-bezier(.22,1,.36,1); }
+      .bar.hi { background: linear-gradient(180deg, var(--good), color-mix(in srgb, var(--good) 45%, transparent)); }
+      .bar-v { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font: 700 11px/1 var(--font-mono); color: var(--text-2); }
+      .bar-l { position: absolute; bottom: -22px; left: 50%; transform: translateX(-50%); font: 500 11px/1 var(--font-mono); color: var(--muted); white-space: nowrap; }
+
+      /* 미니 통계 행 */
+      .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 11px; }
+      .stat-cell { background: var(--elev-2); border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px; text-align: center; }
+      .stat-cell .v { font: 700 22px/1 var(--font-mono); letter-spacing: -.5px; color: var(--accent); }
+      .stat-cell .l { font-size: 11px; color: var(--muted); margin-top: 6px; font-weight: 600; }
+
+      /* details (진행적 공개) */
+      details.disc { background: var(--elev); border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+      details.disc > summary {
+        list-style: none; cursor: pointer; padding: 15px 18px;
+        font-size: 13px; font-weight: 700; color: var(--text-2);
+        display: flex; align-items: center; gap: 9px;
+      }
+      details.disc > summary::-webkit-details-marker { display: none; }
+      details.disc > summary::after { content: '+'; margin-left: auto; font: 700 16px/1 var(--font-mono); color: var(--muted); }
+      details.disc[open] > summary::after { content: '–'; }
+      details.disc[open] > summary { border-bottom: 1px solid var(--border); }
+      .disc-body { padding: 16px 18px; }
+
+      /* 데이터 테이블(로그) */
+      .data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      .data-table th { text-align: left; padding: 9px 11px; font: 700 11px/1 var(--font-mono); letter-spacing: .04em;
+        text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--elev); }
+      .data-table td { padding: 9px 11px; border-bottom: 1px solid var(--border); color: var(--text-2); vertical-align: middle; }
+      .data-table tr:last-child td { border-bottom: none; }
+      .data-table tbody tr:hover td { background: var(--accent-weak); }
+      .table-scroll { max-height: 420px; overflow: auto; border-radius: var(--r-sm); border: 1px solid var(--border); }
+
+      /* 필터 경고 */
+      .warn-card { background: var(--bad-weak); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); border-radius: var(--r-md); padding: 15px 18px; }
+      .warn-card .wt { display: flex; align-items: center; gap: 9px; font-weight: 700; color: var(--bad); font-size: 14px; }
+      .warn-card .wl { margin-top: 8px; font-size: 12px; color: var(--bad); display: flex; flex-wrap: wrap; gap: 6px; }
+
+      /* 상태(로딩/빈/오류) */
+      .state { padding: 38px 20px; text-align: center; color: var(--muted); }
+      .state .spinner { width: 30px; height: 30px; margin: 0 auto 12px; border-radius: 50%;
+        border: 3px solid var(--inset); border-top-color: var(--accent); animation: spin .85s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .state-err { color: var(--bad); }
+
+      /* 스켈레톤(예측 생성 중) */
+      .skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 13px; }
+      .skel { background: var(--elev-2); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; height: 132px; position: relative; overflow: hidden; }
+      .skel::after { content: ''; position: absolute; inset: 0;
+        background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 8%, transparent), transparent);
+        transform: translateX(-100%); animation: shimmer 1.3s infinite; }
+      @keyframes shimmer { to { transform: translateX(100%); } }
+      .gen-status { text-align: center; color: var(--accent); font: 600 13px/1.5 var(--font-mono); margin-bottom: 14px; }
+      .gen-status .seq { color: var(--text-2); }
+
+      /* 토스트 */
+      .toast-host { position: fixed; right: 18px; bottom: 18px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+      .toast {
+        min-width: 240px; max-width: 380px; padding: 13px 16px; border-radius: var(--r-md);
+        background: var(--elev); border: 1px solid var(--border); box-shadow: var(--shadow-2);
+        color: var(--text); font-size: 13px; line-height: 1.5;
+        display: flex; gap: 11px; align-items: flex-start;
+        animation: toastIn .3s cubic-bezier(.22,1,.36,1) both;
+      }
+      .toast.out { animation: toastOut .25s ease forwards; }
+      .toast .tbar { width: 4px; align-self: stretch; border-radius: var(--r-pill); background: var(--accent); flex-shrink: 0; }
+      .toast.ok .tbar { background: var(--good); } .toast.err .tbar { background: var(--bad); } .toast.warn .tbar { background: var(--warn); }
+      .toast .tx b { display: block; margin-bottom: 2px; font-size: 13px; }
+      .toast .tx span { color: var(--text-2); font-size: 12px; white-space: pre-line; }
+      @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+      @keyframes toastOut { to { opacity: 0; transform: translateX(40px); } }
+
+      /* 저장 오버레이 */
+      .save-overlay { position: fixed; inset: 0; z-index: 9998; display: none; place-items: center;
+        background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(3px); }
+      .save-overlay.active { display: grid; }
+      .save-msg { background: var(--elev); border: 1px solid var(--border); padding: 26px 34px; border-radius: var(--r-lg); text-align: center; box-shadow: var(--shadow-2); }
+      .save-msg .spinner { width: 30px; height: 30px; margin: 0 auto 12px; border-radius: 50%; border: 3px solid var(--inset); border-top-color: var(--accent); animation: spin .85s linear infinite; }
+
+      /* ========== 반응형 ========== */
+      @media (max-width: 1100px) {
+        .span-7, .span-8 { grid-column: span 12; }
+        .span-5 { grid-column: span 12; }
+        .span-3, .span-4 { grid-column: span 6; }
+      }
+      @media (max-width: 720px) {
+        .bento { padding: 14px; gap: 13px; }
+        .app-nav { height: auto; padding: 10px 14px; flex-wrap: wrap; }
+        .span-3, .span-4, .span-6 { grid-column: span 12; }
+        .ball { width: 40px; height: 40px; font-size: 14px; }
+        .nav-controls { width: 100%; }
+        select { flex: 1; }
       }
     </style>
 </head>
 <body>
+    <!-- 토스트 -->
+    <div class="toast-host" id="toastHost"></div>
+
     <!-- 저장 오버레이 -->
     <div class="save-overlay" id="saveOverlay">
-        <div class="save-message">
+        <div class="save-msg">
             <div class="spinner"></div>
-            <p style="font-size:14px; color:var(--text-2); margin-top:4px;">화면을 저장 중입니다...</p>
+            <p style="font-size:14px; color:var(--text-2);">화면을 저장하는 중입니다...</p>
         </div>
     </div>
 
-    <!-- 상단 네비게이션 -->
-    <nav class="top-nav">
-        <div class="nav-brand">
-            <div class="nav-logo-icon">L</div>
-            <span class="nav-logo-text">로또 오라클</span>
-            <span class="nav-logo-badge">AI v2</span>
+    <!-- 상단 네비 -->
+    <nav class="app-nav">
+        <div class="brand">
+            <div class="brand-mark">L</div>
+            <span class="brand-name">로또 오라클</span>
+            <span class="brand-badge">AI ANALYTICS</span>
         </div>
+        <div class="nav-spacer"></div>
         <div class="nav-controls">
-            <select id="roundSelect">
-                <option value="">회차 선택...</option>
-            </select>
-            <button onclick="loadRoundData()">조회</button>
-            <button onclick="loadLatestRound()">최신</button>
-            <button onclick="generateNewPredictions()" class="btn-generate">새 예측 생성 (5세트)</button>
-            <button class="save-button" onclick="saveScreenshot()">저장</button>
+            <span class="status-pill" id="statusPill"><span class="status-dot"></span><span id="statusText">연결 확인 중</span></span>
+            <select id="roundSelect"><option value="">회차 선택...</option></select>
+            <button class="btn" onclick="loadRoundData()">조회</button>
+            <button class="btn" onclick="loadLatestRound()">최신</button>
+            <button class="btn btn-primary" id="genBtn" onclick="generateNewPredictions(this)">새 예측 생성</button>
+            <button class="btn btn-icon" title="화면 저장" onclick="saveScreenshot()" aria-label="저장">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            </button>
+            <button class="btn btn-icon" id="themeBtn" title="테마 전환" onclick="toggleTheme()" aria-label="테마 전환"></button>
         </div>
     </nav>
 
-    <!-- 메인 컨텐츠 -->
-    <div class="container" id="dashboardContainer">
+    <!-- 벤토 본문 -->
+    <main class="bento" id="dashboardContainer">
 
-        <!-- 필터 검증 경고 -->
-        <div id="filterWarning" class="filter-warning" style="display: none;">
-            <div class="warning-content">
-                <span class="warning-icon">[!]</span>
-                <span id="warningMessage"></span>
+        <!-- 필터 경고 (필요 시) -->
+        <div class="span-12" id="filterWarningWrap" style="display:none;">
+            <div class="warn-card" id="filterWarning">
+                <div class="wt">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <span id="warningMessage"></span>
+                </div>
+                <div class="wl" id="failedFiltersList"></div>
             </div>
-            <div id="failedFiltersList" class="failed-filters"></div>
         </div>
 
-        <!-- 빠른 예측 상태 -->
-        <div id="quickPredictionStatus" style="display: none; background: var(--green-light); border: 1px solid rgba(0,199,174,.25); border-radius: var(--radius-xl); padding: 18px 22px; color: var(--green);">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
-                <div>
-                    <div style="font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; opacity:.75; margin-bottom:6px;">빠른 예측 시스템</div>
-                    <div style="font-size:15px; font-weight:700; color:var(--green);">
-                        <span id="quickStatusIcon">--</span>&nbsp;<span id="quickStatusMessage">시스템 상태를 확인 중...</span>
+        <!-- Row 1: 당첨번호 hero -->
+        <section class="card hero span-7" id="winningSection">
+            <div class="state"><div class="spinner"></div><p>당첨번호를 불러오는 중...</p></div>
+        </section>
+
+        <!-- Row 1: KPI 미니 -->
+        <section class="card span-5" id="kpiSection">
+            <div class="card-h"><span class="dot"></span>핵심 지표<span class="sub" id="kpiSub"></span></div>
+            <div class="kpi-grid" id="kpiGrid">
+                <div class="state" style="grid-column:1/-1;"><div class="spinner"></div><p>지표 로딩 중...</p></div>
+            </div>
+        </section>
+
+        <!-- Row 2: 예측 카드 (주인공) -->
+        <section class="card span-12" id="predictionsSection">
+            <div class="card-h"><span class="dot"></span>이번 회차 AI 예측<span class="sub" id="predictionsSummary"></span></div>
+            <div id="predictionsContent">
+                <div class="state"><div class="spinner"></div><p>예측을 불러오는 중...</p></div>
+            </div>
+        </section>
+
+        <!-- Row 3: 통계 영역 -->
+        <section class="span-12" id="statsSection" style="display:grid; grid-template-columns: repeat(12,1fr); gap: var(--gap);">
+            <div class="card span-5" id="distCard">
+                <div class="card-h"><span class="dot"></span>맞춘 개수 분포</div>
+                <div id="distChart"><div class="state">데이터 대기 중</div></div>
+            </div>
+            <div class="card span-4" id="backtestCard">
+                <div class="card-h"><span class="dot"></span>백테스트 성능</div>
+                <div id="backtestGrid"><div class="state"><div class="spinner"></div><p>로딩 중...</p></div></div>
+            </div>
+            <div class="card span-3" id="optimizerCard">
+                <div class="card-h"><span class="dot"></span>Optuna 최적화</div>
+                <div id="optimizerStatusGrid"><div class="state"><div class="spinner"></div></div></div>
+            </div>
+
+            <div class="span-12" id="discWrap" style="display:flex; flex-direction:column; gap: var(--gap);">
+                <details class="disc" id="logDetails">
+                    <summary>전체 예측 로그 (회차별 상세)</summary>
+                    <div class="disc-body" id="logBody"></div>
+                </details>
+                <details class="disc" id="officialDetails" style="display:none;">
+                    <summary>공식 당첨통계 vs 내 예측 비교</summary>
+                    <div class="disc-body" id="officialBody"></div>
+                </details>
+                <details class="disc" id="optHistDetails">
+                    <summary>최적화 이력 / 시스템 분석</summary>
+                    <div class="disc-body">
+                        <div id="basicStatsGrid" style="margin-bottom:16px;"></div>
+                        <div id="optimizerHistoryTable"></div>
                     </div>
-                </div>
-                <div id="quickStatusDetails" style="background: rgba(0,199,174,.1); padding: 12px 16px; border-radius: var(--radius-md);">
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 20px; font-size: 13px; color: var(--text-2);">
-                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">DB 회차</span><br><strong id="quickDbRound">-</strong></div>
-                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">ML 캐시</span><br><strong id="quickMlCache">-</strong></div>
-                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">필터 캐시</span><br><strong id="quickFilterCache">-</strong></div>
-                        <div><span style="color:var(--muted); font-size:11px; font-weight:600;">예상 시간</span><br><strong id="quickEstTime">-</strong></div>
-                    </div>
-                </div>
+                </details>
             </div>
-        </div>
+        </section>
 
-        <!-- 당첨번호 섹션 -->
-        <div class="winning-section" id="winningSection" style="display: none;">
-            <div class="winning-title">제 <span id="winningRound"></span>회 당첨번호</div>
-            <div class="winning-info">
-                <div class="winning-numbers-display" id="winningNumbersDisplay"></div>
-                <div class="winning-stats" id="winningStats"></div>
-            </div>
-        </div>
+    </main>
 
-        <!-- 예측 번호 섹션 -->
-        <div class="predictions-section" id="predictionsSection" style="display: none;">
-            <h2 class="section-title">예측 번호 분석</h2>
-            <div style="margin-bottom: 10px; font-size: 13px; color: var(--muted); font-weight: 500;">
-                <span id="predictionsSummary"></span>
-            </div>
-            <div id="predictionsContent"></div>
-        </div>
-
-        <!-- 성능 통계 섹션 -->
-        <div class="stats-section" id="statsSection" style="display: none;">
-            <h2 class="section-title">성능 통계</h2>
-            <div id="optimizerStatus" style="margin-bottom: 16px;">
-                <div id="optimizerStatusGrid"></div>
-                <div id="optimizerHistory" style="margin-top: 10px;">
-                    <div id="optimizerHistoryTable" style="font-size: 12px;"></div>
-                </div>
-            </div>
-            <div id="backtestPerformance" style="display: none; margin-bottom: 16px;">
-                <div id="backtestStatsGrid" class="stats-grid"></div>
-            </div>
-            <div class="stats-grid" id="statsGrid"></div>
-            <div class="distribution-chart" id="distributionChart"></div>
-            <div id="matchDistributionDetail" style="margin-top: 16px;"></div>
-        </div>
-
-    </div>
     <script>
         let currentRound = null;
         let allRounds = [];
+        let genStatusTimer = null;
 
-        // [dashboard-monitoring-7] HTML 이스케이프 헬퍼 (XSS/주입 방어).
-        // innerHTML 템플릿 리터럴에 서버/예측 데이터(pred.source 등)를 직접 삽입하면
-        // 특수문자(<, >, &, ", ')가 마크업으로 해석돼 주입 위험이 있다.
-        // 문자열을 받아 HTML 안전 문자열로 변환한다(비문자열은 빈 문자열 처리).
+        // ===== 공통 헬퍼 =====
         function escapeHtml(value) {
-            if (value === null || value === undefined) {
-                return '';
-            }
+            if (value === null || value === undefined) return '';
             return String(value)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
-        // [dashboard-monitoring-2] 서버 config(YAML)의 실제 필터 기준값을 로드해 배지 검증에 사용.
-        // 과거: 클라이언트에 sum 60~230, max_consecutive>=4, gap>35를 하드코딩하고 "서버와 동일"이라
-        //       주석했으나 실제 YAML(sum 45~235, max_consecutive 5, max_gap 비활성)과 불일치했다.
-        // 폴백 기본값은 현재 YAML 값과 일치시킨다(fetch 실패 시에도 거짓 표시 최소화).
+        // 모든 fetch를 통일: 타임아웃 + ok검사 + 파싱가드 -> {ok, data, error}
+        async function fetchJson(url, opts) {
+            opts = opts || {};
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), opts.timeout || 20000);
+            try {
+                const res = await fetch(url, Object.assign({ signal: ctrl.signal }, opts));
+                let data = null;
+                try { data = await res.json(); } catch (e) { data = null; }
+                if (!res.ok) {
+                    const msg = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+                    return { ok: false, status: res.status, data: data, error: msg };
+                }
+                if (data && data.error) return { ok: false, status: res.status, data: data, error: (data.error_message || data.error) };
+                return { ok: true, status: res.status, data: data, error: null };
+            } catch (e) {
+                return { ok: false, status: 0, data: null, error: (e.name === 'AbortError' ? '요청 시간 초과' : '서버에 연결할 수 없습니다') };
+            } finally { clearTimeout(t); }
+        }
+
+        function setState(id, kind, msg) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (kind === 'loading') el.innerHTML = '<div class="state"><div class="spinner"></div><p>' + escapeHtml(msg || '불러오는 중...') + '</p></div>';
+            else if (kind === 'empty') el.innerHTML = '<div class="state">' + escapeHtml(msg || '표시할 데이터가 없습니다.') + '</div>';
+            else if (kind === 'error') el.innerHTML = '<div class="state state-err">' + escapeHtml(msg || '데이터를 불러올 수 없습니다.') + '</div>';
+        }
+
+        function setStatus(kind, text) {
+            const pill = document.getElementById('statusPill');
+            const txt = document.getElementById('statusText');
+            pill.className = 'status-pill ' + (kind === 'ok' ? 'is-ok' : kind === 'error' ? 'is-err' : 'is-load');
+            txt.textContent = text;
+        }
+
+        // 토스트
+        function toast(title, message, type) {
+            const host = document.getElementById('toastHost');
+            const el = document.createElement('div');
+            el.className = 'toast ' + (type || 'info');
+            el.innerHTML = '<div class="tbar"></div><div class="tx"><b>' + escapeHtml(title) + '</b>' +
+                (message ? '<span>' + escapeHtml(message) + '</span>' : '') + '</div>';
+            host.appendChild(el);
+            setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 250); }, type === 'err' ? 6000 : 4000);
+        }
+
+        // 테마 전환
+        const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>';
+        const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+        function applyThemeIcon() {
+            const cur = document.documentElement.getAttribute('data-theme');
+            const btn = document.getElementById('themeBtn');
+            if (btn) btn.innerHTML = (cur === 'dark') ? SUN : MOON;
+        }
+        function toggleTheme() {
+            const cur = document.documentElement.getAttribute('data-theme');
+            const next = (cur === 'dark') ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            try { localStorage.setItem('lotto-theme', next); } catch (e) {}
+            applyThemeIcon();
+        }
+
+        // 공 색상대(1-10,11-20,...) 클래스
+        function ballZone(n) { return n <= 10 ? 1 : n <= 20 ? 2 : n <= 30 ? 3 : n <= 40 ? 4 : 5; }
+        function ballHtml(n, opts) {
+            opts = opts || {};
+            let cls = 'ball lb-' + ballZone(n);
+            if (opts.sm) cls += ' sm';
+            if (opts.hit) cls += ' is-hit';
+            if (opts.bonus) cls += ' is-bonus';
+            return '<span class="' + cls + '">' + n + '</span>';
+        }
+
+        // ===== 서버 필터 기준 로드 (배지 검증용) =====
         window.FILTER_CRITERIA = { sum_min: 45, sum_max: 235, max_consecutive: 5 };
-        fetch('/api/filter-criteria')
-            .then(r => r.json())
-            .then(d => { if (d && !d.error) window.FILTER_CRITERIA = d; })
-            .catch(() => {});
+        fetchJson('/api/filter-criteria').then(r => { if (r.ok && r.data) window.FILTER_CRITERIA = r.data; });
 
-        // 필터 검증 함수
-        function validatePredictionFilter(numbers, source) {
-            const validation = {
-                passed: true,
-                failedFilters: [],
-                warning: null
-            };
-
-            // 기본 유효성 검사
-            if (!numbers || numbers.length !== 6 || new Set(numbers).size !== 6) {
-                return '<span style="color: #dc3545; font-size: 12px;">❌ 무효</span>';
-            }
-
-            if (!numbers.every(n => n >= 1 && n <= 45)) {
-                return '<span style="color: #dc3545; font-size: 12px;">❌ 범위초과</span>';
-            }
-
-            // 1. 홀짝 균형 필터 (극단적인 경우만)
+        // 필터 검증 -> 칩 HTML
+        function filterChip(numbers, source) {
+            if (!numbers || numbers.length !== 6 || new Set(numbers).size !== 6)
+                return '<span class="chip chip-bad">무효</span>';
+            if (!numbers.every(n => n >= 1 && n <= 45))
+                return '<span class="chip chip-bad">범위초과</span>';
+            const failed = [];
             const oddCount = numbers.filter(n => n % 2 === 1).length;
-            if (oddCount === 0 || oddCount === 6) {
-                validation.failedFilters.push('홀짝');
-            }
-
-            // 2. 합계 범위 필터 (서버 config의 sum_range 사용 - /api/filter-criteria)
+            if (oddCount === 0 || oddCount === 6) failed.push('홀짝');
             const sum = numbers.reduce((a, b) => a + b, 0);
-            const _fc = window.FILTER_CRITERIA || {};
-            if (sum < (_fc.sum_min || 45) || sum > (_fc.sum_max || 235)) {
-                validation.failedFilters.push('합계');
-            }
-
-            // 3. 연속 번호 필터 (서버와 동일: 4개 이상 연속 시 실패)
+            const fc = window.FILTER_CRITERIA || {};
+            if (sum < (fc.sum_min || 45) || sum > (fc.sum_max || 235)) failed.push('합계');
             const sorted = [...numbers].sort((a, b) => a - b);
-            let consecutiveCount = 0;
-            let maxConsecutive = 0;
+            let run = 0, maxRun = 0;
             for (let i = 0; i < sorted.length - 1; i++) {
-                if (sorted[i + 1] - sorted[i] === 1) {
-                    consecutiveCount++;
-                    maxConsecutive = Math.max(maxConsecutive, consecutiveCount + 1);
-                } else {
-                    consecutiveCount = 0;
-                }
+                if (sorted[i + 1] - sorted[i] === 1) { run++; maxRun = Math.max(maxRun, run + 1); }
+                else run = 0;
             }
-            // 서버 config의 consecutive.max_consecutive 초과 시 실패 (/api/filter-criteria)
-            if (maxConsecutive > (_fc.max_consecutive || 5)) {
-                validation.failedFilters.push('연속');
-            }
-
-            // 4. 최대 간격 필터: 서버 config에서 max_gap 필터가 비활성(false)이므로 배지에서도 제외.
-            //    (과거 하드코딩 maxGap>35는 서버 설정과 불일치한 거짓 표시였음)
-
-            // 결과 판정
-            if (validation.failedFilters.length === 0) {
-                return '<span style="color: #28a745; font-size: 12px;">✅ 통과</span>';
-            }
-
-            // ML 예측인 경우 완화 로직
+            if (maxRun > (fc.max_consecutive || 5)) failed.push('연속');
+            if (failed.length === 0) return '<span class="chip chip-ok">통과</span>';
             if (source && source.startsWith('ML/')) {
-                const criticalFilters = validation.failedFilters.filter(f =>
-                    f === '홀짝' || f === '합계'
-                );
-
-                if (criticalFilters.length === 0) {
-                    return '<span style="color: #ffc107; font-size: 12px;">⚠️ 완화</span>';
-                } else {
-                    return '<span style="color: #dc3545; font-size: 12px;">❌ 중요</span>';
-                }
+                const critical = failed.filter(f => f === '홀짝' || f === '합계');
+                return critical.length === 0
+                    ? '<span class="chip chip-warn">완화</span>'
+                    : '<span class="chip chip-bad">중요</span>';
             }
-
-            // 일반 예측 실패
-            return '<span style="color: #dc3545; font-size: 12px;">❌ 실패</span>';
+            return '<span class="chip chip-bad">미통과</span>';
         }
 
-        // 페이지 로드 시 초기화
-        window.onload = async function() {
-            // 빠른 예측 상태 먼저 확인
+        // ===== 초기화 =====
+        window.onload = async function () {
+            applyThemeIcon();
+            setStatus('load', '데이터 로딩 중');
             await loadQuickPredictionStatus();
+            await loadRounds();
+            await loadLatestRound();
 
-            await loadRounds();  // loadRounds가 완료될 때까지 대기
-            await loadLatestRound();  // 그 다음 최신 회차 로드
-
-            // 최적화 상태 자동 새로고침 (30초마다)
             setInterval(() => {
-                const statsSection = document.getElementById('statsSection');
-                if (statsSection && statsSection.style.display !== 'none') {
-                    loadOptimizerStatus();
-                }
+                const s = document.getElementById('statsSection');
+                if (s && s.style.display !== 'none') loadOptimizerStatus();
             }, 30000);
-
-            // 빠른 예측 상태 자동 새로고침 (60초마다)
             setInterval(loadQuickPredictionStatus, 60000);
         };
 
-        // 빠른 예측 시스템 상태 로드
+        // 빠른 예측 상태 -> 상태 pill 보강
         async function loadQuickPredictionStatus() {
-            try {
-                const response = await fetch('/api/quick-prediction-status');
-                if (!response.ok) {
-                    throw new Error('HTTP error! status: ' + response.status);
-                }
-                const data = await response.json();
-
-                const statusSection = document.getElementById('quickPredictionStatus');
-                const statusIcon = document.getElementById('quickStatusIcon');
-                const statusMessage = document.getElementById('quickStatusMessage');
-                const dbRound = document.getElementById('quickDbRound');
-                const mlCache = document.getElementById('quickMlCache');
-                const filterCache = document.getElementById('quickFilterCache');
-                const estTime = document.getElementById('quickEstTime');
-
-                // 상태에 따라 표시 업데이트
-                if (data.quick_prediction_available) {
-                    statusSection.style.display = 'block';
-                    statusSection.style.background = 'var(--green-light)';
-                    statusSection.style.border = '1px solid rgba(0,199,174,.25)';
-                    statusSection.style.color = 'var(--green)';
-                    statusIcon.textContent = '[ON]';
-
-                    if (data.cache_valid) {
-                        statusMessage.textContent = '빠른 예측 준비 완료 — 캐시된 데이터로 즉시 예측 가능합니다.';
-                    } else {
-                        statusMessage.textContent = '빠른 예측 시스템 활성화됨. 통계 기반 예측을 사용합니다.';
-                    }
-
-                    dbRound.textContent = data.db_round + '회차';
-                    mlCache.innerHTML = data.ml_cache_valid
-                        ? '<span style="color: #00C7AE; font-weight:700;">[O] 유효</span>'
-                        : '<span style="color: #FF9500; font-weight:700;">[!] 재생성</span>';
-                    filterCache.innerHTML = data.filter_cache_valid
-                        ? '<span style="color: #00C7AE; font-weight:700;">[O] 유효</span>'
-                        : '<span style="color: #FF9500; font-weight:700;">[!] 재생성</span>';
-                    estTime.textContent = data.cache_valid ? '5-10초' : '10-15초';
-                } else {
-                    statusSection.style.display = 'block';
-                    statusSection.style.background = '#F8F9FA';
-                    statusSection.style.border = '1px solid #E5E8EB';
-                    statusSection.style.color = '#8B95A1';
-                    statusIcon.textContent = '[--]';
-                    statusMessage.textContent = '빠른 예측 시스템 초기화 중...';
-                    dbRound.textContent = '-';
-                    mlCache.textContent = '-';
-                    filterCache.textContent = '-';
-                    estTime.textContent = '-';
-                }
-
-                console.log('빠른 예측 상태 로드됨:', data);
-            } catch (error) {
-                console.error('빠른 예측 상태 로드 실패:', error);
-                const statusSection = document.getElementById('quickPredictionStatus');
-                statusSection.style.display = 'none';
+            const r = await fetchJson('/api/quick-prediction-status');
+            if (!r.ok || !r.data) return;
+            const d = r.data;
+            if (d.quick_prediction_available) {
+                const ready = d.cache_valid;
+                window.__quickInfo = d;
             }
         }
-        
-        // 회차 목록 로드
+
+        // 회차 목록
         async function loadRounds() {
-            try {
-                console.log('Loading rounds...');
-                const response = await fetch('/api/rounds');
-                if (!response.ok) {
-                    throw new Error('HTTP error! status: ' + response.status);
-                }
-                allRounds = await response.json();
-                console.log('Loaded rounds:', allRounds);
-
-                const select = document.getElementById('roundSelect');
-                if (!select) {
-                    console.error('roundSelect element not found');
-                    return;
-                }
-                select.innerHTML = '<option value="">회차 선택...</option>';
-
-                allRounds.forEach(round => {
-                    const option = document.createElement('option');
-                    option.value = round;
-                    option.textContent = round + '회차';
-                    select.appendChild(option);
-                });
-                console.log('Rounds added to select');
-            } catch (error) {
-                console.error('회차 로드 실패:', error);
-                alert('회차 목록을 불러올 수 없습니다. 서버 연결을 확인해주세요.');
+            const r = await fetchJson('/api/rounds');
+            const select = document.getElementById('roundSelect');
+            if (!r.ok || !Array.isArray(r.data)) {
+                setStatus('error', '서버 연결 실패');
+                toast('회차 목록 로드 실패', r.error || '서버 연결을 확인해주세요.', 'err');
+                return;
             }
+            allRounds = r.data;
+            select.innerHTML = '<option value="">회차 선택...</option>';
+            allRounds.forEach(round => {
+                const o = document.createElement('option');
+                o.value = round; o.textContent = round + '회차';
+                select.appendChild(o);
+            });
         }
-        
-        // 최신 회차 로드
+
         async function loadLatestRound() {
-            console.log('loadLatestRound called, allRounds:', allRounds);
             if (allRounds && allRounds.length > 0) {
                 document.getElementById('roundSelect').value = allRounds[0];
-                await loadWeekData();  // 일주일 데이터 로드로 변경
+                await loadWeekData();
             } else {
-                console.error('No rounds available');
+                setStatus('error', '회차 데이터 없음');
             }
         }
-        
-        // 회차 데이터 로드 (일주일간 예측 포함)
-        async function loadRoundData() {
-            loadWeekData();  // 일주일 데이터 로드로 리다이렉트
-        }
-        
-        // 일주일 데이터 로드
+
+        async function loadRoundData() { await loadWeekData(); }
+
+        // 회차(주간) 데이터 로드
         async function loadWeekData() {
             const roundNum = document.getElementById('roundSelect').value;
-            if (!roundNum) {
-                alert('회차를 선택해주세요.');
+            if (!roundNum) { toast('회차를 선택해주세요', '', 'warn'); return; }
+            currentRound = roundNum;
+            setStatus('load', roundNum + '회차 로딩 중');
+            setState('predictionsContent', 'loading', '예측을 불러오는 중...');
+
+            const r = await fetchJson('/api/week-predictions/' + roundNum);
+            if (!r.ok) {
+                setStatus('error', '로드 실패');
+                setState('winningSection', 'error', '당첨번호를 불러올 수 없습니다.');
+                setState('predictionsContent', 'error', r.error || '예측 데이터를 불러올 수 없습니다.');
+                toast('데이터 로드 실패', r.error || '서버 연결을 확인해주세요.', 'err');
                 return;
             }
-            
-            currentRound = roundNum;
-            
-            try {
-                const response = await fetch(`/api/week-predictions/${roundNum}`);
-                const data = await response.json();
-                
-                displayWinningNumbers(data.winning_numbers, roundNum);
-                displayFilterWarning(data.filter_validation);  // 필터 경고 표시
-                displayWeekPredictions(data);  // 일주일 예측 표시
-                displayRoundStats(data);
-                
-                // 자동으로 통계 표시
-                showStatistics();
-                
-            } catch (error) {
-                console.error('데이터 로드 실패:', error);
-                alert('데이터를 불러올 수 없습니다.');
-            }
+            const data = r.data || {};
+            setStatus('ok', roundNum + '회차 · 정상');
+            displayWinningNumbers(data.winning_numbers, roundNum);
+            displayFilterWarning(data.filter_validation);
+            displayWeekPredictions(data);
+            displayKpis(data);
+            showStatistics();
         }
-        
-        // 필터 경고 표시
+
+        // 필터 경고
         function displayFilterWarning(validation) {
-            const warningDiv = document.getElementById('filterWarning');
-            const messageSpan = document.getElementById('warningMessage');
-            const filtersList = document.getElementById('failedFiltersList');
-            
+            const wrap = document.getElementById('filterWarningWrap');
+            const msg = document.getElementById('warningMessage');
+            const list = document.getElementById('failedFiltersList');
             if (validation && !validation.passed) {
-                // 경고 표시
-                warningDiv.style.display = 'block';
-                messageSpan.textContent = validation.warning_message || '당첨번호가 필터에 의해 제외되었습니다!';
-                
-                // 실패한 필터 목록 표시
-                filtersList.innerHTML = '';
-                if (validation.failed_filters && validation.failed_filters.length > 0) {
-                    filtersList.innerHTML = '<div style="font-weight: normal; margin-bottom: 5px;">제외된 필터:</div>';
-                    validation.failed_filters.forEach(filter => {
-                        filtersList.innerHTML += `<div class="failed-filter-item">${filter}</div>`;
+                wrap.style.display = '';
+                msg.textContent = validation.warning_message || '당첨번호가 필터에 의해 제외되었습니다.';
+                list.innerHTML = '';
+                if (validation.failed_filters && validation.failed_filters.length) {
+                    validation.failed_filters.forEach(f => {
+                        list.innerHTML += '<span class="chip chip-bad">' + escapeHtml(f) + '</span>';
                     });
                 }
             } else {
-                // 경고 숨기기
-                warningDiv.style.display = 'none';
+                wrap.style.display = 'none';
             }
         }
-        
-        // 당첨번호 표시
+
+        // 당첨번호 hero
         function displayWinningNumbers(winning, roundNum) {
-            const section = document.getElementById('winningSection');
-            const display = document.getElementById('winningNumbersDisplay');
-            const stats = document.getElementById('winningStats');
-            
-            // 당첨번호가 없어도 섹션은 표시 (예시 또는 안내 메시지)
-            section.style.display = 'block';
-            
+            const sec = document.getElementById('winningSection');
             if (!winning) {
-                document.getElementById('winningRound').textContent = roundNum;
-                display.innerHTML = `
-                    <div style="color: white; font-size: 16px;">
-                        아직 추첨되지 않은 회차입니다.<br>
-                        <small>예측 번호를 미리 확인하세요.</small>
-                    </div>
-                `;
-                stats.innerHTML = `
-                    <div style="font-size: 14px; color: white;">
-                        <div>📊 예측 현황</div>
-                        <div style="margin-top: 10px;">
-                            <strong>총 예측:</strong> 5세트<br>
-                            <strong>상태:</strong> 대기 중<br>
-                            <strong>추첨 예정:</strong> 토요일 20:45
-                        </div>
-                    </div>
-                `;
+                sec.innerHTML =
+                    '<div class="hero-top"><div class="hero-round">제 <b>' + escapeHtml(roundNum) + '</b>회</div>' +
+                    '<div class="hero-date">추첨 예정 · 토 20:45</div></div>' +
+                    '<div class="hero-note">아직 추첨되지 않은 회차입니다.<br>아래 AI 예측 5세트를 미리 확인하세요.</div>';
                 return;
             }
-            
-            section.style.display = 'block';
-            document.getElementById('winningRound').textContent = winning.round;
-            
-            // 번호 표시
-            display.innerHTML = '';
-            winning.numbers.forEach(num => {
-                display.innerHTML += `<div class="number-ball">${num}</div>`;
-            });
-            display.innerHTML += `<span style="margin: 0 10px; font-size: 24px;">+</span>`;
-            display.innerHTML += `<div class="number-ball bonus-ball">${winning.bonus}</div>`;
-            
-            // 날짜 표시
-            display.innerHTML += `<div style="margin-left: 20px; font-size: 14px;">추첨일: ${winning.date}</div>`;
+            let balls = '';
+            (winning.numbers || []).forEach(n => { balls += ballHtml(n); });
+            balls += '<span class="hero-plus">+</span>' + ballHtml(winning.bonus, { bonus: true });
+            sec.innerHTML =
+                '<div class="hero-top"><div class="hero-round">제 <b>' + escapeHtml(winning.round) + '</b>회 당첨번호</div>' +
+                '<div class="hero-date">' + escapeHtml(winning.date || '') + '</div></div>' +
+                '<div class="hero-balls">' + balls + '</div>' +
+                '<div class="hero-mini" id="heroMini"></div>';
         }
-        
-        // 일주일간 예측 표시
+
+        // 예측 카드 + 로그 테이블 + 통계용 데이터 보관
         function displayWeekPredictions(data) {
-            const section = document.getElementById('predictionsSection');
             const content = document.getElementById('predictionsContent');
             const summary = document.getElementById('predictionsSummary');
-            
-            if (!data.all_predictions || data.all_predictions.length === 0) {
-                section.style.display = 'none';
+            const preds = data.all_predictions || [];
+
+            if (!preds.length) {
+                summary.textContent = '';
+                setState('predictionsContent', 'empty', '이 회차의 예측 데이터가 없습니다. "새 예측 생성"을 눌러보세요.');
                 return;
             }
-            
-            section.style.display = 'block';
-            
-            // 요약 정보 표시
-            summary.innerHTML = `
-                <strong>📅 예측 기간:</strong> ${data.date_count || 0}일간 | 
-                <strong>🎲 총 예측수:</strong> ${data.total_predictions || 0}개 | 
-                <strong>📋 스크롤로 모든 예측 확인 가능</strong>
-            `;
-            
-            // 예측 분석
-            let matchStats = {};
-            let totalMatches = 0;
-            let rankCounts = {1:0, 2:0, 3:0, 4:0, 5:0};
-            
-            data.all_predictions.forEach(pred => {
-                const matches = pred.matches || 0;
-                matchStats[matches] = (matchStats[matches] || 0) + 1;
-                totalMatches += matches;
-                if (pred.rank) {
-                    rankCounts[pred.rank]++;
-                }
-            });
-            
-            // 당첨 통계 표시 (상세한 맞춘 개수별 통계)
-            if (data.winning_numbers) {
-                const statsDiv = document.getElementById('winningStats');
-                if (statsDiv) {
-                    // 맞춘 개수별 상세 통계 생성
-                    const matchStatsDetail = [];
-                    for (let i = 0; i <= 6; i++) {
-                        const count = matchStats[i] || 0;
-                        const percentage = ((count / data.all_predictions.length) * 100).toFixed(1);
-                        matchStatsDetail.push(`${i}개: ${count}번 (${percentage}%)`);
-                    }
-                    
-                    // 공식 당첨 통계 및 예측 비교 준비
-                    const ws = data.winning_statistics;
-                    const totalPredictions = data.all_predictions.length;
 
-                    // 예측 성과 계산
-                    const avgMatches = (totalMatches / totalPredictions).toFixed(2);
-                    const maxMatches = Math.max(...data.all_predictions.map(p => p.matches || 0));
-                    const threeOrMore = data.all_predictions.filter(p => (p.matches || 0) >= 3).length;
-                    const threeOrMorePct = (threeOrMore / totalPredictions * 100).toFixed(1);
+            const win = data.winning_numbers;
+            summary.innerHTML = '예측기간 <b>' + (data.date_count || 0) + '</b>일 · 총 <b>' + (data.total_predictions || preds.length) + '</b>세트';
 
-                    // 예측 당첨률 계산 (각 등수별)
-                    const myWinRate = {};
-                    for (let r = 1; r <= 5; r++) {
-                        const cnt = rankCounts[r] || 0;
-                        myWinRate[r] = ((cnt / totalPredictions) * 100).toFixed(4);
-                    }
+            // 날짜별 그룹 -> 최신 날짜 세트를 카드로 강조
+            const byDate = {};
+            preds.forEach(p => { const k = p.date || '-'; (byDate[k] = byDate[k] || []).push(p); });
+            const dateKeys = Object.keys(byDate).sort();
+            const featured = byDate[dateKeys[dateKeys.length - 1]] || preds;
 
-                    // 공식 당첨률 계산 (총 판매 게임수 기준)
-                    let officialWinRate = {};
-                    let totalGames = 0;
-                    if (ws && ws.total_games) {
-                        totalGames = ws.total_games;
-                        const s = ws.statistics;
-                        officialWinRate = {
-                            1: ((s.first_winners / totalGames) * 100).toFixed(6),
-                            2: ((s.second_winners / totalGames) * 100).toFixed(6),
-                            3: ((s.third_winners / totalGames) * 100).toFixed(4),
-                            4: ((s.fourth_winners / totalGames) * 100).toFixed(4),
-                            5: ((s.fifth_winners / totalGames) * 100).toFixed(2)
-                        };
-                    }
-
-                    // 맞춘 개수별 분포 (가로 뱃지)
-                    let matchBadgesHtml = '';
-                    for (let i = 0; i <= 6; i++) {
-                        const count = matchStats[i] || 0;
-                        const pct = ((count / totalPredictions) * 100).toFixed(0);
-                        const bgColor = i >= 5 ? '#28a745' : i >= 3 ? '#ffc107' : i >= 1 ? '#17a2b8' : '#6c757d';
-                        if (count > 0 || i <= 3) {
-                            matchBadgesHtml += `<span style="display: inline-block; padding: 2px 6px; margin: 2px; border-radius: 10px; font-size: 11px; background: ${bgColor}; color: white;">${i}개:${count}(${pct}%)</span>`;
-                        }
-                    }
-
-                    // 등수 현황 (가로 뱃지)
-                    let rankBadgesHtml = '';
-                    const rankColors = {1: '#d4af37', 2: '#c0c0c0', 3: '#cd7f32', 4: '#28a745', 5: '#17a2b8'};
-                    Object.entries(rankCounts).forEach(([rank, count]) => {
-                        if (count > 0) {
-                            rankBadgesHtml += `<span style="display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 10px; font-size: 11px; background: ${rankColors[rank]}; color: white; font-weight: bold;">${rank}등:${count}개</span>`;
-                        }
-                    });
-                    if (!rankBadgesHtml) rankBadgesHtml = '<span style="color: #666; font-size: 12px;">해당 없음</span>';
-
-                    // 공식 통계 HTML (좌측)
-                    let officialStatsHtml = '';
-                    if (ws && ws.statistics) {
-                        const s = ws.statistics;
-                        officialStatsHtml = `
-                            <div style="flex: 1; min-width: 200px; background: #fffbf0; padding: 12px; border-radius: 8px; border: 1px solid #f0d080;">
-                                <div style="font-weight: bold; margin-bottom: 10px; color: #8b6914; font-size: 13px;">🏆 공식 당첨 통계</div>
-                                <table style="width: 100%; font-size: 11px; border-collapse: collapse;">
-                                    <tr style="background: #f5e6c0;">
-                                        <th style="padding: 5px; text-align: center; border: 1px solid #d4b856; color: #5a4a14;">등수</th>
-                                        <th style="padding: 5px; text-align: right; border: 1px solid #d4b856; color: #5a4a14;">당첨자</th>
-                                        <th style="padding: 5px; text-align: right; border: 1px solid #d4b856; color: #5a4a14;">당첨금</th>
-                                        <th style="padding: 5px; text-align: right; border: 1px solid #d4b856; color: #5a4a14;">확률</th>
-                                    </tr>
-                                    <tr style="background: #fff8e8;">
-                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; font-weight: bold; color: #b8860b;">1등</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.first_winners || 0).toLocaleString()}명</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #b8860b; font-weight: bold;">${((s.first_prize || 0)/100000000).toFixed(1)}억</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[1] || '0.000001'}%</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">2등</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.second_winners || 0).toLocaleString()}명</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${((s.second_prize || 0)/10000).toLocaleString()}만</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[2] || '0.000008'}%</td>
-                                    </tr>
-                                    <tr style="background: #fff8e8;">
-                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">3등</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.third_winners || 0).toLocaleString()}명</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${((s.third_prize || 0)/10000).toLocaleString()}만</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[3] || '0.003'}%</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">4등</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.fourth_winners || 0).toLocaleString()}명</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">5만</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[4] || '0.14'}%</td>
-                                    </tr>
-                                    <tr style="background: #fff8e8;">
-                                        <td style="padding: 4px; text-align: center; border: 1px solid #e8d49c; color: #666;">5등</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">${(s.fifth_winners || 0).toLocaleString()}명</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #333;">5천</td>
-                                        <td style="padding: 4px; text-align: right; border: 1px solid #e8d49c; color: #666; font-size: 10px;">${officialWinRate[5] || '2.1'}%</td>
-                                    </tr>
-                                </table>
-                                <div style="margin-top: 8px; font-size: 10px; color: #888; text-align: right;">총 판매: ${totalGames ? totalGames.toLocaleString() : 'N/A'}게임</div>
-                            </div>
-                        `;
-                    }
-
-                    // 예측 비교 HTML (우측)
-                    const predictionCompareHtml = `
-                        <div style="flex: 1; min-width: 200px; background: #f0f7ff; padding: 12px; border-radius: 8px; border: 1px solid #80b0e0;">
-                            <div style="font-weight: bold; margin-bottom: 10px; color: #1a5a9c; font-size: 13px;">🎯 예측 결과 비교</div>
-
-                            <div style="display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
-                                <div style="text-align: center; padding: 6px 12px; background: white; border-radius: 6px; border: 1px solid #cce0f0;">
-                                    <div style="font-size: 20px; font-weight: bold; color: #2980b9;">${avgMatches}</div>
-                                    <div style="font-size: 9px; color: #666;">평균 일치</div>
-                                </div>
-                                <div style="text-align: center; padding: 6px 12px; background: white; border-radius: 6px; border: 1px solid #cce0f0;">
-                                    <div style="font-size: 20px; font-weight: bold; color: #27ae60;">${maxMatches}</div>
-                                    <div style="font-size: 9px; color: #666;">최고 일치</div>
-                                </div>
-                                <div style="text-align: center; padding: 6px 12px; background: white; border-radius: 6px; border: 1px solid #cce0f0;">
-                                    <div style="font-size: 16px; font-weight: bold; color: #e67e22;">${threeOrMore}<small style="font-size: 9px;">(${threeOrMorePct}%)</small></div>
-                                    <div style="font-size: 9px; color: #666;">3개이상</div>
-                                </div>
-                            </div>
-
-                            <div style="margin-bottom: 8px;">
-                                <div style="font-size: 10px; color: #555; margin-bottom: 4px; font-weight: bold;">맞춘 개수별 분포:</div>
-                                <div style="line-height: 1.8;">${matchBadgesHtml}</div>
-                            </div>
-
-                            <div style="margin-bottom: 8px;">
-                                <div style="font-size: 10px; color: #555; margin-bottom: 4px; font-weight: bold;">등수 현황 (내 예측):</div>
-                                <div style="line-height: 1.8;">${rankBadgesHtml}</div>
-                            </div>
-
-                            <div style="background: #e8f4fc; padding: 8px; border-radius: 6px; margin-top: 8px;">
-                                <div style="font-size: 10px; color: #1a5a9c; font-weight: bold; margin-bottom: 4px;">📊 내 예측 당첨률 vs 공식:</div>
-                                <table style="width: 100%; font-size: 10px; border-collapse: collapse;">
-                                    <tr>
-                                        <td style="padding: 2px; color: #666;">4등:</td>
-                                        <td style="padding: 2px; color: #27ae60; font-weight: bold;">${myWinRate[4]}%</td>
-                                        <td style="padding: 2px; color: #999;">vs ${officialWinRate[4] || '0.14'}%</td>
-                                        <td style="padding: 2px; color: ${parseFloat(myWinRate[4]) > parseFloat(officialWinRate[4] || 0.14) ? '#27ae60' : '#dc3545'}; font-weight: bold;">${parseFloat(myWinRate[4]) > parseFloat(officialWinRate[4] || 0.14) ? '▲우수' : '▼'}</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="padding: 2px; color: #666;">5등:</td>
-                                        <td style="padding: 2px; color: #27ae60; font-weight: bold;">${myWinRate[5]}%</td>
-                                        <td style="padding: 2px; color: #999;">vs ${officialWinRate[5] || '2.1'}%</td>
-                                        <td style="padding: 2px; color: ${parseFloat(myWinRate[5]) > parseFloat(officialWinRate[5] || 2.1) ? '#27ae60' : '#dc3545'}; font-weight: bold;">${parseFloat(myWinRate[5]) > parseFloat(officialWinRate[5] || 2.1) ? '▲우수' : '▼'}</td>
-                                    </tr>
-                                </table>
-                            </div>
-                            <div style="margin-top: 6px; font-size: 9px; color: #888; text-align: right;">총 예측: ${totalPredictions}개</div>
-                        </div>
-                    `;
-
-                    statsDiv.innerHTML = `
-                        <div style="font-size: 13px; line-height: 1.4;">
-                            <div style="font-weight: bold; margin-bottom: 10px; font-size: 14px; color: #333;">📊 백테스팅 시뮬레이션 성과</div>
-                            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-                                ${officialStatsHtml}
-                                ${predictionCompareHtml}
-                            </div>
-                        </div>
-                    `;
-                }
-            }
-            
-            // 테이블 생성
-            let html = `
-                <table class="predictions-table">
-                    <thead>
-                        <tr>
-                            <th width="100">날짜/시간</th>
-                            <th width="60">회차</th>
-                            <th>예측 번호</th>
-                            <th width="80">신뢰도</th>
-                            <th width="100">출처</th>
-                            <th width="60">일치</th>
-                            <th width="50">등수</th>
-                            <th width="80">필터 상태</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-            
-            // 모든 예측 표시
-            data.all_predictions.forEach((pred, index) => {
-                const matches = pred.matches || 0;
-                const matchClass = `match-${matches}`;
-                
-                html += `
-                    <tr>
-                        <td style="font-size: 12px;">
-                            ${pred.date || ''}<br>
-                            <small>${pred.datetime ? pred.datetime.split(' ')[1] : ''}</small>
-                        </td>
-                        <td style="text-align: center;">${pred.round}</td>
-                        <td>
-                            <div class="number-cell">
-                `;
-                
-                // 번호 표시
-                pred.numbers.forEach(num => {
-                    let ballClass = 'small-ball';
-                    if (data.winning_numbers && data.winning_numbers.numbers.includes(num)) {
-                        ballClass += ' match-3';
-                    } else if (data.winning_numbers && num === data.winning_numbers.bonus) {
-                        ballClass += ' match-2';
-                    }
-                    html += `<span class="${ballClass}">${num}</span>`;
+            // 예측 카드
+            let cards = '';
+            featured.slice(0, 12).forEach((pred, i) => {
+                const conf = Math.round((pred.confidence || 0) * 100);
+                let balls = '';
+                (pred.numbers || []).forEach(n => {
+                    const hit = win && win.numbers && win.numbers.includes(n);
+                    const bonus = win && n === win.bonus;
+                    balls += ballHtml(n, { hit: hit, bonus: bonus });
                 });
-                
-                html += `
-                            </div>
-                        </td>
-                        <td>
-                            <small>${(pred.confidence * 100).toFixed(1)}%</small>
-                        </td>
-                        <td class="source-cell" title="${escapeHtml(pred.source)}"><small>${escapeHtml(pred.source)}</small></td>
-                        <td>
-                            ${data.winning_numbers ?
-                                `<span class="match-badge ${matchClass}">${matches}개</span>` : 
-                                `<span style="color: #999;">대기</span>`
-                            }
-                        </td>
-                        <td>
-                            ${data.winning_numbers && pred.rank ?
-                                `<span class="rank-badge rank-${pred.rank}">${pred.rank}등</span>` :
-                                `-`
-                            }
-                        </td>
-                        <td>
-                            ${validatePredictionFilter(pred.numbers, pred.source || 'Unknown')}
-                        </td>
-                    </tr>
-                `;
-            });
-            
-            html += `
-                    </tbody>
-                </table>
-            `;
-            
-            content.innerHTML = html;
-        }
-        
-        // 예측 번호 테이블 표시 (기존 함수 - 호환성을 위해 유지)
-        function displayPredictions(data) {
-            const section = document.getElementById('predictionsSection');
-            const content = document.getElementById('predictionsContent');
-            
-            if (!data.predictions || data.predictions.length === 0) {
-                section.style.display = 'none';
-                return;
-            }
-            
-            section.style.display = 'block';
-            
-            // 일치 개수별 통계 계산
-            const matchStats = {};
-            let totalMatches = 0;
-            let rankCounts = {1:0, 2:0, 3:0, 4:0, 5:0};
-            
-            data.predictions.forEach(pred => {
-                const matches = pred.matches || 0;
-                matchStats[matches] = (matchStats[matches] || 0) + 1;
-                totalMatches += matches;
-                if (pred.rank) {
-                    rankCounts[pred.rank]++;
+                const srcRaw = pred.source || '';
+                const srcKind = srcRaw.startsWith('ML') ? 's-ml' : /monte/i.test(srcRaw) ? 's-monte' : 'pool';
+                const srcLabel = escapeHtml((srcRaw.split('/')[0]) || 'AI');
+                let foot;
+                if (win) {
+                    const m = pred.matches || 0;
+                    foot = '<span class="match-badge ' + (m >= 3 ? 'hi' : '') + '">' + m + '개 일치</span>' +
+                        (pred.rank ? '<span class="rank-badge rk-' + pred.rank + '">' + pred.rank + '등</span>' : '') +
+                        filterChip(pred.numbers, srcRaw);
+                } else {
+                    foot = '<span class="pc-wait">추첨 대기</span>' + filterChip(pred.numbers, srcRaw);
                 }
+                cards +=
+                    '<div class="pred-card" style="animation-delay:' + (i * 0.04) + 's">' +
+                    '<div class="pc-top"><span class="pc-set">SET ' + (i + 1) + '</span>' +
+                    '<span class="pc-src ' + (srcKind === 'pool' ? 's-pool' : srcKind) + '" title="' + escapeHtml(srcRaw) + '">' + srcLabel + '</span>' +
+                    '<span class="pc-ring" title="AI 점수 (당첨 확률 아님 · 패턴 적합도+ML 혼합 점수)"><span class="ring" style="--p:' + conf + '"><span>' + conf + '</span></span></span></div>' +
+                    '<div class="pc-balls">' + balls + '</div>' +
+                    '<div class="pc-foot">' + foot + '</div></div>';
             });
-            
-            // 당첨 통계 표시
-            if (data.winning_numbers) {
-                const statsDiv = document.getElementById('winningStats');
-                statsDiv.innerHTML = `
-                    <div style="font-size: 14px;">
-                        <div>📊 예측 성과</div>
-                        <div style="margin-top: 10px;">
-                            <strong>평균 일치:</strong> ${(totalMatches / data.predictions.length).toFixed(2)}개<br>
-                            <strong>최고 일치:</strong> ${Math.max(...data.predictions.map(p => p.matches || 0))}개<br>
-                            <strong>3개 이상:</strong> ${data.predictions.filter(p => (p.matches || 0) >= 3).length}개
-                        </div>
-                    </div>
-                `;
-            }
-            
-            // 테이블 생성
-            let html = `
-                <table class="predictions-table">
-                    <thead>
-                        <tr>
-                            <th width="60">세트</th>
-                            <th>예측 번호</th>
-                            <th width="100">신뢰도</th>
-                            <th width="120">출처</th>
-                            <th width="80">일치</th>
-                            <th width="60">등수</th>
-                            <th width="80">필터 상태</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-            
-            data.predictions.forEach((pred, index) => {
-                const matches = pred.matches || 0;
-                const matchClass = `match-${matches}`;
-                
-                html += `
-                    <tr>
-                        <td style="text-align: center;"><strong>${index + 1}</strong></td>
-                        <td>
-                            <div class="number-cell">
-                `;
-                
-                // 번호 표시 (일치하는 번호는 색상 변경)
-                pred.numbers.forEach(num => {
-                    let ballClass = 'small-ball';
-                    if (data.winning_numbers && data.winning_numbers.numbers.includes(num)) {
-                        ballClass += ' match-3';
-                    } else if (data.winning_numbers && num === data.winning_numbers.bonus) {
-                        ballClass += ' match-2';
-                    }
-                    html += `<span class="${ballClass}">${num}</span>`;
+            content.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:12px;">각 카드 우측 원형 수치 = <b style="color:var(--text-2);">AI 점수</b> (패턴 적합도 + ML 혼합 · 당첨 확률 아님)</div><div class="pred-grid">' + cards + '</div>';
+
+            // 전체 로그 테이블(진행적 공개)
+            renderLogTable(preds, win);
+
+            // 공식 통계 비교 + hero mini + 성과 보관
+            renderInsights(data, preds);
+        }
+
+        function renderLogTable(preds, win) {
+            const body = document.getElementById('logBody');
+            let rows = '';
+            preds.forEach(p => {
+                let balls = '';
+                (p.numbers || []).forEach(n => {
+                    const hit = win && win.numbers && win.numbers.includes(n);
+                    balls += ballHtml(n, { sm: true, hit: hit });
                 });
-                
-                html += `
-                            </div>
-                        </td>
-                        <td>
-                            <div class="confidence-bar">
-                                <div class="confidence-fill" style="width: ${pred.confidence * 100}%"></div>
-                            </div>
-                            <small>${(pred.confidence * 100).toFixed(1)}%</small>
-                        </td>
-                        <td class="source-cell" title="${escapeHtml(pred.source)}"><small>${escapeHtml(pred.source)}</small></td>
-                        <td>
-                            ${data.winning_numbers ?
-                                `<span class="match-badge ${matchClass}">${matches}개</span>` : 
-                                `<span style="color: #999;">대기</span>`
-                            }
-                        </td>
-                        <td>
-                `;
-                
-                if (data.winning_numbers && pred.rank) {
-                    html += `<span class="rank-badge rank-${pred.rank}">${pred.rank}등</span>`;
-                } else {
-                    html += `<span style="color: #999;">-</span>`;
-                }
-                
-                html += `
-                        </td>
-                        <td>
-                            ${validatePredictionFilter(pred.numbers, pred.source || 'Unknown')}
-                        </td>
-                    </tr>
-                `;
+                const conf = ((p.confidence || 0) * 100).toFixed(1);
+                rows +=
+                    '<tr><td style="white-space:nowrap;">' + escapeHtml(p.date || '') + '</td>' +
+                    '<td style="text-align:center;">' + escapeHtml(p.round) + '</td>' +
+                    '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">' + balls + '</div></td>' +
+                    '<td style="font-family:var(--font-mono);">' + conf + '%</td>' +
+                    '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(p.source) + '">' + escapeHtml(p.source) + '</td>' +
+                    '<td>' + (win ? (p.matches || 0) + '개' : '-') + '</td>' +
+                    '<td>' + (win && p.rank ? '<span class="rank-badge rk-' + p.rank + '">' + p.rank + '등</span>' : '-') + '</td>' +
+                    '<td>' + filterChip(p.numbers, p.source || '') + '</td></tr>';
             });
-            
-            html += `
-                    </tbody>
-                </table>
-            `;
-            
-            // 일치 분포 차트
-            html += `
-                <div style="margin-top: 30px;">
-                    <h3 style="color: #c8890e; margin-bottom: 15px;">일치 개수 분포</h3>
-                    <div class="bar-chart">
-            `;
-            
-            const maxCount = Math.max(...Object.values(matchStats), 1);
-            for (let i = 0; i <= 6; i++) {
-                const count = matchStats[i] || 0;
-                const height = (count / maxCount) * 100;
-                html += `
-                    <div class="bar match-${i}" style="height: ${height}%;">
-                        ${count}
-                        <span class="bar-label">${i}개</span>
-                    </div>
-                `;
-            }
-            
-            html += `
-                    </div>
-                </div>
-            `;
-            
-            content.innerHTML = html;
+            body.innerHTML =
+                '<div class="table-scroll"><table class="data-table"><thead><tr>' +
+                '<th>날짜</th><th>회차</th><th>예측 번호</th><th>AI 점수</th><th>출처</th><th>일치</th><th>등수</th><th>필터</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>';
         }
-        
-        // 회차별 통계 표시
-        function displayRoundStats(data) {
-            const section = document.getElementById('statsSection');
-            const grid = document.getElementById('statsGrid');
-            
-            // 통계는 항상 표시 (예측만 있어도)
-            section.style.display = 'block';
-            
-            if (!data.predictions || data.predictions.length === 0) {
-                grid.innerHTML = '<div style="text-align: center; color: #999;">예측 데이터가 없습니다.</div>';
-                return;
-            }
-            
-            const stats = data.analysis ? 
-                [
-                    { label: '전체 예측', value: data.total_predictions },
-                    { label: '평균 일치', value: data.analysis.average_matches.toFixed(2) },
-                    { label: '최고 일치', value: data.analysis.best_match },
-                    { label: '3개 이상', value: Object.entries(data.analysis.match_distribution)
-                        .filter(([k, v]) => k >= 3)
-                        .reduce((sum, [k, v]) => sum + v, 0) }
-                ] : 
-                [
-                    { label: '전체 예측', value: data.total_predictions || 0 },
-                    { label: '신뢰도 평균', value: (data.predictions.reduce((sum, p) => sum + p.confidence, 0) / data.predictions.length * 100).toFixed(1) + '%' },
-                    { label: '데이터 소스', value: [...new Set(data.predictions.map(p => p.source.split('/')[0]))].length + '종' },
-                    { label: '예측 상태', value: '대기 중' }
-                ];
-            
-            grid.innerHTML = stats.map(stat => `
-                <div class="stat-card">
-                    <div class="stat-value">${stat.value}</div>
-                    <div class="stat-label">${stat.label}</div>
-                </div>
-            `).join('');
-        }
-        
-        // 최적화 상태 로드 및 표시
-        async function loadOptimizerStatus() {
-            try {
-                const [statusResponse, historyResponse] = await Promise.all([
-                    fetch('/api/optimizer-status'),
-                    fetch('/api/optimizer-history')
-                ]);
 
-                // 응답 상태 확인 후 JSON 파싱
-                let status = { running: false, total_runs: 0, total_trials: 0 };
-                let history = [];
+        // 성과/공식통계 비교 + hero mini
+        function renderInsights(data, preds) {
+            const win = data.winning_numbers;
+            const total = preds.length;
+            let totalMatches = 0, maxMatches = 0;
+            const rankCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+            preds.forEach(p => {
+                const m = p.matches || 0;
+                totalMatches += m; maxMatches = Math.max(maxMatches, m);
+                if (p.rank) rankCounts[p.rank]++;
+            });
 
-                if (statusResponse.ok) {
-                    try {
-                        status = await statusResponse.json();
-                    } catch (e) {
-                        console.warn('최적화 상태 JSON 파싱 실패:', e);
-                    }
+            if (win) {
+                const avg = (totalMatches / total).toFixed(2);
+                const threePlus = preds.filter(p => (p.matches || 0) >= 3).length;
+                const heroMini = document.getElementById('heroMini');
+                if (heroMini) {
+                    heroMini.innerHTML =
+                        '<div><div class="mv">' + avg + '</div><div class="ml">평균 일치</div></div>' +
+                        '<div><div class="mv">' + maxMatches + '</div><div class="ml">최고 일치</div></div>' +
+                        '<div><div class="mv">' + threePlus + '</div><div class="ml">3개+ 적중</div></div>';
                 }
 
-                if (historyResponse.ok) {
-                    try {
-                        history = await historyResponse.json();
-                    } catch (e) {
-                        console.warn('최적화 히스토리 JSON 파싱 실패:', e);
-                    }
-                }
-
-                displayOptimizerStatus(status);
-                displayOptimizerHistory(history);
-            } catch (error) {
-                console.error('최적화 상태 로드 실패:', error);
-                document.getElementById('optimizerStatusGrid').innerHTML = `
-                    <div style="text-align: center; color: #999; padding: 20px;">
-                        <p>최적화 상태를 불러올 수 없습니다.</p>
-                    </div>
-                `;
-            }
-        }
-
-        // 최적화 상태 표시
-        function displayOptimizerStatus(status) {
-            const statusGrid = document.getElementById('optimizerStatusGrid');
-
-            const statusColor = status.running ? '#28a745' : '#6c757d';
-            const statusText = status.running ? '실행 중' : '대기 중';
-
-            let remainingTime = '';
-            if (status.remaining_minutes > 0) {
-                const hours = Math.floor(status.remaining_minutes / 60);
-                const minutes = Math.floor(status.remaining_minutes % 60);
-                remainingTime = hours > 0 ? `${hours}시간 ${minutes}분` : `${minutes}분`;
-            }
-
-            statusGrid.innerHTML = `
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                    <div class="stat-card">
-                        <div class="stat-value" style="color: ${statusColor};">${statusText}</div>
-                        <div class="stat-label">서비스 상태</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${status.total_runs || 0}회</div>
-                        <div class="stat-label">총 최적화 실행</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${status.total_trials || 0}회</div>
-                        <div class="stat-label">총 시도 횟수</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">${remainingTime || 'N/A'}</div>
-                        <div class="stat-label">다음 실행까지</div>
-                    </div>
-                </div>
-                ${status.best_params ? `
-                    <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                        <h5 style="color: #c8890e; margin-bottom: 10px;">현재 최적 파라미터</h5>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; font-size: 14px;">
-                            <div>
-                                <strong>Threshold:</strong> ${status.best_params.threshold?.toFixed(2) || 'N/A'}
-                            </div>
-                            <div>
-                                <strong>ML Bypass:</strong> ${status.best_params.ml_bypass || 'N/A'}
-                            </div>
-                            <div>
-                                <strong>ML Weight:</strong> ${status.best_params.ml_weight?.toFixed(2) || 'N/A'}
-                            </div>
-                            <div>
-                                <strong>Score:</strong> ${status.best_score?.toFixed(3) || 'N/A'}
-                            </div>
-                        </div>
-                    </div>
-                ` : ''}
-                ${status.message ? `
-                    <div style="margin-top: 10px; padding: 10px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; color: #856404; font-size: 14px;">
-                        ${status.message}
-                    </div>
-                ` : ''}
-            `;
-        }
-
-        // 최적화 이력 표시
-        function displayOptimizerHistory(history) {
-            const historyTable = document.getElementById('optimizerHistoryTable');
-
-            if (!history || history.length === 0) {
-                historyTable.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">최적화 이력이 없습니다.</p>';
-                return;
-            }
-
-            historyTable.innerHTML = `
-                <div style="overflow-x: auto;">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-                        <thead>
-                            <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-                                <th style="padding: 10px; text-align: left;">날짜</th>
-                                <th style="padding: 10px; text-align: center;">시도</th>
-                                <th style="padding: 10px; text-align: center;">Threshold</th>
-                                <th style="padding: 10px; text-align: center;">ML Bypass</th>
-                                <th style="padding: 10px; text-align: center;">ML Weight</th>
-                                <th style="padding: 10px; text-align: center;">Score</th>
-                                <th style="padding: 10px; text-align: center;">Avg Matches</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${history.map(item => `
-                                <tr style="border-bottom: 1px solid #dee2e6;">
-                                    <td style="padding: 8px;">${new Date(item.date).toLocaleString('ko-KR')}</td>
-                                    <td style="padding: 8px; text-align: center;">${item.trials}</td>
-                                    <td style="padding: 8px; text-align: center;">${item.threshold?.toFixed(2) || 'N/A'}</td>
-                                    <td style="padding: 8px; text-align: center;">${item.ml_bypass || 'N/A'}</td>
-                                    <td style="padding: 8px; text-align: center;">${item.ml_weight?.toFixed(2) || 'N/A'}</td>
-                                    <td style="padding: 8px; text-align: center;">${item.score?.toFixed(3) || 'N/A'}</td>
-                                    <td style="padding: 8px; text-align: center;">${item.avg_matches?.toFixed(3) || 'N/A'}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            `;
-        }
-
-        // 전체 통계 표시
-        async function showStatistics() {
-            try {
-                console.log('전체 통계 로드 시작...');
-
-                // 통계 섹션만 표시 (다른 섹션은 그대로 유지)
-                const statsSection = document.getElementById('statsSection');
-                statsSection.style.display = 'block';
-                statsSection.innerHTML = `
-                    <h2 class="section-title">📈 성능 통계</h2>
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        <p>통계 데이터를 불러오는 중...</p>
-                    </div>
-                `;
-
-                // 최적화 상태 로드
-                loadOptimizerStatus();
-
-                // 기본 통계, 백테스팅 성능, 당첨 통계 병렬로 로드
-                const [statsResponse, backtestResponse, winningStatsResponse] = await Promise.all([
-                    fetch('/api/stats'),
-                    fetch('/api/backtest-performance'),
-                    fetch('/api/winning-statistics')
-                ]);
-
-                const stats = await statsResponse.json();
-                const backtestData = await backtestResponse.json();
-                const winningStats = await winningStatsResponse.json();
-
-                console.log('통계 데이터:', stats);
-                console.log('백테스팅 데이터:', backtestData);
-                console.log('당첨 통계:', winningStats);
-
-                // 통계 섹션 재구성 (컴팩트 레이아웃)
-                statsSection.innerHTML = `
-                    <h2 class="section-title">📈 성능 통계</h2>
-
-                    <!-- 백그라운드 최적화 상태 (접힌 상태) -->
-                    <details id="optimizerStatus" style="margin-bottom: 15px;">
-                        <summary style="cursor: pointer; color: #c8890e; font-weight: bold; padding: 10px; background: #f8f9fa; border-radius: 8px;">⚙️ 백그라운드 최적화 상태 (클릭하여 펼치기)</summary>
-                        <div style="padding: 10px; background: white; border-radius: 0 0 8px 8px; margin-top: -5px;">
-                            <div id="optimizerStatusGrid" style="background: white; padding: 10px; border-radius: 8px;">
-                                <!-- 최적화 상태가 여기 표시됩니다 -->
-                            </div>
-                            <div id="optimizerHistory" style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-top: 10px;">
-                                <h4 style="color: #c8890e; margin-bottom: 8px; font-size: 14px;">최근 최적화 이력</h4>
-                                <div id="optimizerHistoryTable" style="font-size: 12px;">
-                                    <!-- 최적화 이력이 여기 표시됩니다 -->
-                                </div>
-                            </div>
-                        </div>
-                    </details>
-
-                    <!-- 백테스팅 성능 통계 (컴팩트) -->
-                    <div id="backtestPerformance" style="margin-bottom: 15px;">
-                        <h3 style="color: #c8890e; margin-bottom: 10px; font-size: 16px;">🎯 백테스팅 시뮬레이션 성능</h3>
-                        <div id="backtestStatsGrid" class="stats-grid" style="gap: 8px;">
-                            <!-- 백테스팅 통계가 여기 표시됩니다 -->
-                        </div>
-                    </div>
-
-                    <!-- 실제 예측 통계 (컴팩트) -->
-                    <div style="margin-top: 15px;">
-                        <h3 style="color: #c8890e; margin-bottom: 10px; font-size: 16px;">📊 실제 예측 통계</h3>
-                        <div class="stats-grid" id="statsGrid" style="gap: 8px;">
-                            <!-- 실제 예측 통계가 여기 표시됩니다 -->
-                        </div>
-
-                        <!-- 상세한 맞춘 개수별 통계 -->
-                        <div id="matchDistributionDetail" style="margin-top: 20px;">
-                            <!-- 상세 통계가 여기 표시됩니다 -->
-                        </div>
-                    </div>
-                `;
-                
-                // 백테스팅 성능 표시
-                displayBacktestPerformance(backtestData);
-
-                // 기본 통계 표시
-                displayBasicStats(stats);
-
-                // 상세한 맞춘 개수별 분석 추가 (백테스팅 데이터도 함께 전달)
-                displayDetailedMatchAnalysis(stats, backtestData);
-                
-                console.log('전체 통계 표시 완료');
-                
-            } catch (error) {
-                console.error('통계 로드 실패:', error);
-                const statsSection = document.getElementById('statsSection');
-                statsSection.innerHTML = `
-                    <h2 class="section-title">📈 성능 통계</h2>
-                    <div style="text-align: center; color: #999; padding: 40px;">
-                        <p>❌ 통계 데이터를 불러올 수 없습니다.</p>
-                        <small>서버 연결을 확인하세요.</small>
-                    </div>
-                `;
-            }
-        }
-        
-        // 백테스팅 성능 표시
-        function displayBacktestPerformance(backtestStats) {
-            const backtestSection = document.getElementById('backtestPerformance');
-            const statsGrid = document.getElementById('backtestStatsGrid');
-            
-            // API 응답 구조 확인
-            if (!backtestStats || (!backtestStats.total_predictions && !backtestStats.model_performance)) {
-                backtestSection.innerHTML = `
-                    <div style="text-align: center; color: #999; padding: 20px;">
-                        <h3>🎯 백테스팅 시뮬레이션 성능</h3>
-                        <p>백테스팅 데이터가 없습니다. main.py를 실행하여 백테스팅을 수행하세요.</p>
-                        <small>python main.py (백테스팅 포함 실행)</small>
-                    </div>
-                `;
-                backtestSection.style.display = 'block';
-                return;
-            }
-            
-            backtestSection.style.display = 'block';
-            
-            // 에러 상태 확인 및 표시 (데모 모드 삭제됨 - 실제 데이터만 사용)
-            if (backtestStats.error) {
-                const errorNotice = document.createElement('div');
-                errorNotice.className = 'error-notice';
-                errorNotice.innerHTML = `
-                    <div style="background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-size: 14px; line-height: 1.5;">
-                        <strong>⚠️ 데이터 없음</strong><br>
-                        ${backtestStats.error_message || '백테스팅 결과가 없습니다.'}<br>
-                        <span style="background: #f8f9fa; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; color: #495057; margin: 5px 0; display: inline-block;">python main.py</span>를 실행하여 실제 성능 통계를 생성하세요.
-                    </div>
-                `;
-                backtestSection.insertBefore(errorNotice, backtestSection.firstChild);
-            }
-            
-            // 주요 통계 카드들 - 새로운 API 구조에 맞게 수정
-            const modelData = Object.values(backtestStats.model_performance || {});
-            
-            const keyStats = [];
-            if (modelData.length > 0 || backtestStats.total_predictions > 0) {
-                const avgMatches = modelData.map(m => m.avg_matches || 0);
-                const bestAvg = Math.max(...avgMatches) || backtestStats.average_matches || 0;
-                const totalPredictions = backtestStats.total_predictions || modelData.reduce((sum, m) => sum + (m.total_predictions || 0), 0);
-                const avgAccuracy = modelData.reduce((sum, m) => sum + (m.accuracy_3plus || 0), 0) / modelData.length || 0;
-
-                keyStats.push(
-                    { label: '테스트 기간', value: backtestStats.test_period || 'N/A' },
-                    { label: '평균 일치', value: backtestStats.average_matches?.toFixed(3) || bestAvg.toFixed(3) },
-                    { label: '총 예측 수', value: totalPredictions.toLocaleString() },
-                    { label: '평균 3+ 정확도', value: avgAccuracy.toFixed(1) + '%' }
-                );
-            } else {
-                keyStats.push(
-                    { label: '총 세션', value: '0' },
-                    { label: '평균 일치', value: '0.000' },
-                    { label: '총 예측', value: '0' },
-                    { label: '3+ 정확도', value: '0.0%' }
-                );
-            }
-            
-            // 통계 카드 HTML 생성
-            let statsHtml = keyStats.map(stat => `
-                <div class="stat-card">
-                    <div class="stat-value">${stat.value}</div>
-                    <div class="stat-label">${stat.label}</div>
-                </div>
-            `).join('');
-
-            // 필터 성능 데이터 표시 (실제 데이터만 - 가짜 데이터 금지)
-            const filterPerf = backtestStats.filter_performance || {};
-            if (filterPerf.data_available) {
-                // 실제 데이터가 있는 경우에만 표시
-                statsHtml += `
-                    <div style="grid-column: 1 / -1; margin-top: 15px; padding: 15px; background: #e8f5e9; border-radius: 10px; border: 1px solid #a5d6a7;">
-                        <h4 style="color: #2e7d32; font-size: 14px; margin-bottom: 10px;">🔍 필터 성능 (실제 데이터)</h4>
-                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
-                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
-                                <div style="font-size: 16px; font-weight: bold; color: #1976d2;">${(filterPerf.total_combinations_before || 8145060).toLocaleString()}</div>
-                                <div style="font-size: 11px; color: #666;">전체 조합</div>
-                            </div>
-                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
-                                <div style="font-size: 16px; font-weight: bold; color: #388e3c;">${(filterPerf.total_combinations_after || 0).toLocaleString()}</div>
-                                <div style="font-size: 11px; color: #666;">필터링 후</div>
-                            </div>
-                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
-                                <div style="font-size: 16px; font-weight: bold; color: #f57c00;">${filterPerf.reduction_rate || 0}%</div>
-                                <div style="font-size: 11px; color: #666;">감소율</div>
-                            </div>
-                            <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
-                                <div style="font-size: 16px; font-weight: bold; color: #7b1fa2;">${filterPerf.hit_rate_in_filtered_pool !== null ? filterPerf.hit_rate_in_filtered_pool + '%' : 'N/A'}</div>
-                                <div style="font-size: 11px; color: #666;">ML 포함률</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            } else {
-                // 실제 데이터가 없는 경우 경고 메시지
-                statsHtml += `
-                    <div style="grid-column: 1 / -1; margin-top: 15px; padding: 15px; background: #fff3e0; border-radius: 10px; border: 1px solid #ffcc80;">
-                        <h4 style="color: #e65100; font-size: 14px; margin-bottom: 5px;">⚠️ 필터 성능 데이터 없음</h4>
-                        <p style="color: #666; font-size: 12px; margin: 0;">
-                            필터링 결과가 데이터베이스에 저장되지 않았습니다.<br>
-                            <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 4px;">python main.py</code>를 실행하면 실제 필터 성능 데이터가 저장됩니다.
-                        </p>
-                    </div>
-                `;
-            }
-
-            // 정직한 확률 분석 섹션 추가
-            statsHtml += `
-                <div style="grid-column: 1 / -1; margin-top: 15px; padding: 15px; background: #e3f2fd; border-radius: 10px; border: 1px solid #90caf9;">
-                    <h4 style="color: #1565c0; font-size: 14px; margin-bottom: 10px;">[ ] 정직한 확률 분석</h4>
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                        <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
-                            <div style="font-size: 14px; font-weight: bold; color: #1976d2;">
-                                ${filterPerf.data_available ?
-                                    (5 / 8145060 * (filterPerf.hit_rate_in_filtered_pool ? filterPerf.hit_rate_in_filtered_pool / 100 : 1) * 100).toFixed(7) + '%' :
-                                    '0.0000614%'}
-                            </div>
-                            <div style="font-size: 11px; color: #666;">5 Set 1 Prize Probability</div>
-                            <div style="font-size: 10px; color: #999;">5 / 8,145,060 x inclusion_rate</div>
-                        </div>
-                        <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
-                            <div style="font-size: 14px; font-weight: bold; color: #388e3c;">
-                                ${filterPerf.data_available ?
-                                    Math.round(8145060 / (filterPerf.total_combinations_after || 300000)) + 'x' :
-                                    '27x'}
-                            </div>
-                            <div style="font-size: 11px; color: #666;">Cost Efficiency</div>
-                            <div style="font-size: 10px; color: #999;">8.14M / pool_size</div>
-                        </div>
-                        <div style="text-align: center; padding: 10px; background: #fff; border-radius: 8px;">
-                            <div style="font-size: 14px; font-weight: bold; color: #e65100;">0.8</div>
-                            <div style="font-size: 11px; color: #666;">Random Expected Matches</div>
-                            <div style="font-size: 10px; color: #999;">E[X] = 6 x 6/45</div>
-                        </div>
-                    </div>
-                    <div style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 6px; font-size: 11px; color: #555; line-height: 1.6;">
-                        <strong>[ ] System Effect Analysis:</strong><br>
-                        - Filter: Removes irrational combinations (pool size: ${filterPerf.data_available ? (filterPerf.total_combinations_after || 0).toLocaleString() : 'N/A'} / 8,145,060)<br>
-                        - ML Model: avg_matches = 0.8 (same as random, per independent event theory)<br>
-                        - Actual Improvement: Cost efficiency ${filterPerf.data_available ? Math.round(8145060 / (filterPerf.total_combinations_after || 300000)) : '~27'}x (probability itself unchanged)<br>
-                        - Wheeling: Maximizes number coverage within selected sets
-                    </div>
-                </div>
-            `;
-
-            statsGrid.innerHTML = statsHtml;
-        }
-
-        // 기본 통계 표시 (실제 예측 데이터)
-        function displayBasicStats(stats) {
-            const statsGrid = document.getElementById('statsGrid');
-
-            // 실제 예측 데이터의 match_distribution 확인
-            const matchDist = stats.match_distribution || {};
-            const totalActualPredictions = Object.values(matchDist).reduce((a, b) => a + b, 0);
-
-            const basicStats = [
-                { label: '총 예측', value: stats.total_predictions || 0 },
-                { label: '분석 회차', value: stats.total_rounds || 0 },
-                { label: '회차당 평균', value: stats.avg_predictions_per_round ? stats.avg_predictions_per_round.toFixed(1) : '0' },
-                { label: '총 당첨', value: stats.total_wins || 0 }
-            ];
-
-            // 기본 통계 카드
-            let html = basicStats.map(stat => `
-                <div class="stat-card">
-                    <div class="stat-value">${stat.value}</div>
-                    <div class="stat-label">${stat.label}</div>
-                </div>
-            `).join('');
-
-            // 실제 예측 맞춘 개수 분포 추가
-            if (totalActualPredictions > 0) {
-                html += `
-                    <div style="grid-column: 1 / -1; margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 10px;">
-                        <h4 style="color: #495057; font-size: 14px; margin-bottom: 10px;">📊 실제 예측 결과 - 맞춘 개수별 분포:</h4>
-                        <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px;">
-                            ${[0,1,2,3,4,5,6].map(matches => {
-                                const count = matchDist[matches] || 0;
-                                const percentage = totalActualPredictions > 0 ? ((count / totalActualPredictions) * 100).toFixed(1) : '0';
-                                const bgColor = matches >= 3 ? (matches == 3 ? '#d4edda' : matches == 4 ? '#fff3cd' : matches == 5 ? '#f8d7da' : '#dc3545') : '#e9ecef';
-                                const textColor = matches >= 5 ? '#fff' : '#495057';
-                                return `
-                                    <div style="text-align: center; padding: 10px; background: ${bgColor}; color: ${textColor}; border-radius: 8px;">
-                                        <div style="font-size: 18px; font-weight: bold;">${count}</div>
-                                        <div style="font-size: 11px; margin-top: 3px;">
-                                            ${matches}개<br>
-                                            ${percentage}%
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-                        <div style="margin-top: 10px; font-size: 12px; color: #666;">
-                            ※ 이것은 실제 예측 번호들의 결과입니다. (predictions.db 기준)
-                        </div>
-                    </div>
-                `;
-            }
-
-            statsGrid.innerHTML = html;
-        }
-        
-        // 상세한 맞춘 개수별 분석 표시
-        function displayDetailedMatchAnalysis(stats, backtestData) {
-            const detailSection = document.getElementById('matchDistributionDetail');
-
-            if (!stats.rank_distribution && !backtestData) {
-                detailSection.innerHTML = `
-                    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center;">
-                        <h4 style="color: #c8890e; margin-bottom: 10px;">📊 백테스팅 시뮬레이션 - 맞춘 개수별 분석</h4>
-                        <p style="color: #666; margin: 0;">분석할 데이터가 부족합니다.</p>
-                        <small style="color: #999;">더 많은 예측 데이터가 필요합니다.</small>
-                    </div>
-                `;
-                return;
-            }
-
-            const rankData = stats.rank_distribution || {};
-
-            // 백테스팅 데이터에서 match_distribution 수집
-            let matchAnalysis = {};
-            let hasRealData = false;
-
-            // 백테스팅 데이터에서 실제 match_distribution 추출
-            if (backtestData && backtestData.model_performance) {
-                // 모든 모델의 match_distribution을 합산
-                for (const modelName in backtestData.model_performance) {
-                    const modelPerf = backtestData.model_performance[modelName];
-                    if (modelPerf.match_distribution) {
-                        hasRealData = true;
-                        for (let i = 0; i <= 6; i++) {
-                            const key = `match_${i}`;
-                            matchAnalysis[i] = (matchAnalysis[i] || 0) + (modelPerf.match_distribution[key] || 0);
-                        }
-                    }
-                }
-            }
-
-            // 실제 데이터가 없으면 기존 추정 로직 사용
-            if (!hasRealData) {
-                if (stats.match_distribution) {
-                    matchAnalysis = stats.match_distribution;
-                } else {
-                    // 백업: rank_distribution 기반 추정 (정확하지 않음)
-                    matchAnalysis = {
-                        0: Math.max(0, (stats.total_predictions || 100) - (stats.total_wins || 0) - 100),
-                        1: Math.floor((stats.total_predictions || 100) * 0.35),
-                        2: Math.floor((stats.total_predictions || 100) * 0.25),
-                        3: rankData['5등'] || 0,
-                        4: rankData['4등'] || 0,
-                        5: (rankData['3등'] || 0) + (rankData['2등'] || 0),
-                        6: rankData['1등'] || 0
+                // 공식 통계 비교 (collapsible)
+                const ws = data.winning_statistics;
+                const det = document.getElementById('officialDetails');
+                if (ws && ws.statistics && ws.total_games) {
+                    det.style.display = '';
+                    const s = ws.statistics, g = ws.total_games;
+                    const off = {
+                        1: (s.first_winners / g * 100).toFixed(6), 2: (s.second_winners / g * 100).toFixed(6),
+                        3: (s.third_winners / g * 100).toFixed(4), 4: (s.fourth_winners / g * 100).toFixed(4),
+                        5: (s.fifth_winners / g * 100).toFixed(2)
                     };
+                    const mine = {};
+                    for (let r = 1; r <= 5; r++) mine[r] = (rankCounts[r] / total * 100).toFixed(4);
+                    const labels = { 1: '1등', 2: '2등', 3: '3등', 4: '4등', 5: '5등' };
+                    let rrows = '';
+                    [1, 2, 3, 4, 5].forEach(r => {
+                        rrows += '<tr><td>' + labels[r] + '</td><td style="text-align:right;font-family:var(--font-mono);">' +
+                            (s[['first', 'second', 'third', 'fourth', 'fifth'][r - 1] + '_winners'] || 0).toLocaleString() + '명</td>' +
+                            '<td style="text-align:right;font-family:var(--font-mono);">' + off[r] + '%</td>' +
+                            '<td style="text-align:right;font-family:var(--font-mono);color:var(--good);">' + mine[r] + '%</td></tr>';
+                    });
+                    document.getElementById('officialBody').innerHTML =
+                        '<div class="table-scroll" style="max-height:none;"><table class="data-table"><thead><tr>' +
+                        '<th>등수</th><th style="text-align:right;">공식 당첨자</th><th style="text-align:right;">공식 확률</th><th style="text-align:right;">내 예측 비율</th>' +
+                        '</tr></thead><tbody>' + rrows + '</tbody></table></div>' +
+                        '<div style="margin-top:10px;font-size:12px;color:var(--muted);">총 판매 ' + g.toLocaleString() + '게임 기준 · 내 예측 ' + total + '세트의 등수 분포 비교</div>';
+                } else {
+                    det.style.display = 'none';
+                }
+            } else {
+                const det = document.getElementById('officialDetails');
+                if (det) det.style.display = 'none';
+            }
+        }
+
+        // 시스템 핵심 지표(통과율/극단성 풀) - 회차 무관, 파일 기반이라 1회만 로드 후 캐시
+        let __sysMetrics = null;
+        async function loadSystemMetrics() {
+            if (__sysMetrics) return __sysMetrics;
+            const [inc, ext] = await Promise.all([
+                fetchJson('/api/inclusion-rate'),
+                fetchJson('/api/extremeness-pool')
+            ]);
+            const incData = (inc.ok && inc.data && inc.data.data) ? inc.data.data : null;
+            __sysMetrics = {
+                inclusion: incData && incData.overall ? incData.overall : null,
+                pool: (ext.ok && ext.data && !ext.data.error) ? ext.data : null
+            };
+            return __sysMetrics;
+        }
+        function fmtK(n) {
+            if (n == null) return '—';
+            return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M' : Math.round(n / 1e3) + 'K';
+        }
+
+        // KPI 미니카드 (Row1) - 이 시스템의 진짜 핵심 지표 (당첨 예측 정확도가 아님)
+        async function displayKpis(data) {
+            const grid = document.getElementById('kpiGrid');
+            document.getElementById('kpiSub').textContent = currentRound ? currentRound + '회차' : '';
+            const m = await loadSystemMetrics();
+            const preds = data.all_predictions || [];
+            const win = data.winning_numbers;
+
+            // 1) 필터 통과율(참고): (구)16필터가 역사적 당첨번호를 보존하는 비율.
+            //    실제 예측에 쓰는 극단성 풀과는 별개 지표라 '참고'로 명시(2026-05-31 사용자 결정: 통과율은 강제목표 아닌 참고지표).
+            const inc = m.inclusion;
+            const inclPct = inc ? (inc.inclusion_rate * 100).toFixed(1) : null;
+            const inclSub = inc ? (inc.passed + '/' + (inc.passed + inc.failed) + '회 · 16필터 기준') : '측정 데이터 없음';
+            const c1 = '<div class="kpi"><div class="v">' + (inclPct != null ? inclPct + '<small>%</small>' : '—') + '</div>' +
+                '<div class="l" title="역사적 당첨번호가 (구)16필터를 통과하는 비율. 참고 지표이며 실제 예측 풀(극단성 풀)과는 별개다.">필터 통과율 <span style="color:var(--muted);font-weight:600;">(참고)</span></div>' +
+                '<div class="trk"><i style="width:' + (inclPct || 0) + '%"></i></div>' +
+                '<div style="font-size:10px;color:var(--muted);margin-top:6px;">' + inclSub + '</div></div>';
+
+            // 2) 극단성 풀 크기: 815만 중 극단패턴 제거 후 실제 예측에 쓰는 풀
+            const pool = m.pool;
+            const K = pool ? pool.target_K : null;
+            const ratio = pool && pool.pool_ratio != null ? (pool.pool_ratio * 100).toFixed(1) : null;
+            const c2 = '<div class="kpi accent"><div class="v">' + fmtK(K) + '</div>' +
+                '<div class="l" title="815만 조합 중 역사적 극단 패턴을 제거하고 남긴, 실제 예측에 쓰이는 풀 크기">극단성 풀 크기</div>' +
+                '<div class="trk"><i style="width:' + (ratio || 0) + '%"></i></div>' +
+                '<div style="font-size:10px;color:var(--muted);margin-top:6px;">전체 8.14M의 ' + (ratio != null ? ratio + '%' : '—') + '</div></div>';
+
+            // 3) 무작위 대비 적합도(lift): 이 풀이 무작위보다 당첨번호를 얼마나 더 담는가
+            const lift = pool && pool.lift != null ? pool.lift.toFixed(2) : null;
+            const cov = pool && pool.coverage != null ? (pool.coverage * 100).toFixed(1) : null;
+            const liftGood = lift != null && parseFloat(lift) >= 1;
+            const c3 = '<div class="kpi"><div class="v" style="color:' + (liftGood ? 'var(--good)' : 'var(--text)') + ';">' + (lift != null ? '&times;' + lift : '—') + '</div>' +
+                '<div class="l" title="이 풀이 무작위 대비 당첨번호를 얼마나 더 잘 담는가 (1.0=무작위, 1 초과=우수)">무작위 대비 적합도</div>' +
+                '<div style="font-size:10px;color:var(--muted);margin-top:9px;">당첨 포함률 ' + (cov != null ? cov + '%' : '—') + (pool && pool.reliable === false ? ' · 참고' : '') + '</div></div>';
+
+            // 4) 이번 회차: 추첨됐으면 평균 일치, 아니면 예측 세트 수
+            let c4;
+            if (win && preds.length) {
+                let tm = 0; preds.forEach(p => { tm += (p.matches || 0); });
+                const avg = (tm / preds.length).toFixed(2);
+                c4 = '<div class="kpi"><div class="v">' + avg + '</div><div class="l">이번 회차 평균 일치</div>' +
+                    '<div class="trk"><i style="width:' + Math.min(100, avg / 2 * 100) + '%"></i></div>' +
+                    '<div style="font-size:10px;color:var(--muted);margin-top:6px;">' + preds.length + '세트 기준</div></div>';
+            } else {
+                c4 = '<div class="kpi"><div class="v">' + (data.total_predictions || preds.length) + '</div><div class="l">이번 회차 예측 세트</div>' +
+                    '<div style="font-size:10px;color:var(--muted);margin-top:9px;">추첨 대기</div></div>';
+            }
+            // 배치: 실제 메커니즘(극단성 풀 + 무작위 대비 적합도)을 상단에, 참고(필터 통과율)·이번 회차를 하단에
+            grid.innerHTML = c2 + c3 + c1 + c4;
+        }
+
+        // ===== 통계 영역 =====
+        async function showStatistics() {
+            document.getElementById('statsSection').style.display = 'grid';
+            loadOptimizerStatus();
+            setState('backtestGrid', 'loading', '백테스트 로딩 중...');
+
+            const [s, b, w] = await Promise.all([
+                fetchJson('/api/stats'),
+                fetchJson('/api/backtest-performance'),
+                fetchJson('/api/winning-statistics')
+            ]);
+            displayBacktestPerformance(b.ok ? b.data : (b.data || {}));
+            displayBasicStats(s.ok ? s.data : {});
+            displayDistribution(s.ok ? s.data : {}, b.ok ? b.data : null);
+        }
+
+        function displayBacktestPerformance(bt) {
+            const grid = document.getElementById('backtestGrid');
+            bt = bt || {};
+            const models = Object.values(bt.model_performance || {});
+            if (!bt.total_predictions && !models.length) {
+                setState('backtestGrid', 'empty', '백테스트 데이터가 없습니다. main.py 실행 후 표시됩니다.');
+                return;
+            }
+            const avgMatches = models.map(m => m.avg_matches || 0);
+            const bestAvg = avgMatches.length ? Math.max.apply(null, avgMatches) : (bt.average_matches || 0);
+            const totalPred = bt.total_predictions || models.reduce((a, m) => a + (m.total_predictions || 0), 0);
+            const acc3 = models.length ? models.reduce((a, m) => a + (m.accuracy_3plus || 0), 0) / models.length : 0;
+            const cells = [
+                { v: bt.test_period || 'N/A', l: '테스트 기간' },
+                { v: (bt.average_matches != null ? bt.average_matches : bestAvg).toFixed(3), l: '평균 일치' },
+                { v: totalPred.toLocaleString(), l: '총 예측 수' },
+                { v: acc3.toFixed(1) + '%', l: '3+ 정확도' }
+            ];
+            grid.innerHTML = '<div class="stat-row">' +
+                cells.map(c => '<div class="stat-cell"><div class="v">' + c.v + '</div><div class="l">' + c.l + '</div></div>').join('') +
+                '</div>';
+            // 주의: 과거 여기서 보여주던 "풀 8.14M->304K 감소율(filter_performance)"은
+            // 실제 예측에 미사용인 구(舊) 16필터 추정값이라 제거함. 실제 사용 풀(극단성 풀)
+            // 지표는 상단 KPI(/api/extremeness-pool)에서 정직하게 표시한다.
+        }
+
+        function displayBasicStats(stats) {
+            stats = stats || {};
+            const grid = document.getElementById('basicStatsGrid');
+            const cells = [
+                { v: stats.total_predictions || 0, l: '총 예측' },
+                { v: stats.total_rounds || 0, l: '분석 회차' },
+                { v: stats.avg_predictions_per_round ? stats.avg_predictions_per_round.toFixed(1) : '0', l: '회차당 평균' },
+                { v: stats.total_wins || 0, l: '총 당첨' }
+            ];
+            grid.innerHTML = '<div class="stat-row">' +
+                cells.map(c => '<div class="stat-cell"><div class="v">' + c.v + '</div><div class="l">' + c.l + '</div></div>').join('') +
+                '</div>';
+        }
+
+        // 맞춘 개수 분포 차트 (백테스트 우선, 없으면 stats)
+        function displayDistribution(stats, backtest) {
+            const wrap = document.getElementById('distChart');
+            let dist = {};
+            let hasReal = false;
+            if (backtest && backtest.model_performance) {
+                for (const k in backtest.model_performance) {
+                    const md = backtest.model_performance[k].match_distribution;
+                    if (md) { hasReal = true; for (let i = 0; i <= 6; i++) dist[i] = (dist[i] || 0) + (md['match_' + i] || 0); }
                 }
             }
-            
-            const totalPredictions = Object.values(matchAnalysis).reduce((sum, val) => sum + val, 0) || 1;
-            const avgMatches = (Object.entries(matchAnalysis).reduce((sum, [matches, count]) => sum + (parseInt(matches) * count), 0) / totalPredictions).toFixed(2);
-            const threeOrMore = (matchAnalysis[3] || 0) + (matchAnalysis[4] || 0) + (matchAnalysis[5] || 0) + (matchAnalysis[6] || 0);
+            if (!hasReal && stats && stats.match_distribution) dist = stats.match_distribution;
+            const total = Object.values(dist).reduce((a, b) => a + b, 0);
+            if (!total) { setState('distChart', 'empty', '분포 데이터가 아직 없습니다.'); return; }
 
-            // 컴팩트 레이아웃: 가로로 배치된 뱃지 + 요약 한 줄
-            detailSection.innerHTML = `
-                <div style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 12px 15px; border-radius: 10px; border: 1px solid #dee2e6;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                        <h4 style="color: #c8890e; margin: 0; font-size: 14px;">📊 맞춘 개수별 분석</h4>
-                        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                            ${Object.entries(matchAnalysis).map(([matches, count]) => {
-                                const percentage = ((count / totalPredictions) * 100).toFixed(1);
-                                let bgColor = matches >= 3 ? (matches == 3 ? '#28a745' : matches == 4 ? '#ffc107' : matches == 5 ? '#fd7e14' : '#dc3545') : '#6c757d';
-                                let textColor = matches == 4 ? '#000' : '#fff';
-                                return `<span style="background: ${bgColor}; color: ${textColor}; padding: 4px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;" title="${matches}개 맞춤: ${count}건 (${percentage}%)">${matches}개: ${count}</span>`;
-                            }).join('')}
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 15px; margin-top: 10px; font-size: 12px; color: #495057; flex-wrap: wrap;">
-                        <span>📈 평균: <strong>${avgMatches}개</strong></span>
-                        <span>🎯 3개+: <strong>${threeOrMore}건</strong> (${((threeOrMore / totalPredictions) * 100).toFixed(1)}%)</span>
-                        ${matchAnalysis[6] > 0 ? `<span style="color: #dc3545;">🎉 6개 맞춤: <strong>${matchAnalysis[6]}건</strong></span>` : ''}
-                        ${hasRealData ? '<span style="color: #28a745;">✅ 실제 데이터</span>' : '<span style="color: #ffc107;">⚠️ 추정</span>'}
-                    </div>
-                </div>
-            `;
+            const counts = [];
+            for (let i = 0; i <= 6; i++) counts.push(dist[i] || 0);
+            const maxC = Math.max.apply(null, counts) || 1;
+            const avg = (counts.reduce((s, c, i) => s + c * i, 0) / total).toFixed(2);
+            const threePlus = counts.slice(3).reduce((a, b) => a + b, 0);
+
+            let bars = '';
+            counts.forEach((c, i) => {
+                const h = (c / maxC) * 100;
+                bars += '<div class="bar-col"><div class="bar ' + (i >= 3 ? 'hi' : '') + '" style="height:' + h + '%">' +
+                    '<span class="bar-v">' + c + '</span></div><span class="bar-l">' + i + '개</span></div>';
+            });
+            wrap.innerHTML = '<div class="bar-chart">' + bars + '</div>' +
+                '<div style="display:flex; gap:16px; margin-top:8px; font-size:12px; color:var(--text-2); flex-wrap:wrap;">' +
+                '<span>평균 <b style="font-family:var(--font-mono);color:var(--text);">' + avg + '</b></span>' +
+                '<span>3개+ <b style="font-family:var(--font-mono);color:var(--good);">' + threePlus + '</b></span>' +
+                '<span style="color:var(--muted);">' + (hasReal ? '실측 데이터' : '추정') + '</span></div>';
         }
-        
-        // 화면 저장 기능
+
+        // Optuna 최적화 상태/이력
+        async function loadOptimizerStatus() {
+            const [st, hi] = await Promise.all([
+                fetchJson('/api/optimizer-status'),
+                fetchJson('/api/optimizer-history')
+            ]);
+            displayOptimizerStatus(st.ok ? st.data : { running: false });
+            displayOptimizerHistory(hi.ok && Array.isArray(hi.data) ? hi.data : []);
+        }
+
+        function displayOptimizerStatus(status) {
+            status = status || {};
+            const grid = document.getElementById('optimizerStatusGrid');
+            const running = !!status.running;
+            let remain = 'N/A';
+            if (status.remaining_minutes > 0) {
+                const h = Math.floor(status.remaining_minutes / 60), m = Math.floor(status.remaining_minutes % 60);
+                remain = h > 0 ? (h + '시간 ' + m + '분') : (m + '분');
+            }
+            grid.innerHTML =
+                '<div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">' +
+                '<span class="status-dot" style="background:' + (running ? 'var(--good)' : 'var(--muted)') + '"></span>' +
+                '<b style="color:' + (running ? 'var(--good)' : 'var(--muted)') + ';font-size:14px;">' + (running ? '실행 중' : '대기 중') + '</b></div>' +
+                '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">' +
+                kpiMini(status.total_trials || 0, '누적 trials') +
+                kpiMini(status.total_runs || 0, '실행 횟수') +
+                kpiMini((status.best_score != null ? status.best_score.toFixed(3) : 'N/A'), '최적 점수') +
+                kpiMini(remain, '다음 실행') +
+                '</div>' +
+                (status.best_params ? '<div style="margin-top:11px; font-size:12px; color:var(--text-2); font-family:var(--font-mono);">threshold ' +
+                    (status.best_params.threshold != null ? status.best_params.threshold.toFixed(2) : 'N/A') + ' · bypass ' +
+                    (status.best_params.ml_bypass || 'N/A') + '</div>' : '');
+        }
+        function kpiMini(v, l) {
+            return '<div style="background:var(--elev-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:11px;text-align:center;">' +
+                '<div style="font:700 18px/1 var(--font-mono);color:var(--text);">' + v + '</div>' +
+                '<div style="font-size:10px;color:var(--muted);margin-top:5px;">' + l + '</div></div>';
+        }
+
+        function displayOptimizerHistory(history) {
+            const t = document.getElementById('optimizerHistoryTable');
+            if (!history || !history.length) { t.innerHTML = '<div class="state" style="padding:18px;">최적화 이력이 없습니다.</div>'; return; }
+            let rows = '';
+            history.forEach(it => {
+                rows += '<tr><td>' + escapeHtml(new Date(it.date).toLocaleString('ko-KR')) + '</td>' +
+                    '<td style="text-align:center;">' + (it.trials != null ? it.trials : '-') + '</td>' +
+                    '<td style="text-align:center;font-family:var(--font-mono);">' + (it.threshold != null ? it.threshold.toFixed(2) : '-') + '</td>' +
+                    '<td style="text-align:center;font-family:var(--font-mono);">' + (it.score != null ? it.score.toFixed(3) : '-') + '</td>' +
+                    '<td style="text-align:center;font-family:var(--font-mono);">' + (it.avg_matches != null ? it.avg_matches.toFixed(3) : '-') + '</td></tr>';
+            });
+            t.innerHTML = '<table class="data-table"><thead><tr><th>날짜</th><th style="text-align:center;">시도</th>' +
+                '<th style="text-align:center;">Threshold</th><th style="text-align:center;">Score</th><th style="text-align:center;">Avg</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+        }
+
+        // ===== 화면 저장 =====
         async function saveScreenshot() {
             const overlay = document.getElementById('saveOverlay');
             overlay.classList.add('active');
-            
             try {
-                // 전체 페이지 캡처
-                const element = document.getElementById('dashboardContainer');
-                const canvas = await html2canvas(element, {
-                    scale: 2,
-                    logging: false,
-                    useCORS: true,
-                    windowWidth: element.scrollWidth,
-                    windowHeight: element.scrollHeight
-                });
-                
-                // 캔버스를 Blob으로 변환
+                const el = document.getElementById('dashboardContainer');
+                const bg = getComputedStyle(document.body).backgroundColor;
+                const canvas = await html2canvas(el, { scale: 2, logging: false, useCORS: true, backgroundColor: bg,
+                    windowWidth: el.scrollWidth, windowHeight: el.scrollHeight });
                 canvas.toBlob(async (blob) => {
-                    // FormData 생성
-                    const formData = new FormData();
-                    formData.append('screenshot', blob, 'dashboard_screenshot.png');
-                    
-                    // 서버로 전송
-                    const response = await fetch('/api/save-screenshot', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    if (response.ok) {
-                        const result = await response.json();
-                        alert('화면이 저장되었습니다: ' + result.path);
-                    } else {
-                        alert('저장 실패');
-                    }
-                    
+                    const fd = new FormData();
+                    fd.append('screenshot', blob, 'dashboard_screenshot.png');
+                    const res = await fetch('/api/save-screenshot', { method: 'POST', body: fd });
+                    if (res.ok) { const r = await res.json(); toast('화면을 저장했습니다', r.path || '', 'ok'); }
+                    else { toast('저장 실패', '서버 오류가 발생했습니다.', 'err'); }
                     overlay.classList.remove('active');
                 }, 'image/png');
-                
-            } catch (error) {
-                console.error('스크린샷 저장 실패:', error);
-                alert('화면 저장 중 오류가 발생했습니다.');
+            } catch (e) {
+                toast('저장 실패', '화면 캡처 중 오류가 발생했습니다.', 'err');
                 overlay.classList.remove('active');
             }
         }
 
-        // 새 예측 생성 기능
-        async function generateNewPredictions() {
-            const btn = event.target;
-            const originalText = btn.innerText;
+        // ===== 새 예측 생성 (AI-네이티브 로딩) =====
+        const GEN_STEPS = [
+            '전체 조합 8,145,060개 로드',
+            '역사적 극단 패턴 제거 중',
+            '필터 풀 축소 8.14M → ~304K',
+            'ML/몬테카를로 시뮬레이션',
+            '최종 5세트 선별 중'
+        ];
+        function startGenSkeleton() {
+            const content = document.getElementById('predictionsContent');
+            let cards = '';
+            for (let i = 0; i < 5; i++) cards += '<div class="skel"></div>';
+            content.innerHTML = '<div class="gen-status" id="genStatus"></div><div class="skel-grid">' + cards + '</div>';
+            let idx = 0;
+            const el = document.getElementById('genStatus');
+            const tick = () => {
+                if (!el) return;
+                el.innerHTML = '<span class="seq">[' + (idx + 1) + '/' + GEN_STEPS.length + ']</span> ' + GEN_STEPS[idx % GEN_STEPS.length];
+                idx++;
+            };
+            tick();
+            genStatusTimer = setInterval(tick, 1400);
+        }
+        function stopGenSkeleton() { if (genStatusTimer) { clearInterval(genStatusTimer); genStatusTimer = null; } }
 
+        async function generateNewPredictions(btn) {
+            btn = btn || document.getElementById('genBtn');
+            const original = btn.textContent;
+            btn.disabled = true; btn.textContent = '생성 중...';
+            setStatus('load', '새 예측 생성 중');
+            startGenSkeleton();
             try {
-                // 버튼 비활성화 및 로딩 표시
-                btn.disabled = true;
-                btn.innerText = '⏳ 생성 중...';
-                btn.style.opacity = '0.6';
-
-                // API 호출 (CSRF exempt 처리됨)
-                const response = await fetch('/api/generate-predictions', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                const res = await fetch('/api/generate-predictions', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }
                 });
-
-                // 응답 상태 확인
-                if (!response.ok) {
-                    // HTTP 에러 응답 처리
-                    let errorMsg = '서버 오류가 발생했습니다.';
-                    try {
-                        const errorData = await response.json();
-                        errorMsg = errorData.error || errorMsg;
-                    } catch (e) {
-                        // JSON 파싱 실패 시 기본 메시지 사용
-                        if (response.status === 429) {
-                            errorMsg = '요청 한도 초과. 잠시 후 다시 시도해주세요.';
-                        } else if (response.status === 500) {
-                            errorMsg = '서버 내부 오류가 발생했습니다.';
-                        }
-                    }
-                    alert('❌ 예측 생성 실패:\\n' + errorMsg);
+                let result = null;
+                try { result = await res.json(); } catch (e) {}
+                if (!res.ok) {
+                    let msg = '서버 오류가 발생했습니다.';
+                    if (result && result.error) msg = result.error;
+                    else if (res.status === 429) msg = '요청 한도 초과. 잠시 후 다시 시도해주세요.';
+                    else if (res.status === 500) msg = '서버 내부 오류가 발생했습니다.';
+                    stopGenSkeleton();
+                    setStatus('error', '생성 실패');
+                    setState('predictionsContent', 'error', msg);
+                    toast('예측 생성 실패', msg, 'err');
                     return;
                 }
-
-                const result = await response.json();
-
-                if (result.success) {
-                    // 성공 메시지
-                    var message = '✅ ' + result.round + '회차 예측 5세트가 생성되었습니다!\\n\\n';
-                    message += '생성된 예측:\\n';
-                    result.predictions.forEach(function(p, i) {
-                        message += (i+1) + '. [' + p.numbers.join(', ') + '] (신뢰도: ' + Math.round(p.confidence * 100) + '%)\\n';
-                    });
-                    alert(message);
-
-                    // 회차 목록 새로고침
+                if (result && result.success) {
+                    stopGenSkeleton();
+                    toast(result.round + '회차 예측 생성 완료', '5세트가 새로 생성되었습니다.', 'ok');
                     await loadRounds();
-
-                    // 새로 생성된 회차 선택
                     document.getElementById('roundSelect').value = result.round;
-
-                    // 새 예측 즉시 표시
-                    await loadRoundData();
-
-                    // 하이라이트 효과
+                    await loadWeekData();
                     highlightNewPredictions();
                 } else {
-                    alert('❌ 예측 생성 실패:\\n' + (result.error || '알 수 없는 오류가 발생했습니다.'));
+                    stopGenSkeleton();
+                    setStatus('error', '생성 실패');
+                    const msg = (result && result.error) || '알 수 없는 오류가 발생했습니다.';
+                    setState('predictionsContent', 'error', msg);
+                    toast('예측 생성 실패', msg, 'err');
                 }
-            } catch (error) {
-                console.error('예측 생성 오류:', error);
-                alert('❌ 오류 발생:\\n' + error.message);
+            } catch (e) {
+                stopGenSkeleton();
+                setStatus('error', '생성 실패');
+                setState('predictionsContent', 'error', e.message || '오류가 발생했습니다.');
+                toast('오류 발생', e.message || '네트워크 오류', 'err');
             } finally {
-                // 버튼 복구
-                btn.disabled = false;
-                btn.innerText = originalText;
-                btn.style.opacity = '1';
+                btn.disabled = false; btn.textContent = original;
             }
         }
 
-        // 새로 생성된 예측 하이라이트 효과
         function highlightNewPredictions() {
-            const predCards = document.querySelectorAll('.prediction-card');
-            predCards.forEach((card, idx) => {
+            document.querySelectorAll('.pred-card').forEach((card, idx) => {
                 setTimeout(() => {
-                    card.style.transition = 'all 0.5s';
-                    card.style.transform = 'scale(1.02)';
-                    card.style.boxShadow = '0 0 20px rgba(40, 167, 69, 0.5)';
-
-                    setTimeout(() => {
-                        card.style.transform = 'scale(1)';
-                        card.style.boxShadow = '';
-                    }, 2000);
-                }, idx * 100);
+                    card.style.transition = 'all .5s';
+                    card.style.boxShadow = '0 0 0 2px var(--good), var(--shadow-2)';
+                    setTimeout(() => { card.style.boxShadow = ''; }, 1800);
+                }, idx * 90);
             });
         }
-
-        // 초기 로드 - 위의 window.onload와 중복되므로 제거
     </script>
 </body>
 </html>
@@ -3534,6 +2515,70 @@ def get_inclusion_rate():
             'message': 'Inclusion Rate 데이터 없음. python src/scripts/measure_inclusion_rate.py 실행 필요'
         })
 
+@app.route('/api/extremeness-pool')
+def get_extremeness_pool():
+    """극단성 풀(실제 최종 예측에 사용되는 풀) 지표 API.
+
+    구(舊) 16필터 추정값이 아니라, 실제 예측 경로(ExtremenessPoolPredictor)가
+    사용하는 풀의 크기(target_K)와 walk-forward 검증 적합도(coverage/lift)를
+    정책 JSON + curve 파일에서 읽어 반환한다. 파일만 읽으므로 가볍다(풀 재구성 없음).
+    데이터가 없으면 가짜값 대신 error=True 반환(데이터 무결성 정책).
+    """
+    fresh_dashboard = EnhancedLottoDashboard()
+    root = fresh_dashboard.project_root
+    TOTAL = 8145060  # C(45,6) 전체 조합 수(수학적 상수)
+    policy_path = os.path.join(root, 'configs', 'extremeness_pool_policy.json')
+
+    try:
+        if not os.path.exists(policy_path):
+            return jsonify({'error': True, 'message': '극단성 풀 정책 파일(configs/extremeness_pool_policy.json) 없음'})
+        with open(policy_path, 'r', encoding='utf-8') as f:
+            policy = json.load(f)
+
+        target_K = int(policy.get('effective_target_K') or policy.get('raw_target_K') or 0)
+        if target_K <= 0:
+            return jsonify({'error': True, 'message': '극단성 풀 target_K 미설정'})
+
+        resp = {
+            'error': False,
+            'target_K': target_K,
+            'total_combinations': TOTAL,
+            'pool_ratio': target_K / TOTAL,
+            'round': policy.get('round'),
+            'evidence': policy.get('evidence'),
+        }
+
+        # 최신 walk-forward curve 파일에서 target_K에 해당하는 적합도(coverage/lift) 보강
+        results_dir = os.path.join(root, 'results')
+        curve_files = []
+        if os.path.isdir(results_dir):
+            curve_files = sorted(
+                fn for fn in os.listdir(results_dir)
+                if fn.startswith('extremeness_threshold_curve_') and fn.endswith('.json')
+            )
+        if curve_files:
+            with open(os.path.join(results_dir, curve_files[-1]), 'r', encoding='utf-8') as f:
+                cdata = json.load(f)
+            curve = cdata.get('curve', []) if isinstance(cdata, dict) else (cdata if isinstance(cdata, list) else [])
+            if curve:
+                entry = min(curve, key=lambda e: abs(int(e.get('target_K', 0)) - target_K))
+                resp.update({
+                    'coverage': entry.get('coverage'),
+                    'lift': entry.get('lift'),
+                    'coverage_lcb': entry.get('coverage_lcb'),
+                    'lift_lcb': entry.get('lift_lcb'),
+                    'reliable': entry.get('reliable'),
+                    'observed_hits': entry.get('observed_hits'),
+                    'expected_random_hits': entry.get('expected_random_hits'),
+                    'curve_round': curve_files[-1],
+                })
+                if entry.get('pool_ratio') is not None:
+                    resp['pool_ratio'] = entry.get('pool_ratio')
+        return jsonify(resp)
+    except Exception as e:
+        logging.error(f"[API] 극단성 풀 지표 조회 실패: {e}")
+        return jsonify({'error': True, 'message': str(e)})
+
 @app.route('/api/winning-statistics')
 @app.route('/api/winning-statistics/<int:round_num>')
 def get_winning_statistics(round_num=None):
@@ -3595,10 +2640,15 @@ def generate_new_predictions():
         if os.environ.get('LOTTO_USE_EXTREMENESS_POOL', '1') != '0':
             try:
                 from src.core.extremeness_pool_predictor import ExtremenessPoolPredictor
+                import random as _random
                 _target_K = int(os.environ.get('LOTTO_TARGET_POOL_K', '1500000'))
                 _epp = ExtremenessPoolPredictor(db_manager, target_K=_target_K)
                 _epp.build_pool()  # 학습회차+K+가중치 동일 시 디스크 캐시 재사용
-                _epp_preds = _epp.predict(num_sets=5)
+                # [2026-06-05] '새 예측 생성' 버튼을 누를 때마다 다른 5세트가 나오도록 seed 를 매번
+                # 무작위로 바꾼다. (기존 seed=42 고정 -> 매번 동일 5세트 -> 누적 불가 문제 해결)
+                # 풀은 동일(캐시 재사용)하므로 비용 없이 풀 안에서 다른 다양성 조합을 탐색해 누적된다.
+                _seed = _random.randint(1, 2_000_000)
+                _epp_preds = _epp.predict(num_sets=5, seed=_seed)
                 if _epp_preds:
                     final_predictions.extend(_epp_preds)
                     logging.info(f"[API] 극단성 풀 경로로 {len(final_predictions)}개 예측 생성 (K={_target_K:,})")
@@ -3849,17 +2899,33 @@ def get_optimizer_status():
 
             return jsonify(status)
         else:
-            return jsonify({
-                'running': False,
-                'last_run': None,
-                'next_run': None,
-                'total_runs': 0,
-                'current_trial': 0,
-                'total_trials': 0,
-                'best_params': None,
-                'best_score': None,
-                'message': '백그라운드 최적화 서비스가 실행되지 않았습니다.'
-            })
+            # [2026-06-05] 상주(--24h) 최적화 스레드가 없을 때도 디스크에 누적된 v6 PoolOptimizer
+            # 진행(data/pool_optimization.db)을 읽어 '누적 trials/최적 점수'를 표시한다.
+            # (기존엔 무조건 0/N/A -> 사용자가 '왜 값이 없냐' 오해. 실제론 상주모드에서만 trial 증가.)
+            _resp = {
+                'running': False, 'last_run': None, 'next_run': None,
+                'total_runs': 0, 'current_trial': 0, 'total_trials': 0,
+                'best_params': None, 'best_score': None,
+                'message': '백그라운드 최적화는 상주 모드(--24h)에서 동작합니다.'
+            }
+            try:
+                _pool_db = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                    'data/pool_optimization.db')
+                if os.path.exists(_pool_db):
+                    with sqlite3.connect(_pool_db) as _c:
+                        _cur = _c.cursor()
+                        _n = _cur.execute('SELECT COUNT(*) FROM trials').fetchone()
+                        _b = _cur.execute('SELECT MAX(value) FROM trial_values').fetchone()
+                    if _n and _n[0]:
+                        _resp['total_trials'] = int(_n[0])
+                    if _b and _b[0] is not None:
+                        _resp['best_score'] = float(_b[0])
+                    _resp['message'] = ('상주(--24h) 미실행 - 누적 trial만 표시 '
+                                        '(실시간 최적화는 --24h 실행 시).')
+            except Exception as _oe:
+                logging.debug(f"pool_optimization.db 읽기 실패(무시): {_oe}")
+            return jsonify(_resp)
     except Exception as e:
         logging.error(f"최적화 상태 조회 실패: {e}")
         return jsonify({'error': str(e)}), 500

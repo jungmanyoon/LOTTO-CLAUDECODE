@@ -4,16 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🚀 Quick Start (TL;DR)
 ```bash
-python main.py              # ONE full cycle then EXIT (~4min): data/filter/ML/backtest/predict + dashboard(5001)
-python main.py --24h        # PERSISTENT service: stays resident (scheduled predictions + continuous optimization)
+python main.py              # 한 사이클(data/filter/ML/backtest/predict ~4min) 후 '상주': 대시보드(5001)+백그라운드 최적화(OPTUNA)+새 회차 감지 유지. 종료는 Ctrl+C
+python main.py --once       # 1회 실행 후 즉시 종료 (스크립트/CI/서브프로세스용)
+python main.py --24h        # 자동화 코디네이터 상주 모드(예약 예측/새 회차 자동화 강화). 즉시 예측 사이클은 생략
 python -m pytest tests/     # Run all tests (70% coverage minimum)
 python src/scripts/clear_model_cache.py  # Fix most cache/model errors
 ```
 
-> NOTE (런타임 검증 2026-06-03): plain `python main.py`는 한 사이클을 수행한 뒤 **자체 종료**합니다(약 4분).
-> 대시보드(5001)와 백그라운드 최적화는 **daemon 스레드**라 프로세스 종료와 함께 멈춥니다.
-> "무한 상주(대시보드 상시 + 무한 백그라운드 최적화)"가 필요하면 **`--24h`** 플래그를 쓰세요.
-> 아래 문서의 "무한 반복/상주" 표현은 `--24h` 상주 모드 기준입니다.
+> NOTE (단일 실행파일 정책 2026-06-06): plain `python main.py`(또는 인자 없는 F5)는 한 사이클로 예측을
+> 즉시 생성한 뒤 **종료하지 않고 상주**한다 → 대시보드(5001) + 백그라운드 최적화(OPTUNA 누적) + 새 회차
+> 자동 감지가 계속 유지된다(`--24h` 불필요). 종료는 **Ctrl+C**.
+> - **1회만** 돌고 끝내려면 `--once`. 부분/자동 실행(`--ml-only`/`--predict-only`/`--fetch-only`/`--skip-fetch`/
+>   `--automation-test`)은 서브프로세스(예: AutoScheduler)에서 호출되므로 **자동 1회 종료**(상주 안 함 → hang 방지).
+> - 구현: main.py 의 `_resident_mode` 게이트 + 사이클 종료부 keep-alive 루프(Ctrl+C → graceful_shutdown).
 
 **Key Files**: `config.yaml` (workers/batch), `configs/adaptive_filter_config.yaml` (thresholds)
 **Key APIs**: `db.get_numbers_with_bonus()` (NOT `get_all_rounds()`), `ThresholdManager.get_instance()`

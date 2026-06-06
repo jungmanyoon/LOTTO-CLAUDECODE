@@ -405,6 +405,30 @@ class ExtremenessPoolPredictor:
                     any_pred = True
         return freq if any_pred else None
 
+    def _ticket_typicality(self, tickets) -> List[float]:
+        """각 티켓의 '전형성' 백분위(0~1) 산출 - per-set 정직한 점수용.
+
+        의미: pool_quality(=-극단성, 클수록 덜 극단적=더 전형적)의 풀 내 백분위.
+        당첨확률이 아니라 '역대 분포 근접도'다. 풀에서 못 찾으면 0.5(중립).
+        비용: 풀 품질 정렬 1회 + 티켓당 전수매칭(5회) - 무시 가능.
+        """
+        if self._pool_combos is None or self._pool_quality is None:
+            return [0.5] * len(tickets)
+        q = self._pool_quality
+        pc = self._pool_combos
+        q_sorted = np.sort(q)
+        n = len(q_sorted)
+        out = []
+        for t in tickets:
+            arr = np.array(sorted(int(x) for x in t), dtype=pc.dtype)
+            match = np.where((pc == arr).all(axis=1))[0]
+            if len(match):
+                pct = float(np.searchsorted(q_sorted, q[match[0]]) / max(n, 1))
+            else:
+                pct = 0.5
+            out.append(pct)
+        return out
+
     def predict(self, num_sets: int = 5, ml_predictions=None,
                 ml_beta: float = 0.4, seed: int = 42) -> List[Dict]:
         """최종 num_sets개 예측 생성. 반환: [{'numbers','confidence','source'}, ...]"""
@@ -425,12 +449,18 @@ class ExtremenessPoolPredictor:
                                   quality=self._pool_quality, candidate_sample=30000, seed=seed)
         rep = DiversitySelector.coverage_report(tickets)
 
+        # [2026-06-05] 정직한 per-set 점수: 모든 세트를 0.5(50%)로 고정하던 것을 '전형성 점수'로 교체.
+        # 의미: 당첨확률이 아니라 "이 세트가 역대 당첨 분포에 얼마나 가까운가(=극단 회피도)"의 백분위.
+        # 근거: pool_quality(=-극단성)가 클수록 덜 극단적/더 전형적. 풀 내 백분위를 50~95% 로 표시.
+        # NO FAKE DATA: 가짜 '당첨확률'이 아니라 실제로 계산되는 전형성 지표(라벨도 '당첨확률 아님' 명시됨).
+        typ = self._ticket_typicality(tickets)
+
         src = f"ExtremePool-Diversity(K={self.target_K//1000}K, cover={rep['unique_numbers']}/45)"
         out = []
-        for t in tickets:
+        for t, ty in zip(tickets, typ):
             out.append({
                 'numbers': sorted(int(x) for x in t),
-                'confidence': 0.5,  # 다양성 선택은 신뢰도 개념 아님 - 중립값
+                'confidence': round(0.5 + 0.45 * ty, 4),  # 전형성 백분위 -> 50~95% 표시(중립 50 고정 탈피)
                 'source': src,
                 'in_pool': True,
             })
