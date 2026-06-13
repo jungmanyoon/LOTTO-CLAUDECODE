@@ -3215,12 +3215,22 @@ def main():
                     try:
                         logging.info("\n[LSTM] 시계열 예측 모델 실행...")
                         lstm_predictor = LSTMPredictor(sequence_length=15)  # [ml-lstm-ensemble-6] ML-003: 50->15 단일소스(lstm_predictor 기본값)와 일치
-                        
-                        # 모델 학습 (필요시)
-                        if not lstm_predictor.is_trained:
-                            logging.info("  - LSTM 모델 학습 중...")
+
+                        # 모델 학습 (필요시) - [C1 2026-06-13] 회차 무효화(ensemble과 대칭):
+                        #  과거: h5가 있으면 is_trained=True라 새 회차가 와도 train()이 호출조차 안 돼
+                        #  옛 가중치를 silent 재사용했다. -> 학습회차(trained_round)가 최신과 다르거나
+                        #  미상(None, 레거시 h5/미학습)이면 재학습한다. 재학습 실패 시 is_trained=False로
+                        #  남아 predict_next_numbers가 []를 반환하므로 stale 예측이 나가지 않는다.
+                        _lstm_round = getattr(lstm_predictor, 'trained_round', None)
+                        if (not lstm_predictor.is_trained) or (_lstm_round != latest_round):
+                            if lstm_predictor.is_trained and _lstm_round != latest_round:
+                                logging.info(f"  - LSTM 캐시 회차({_lstm_round}) != 최신({latest_round}) -> 재학습")
+                                lstm_predictor.is_trained = False  # 재학습 실패 시 stale 예측 차단
+                            else:
+                                logging.info("  - LSTM 모델 학습 중...")
                             try:
-                                lstm_predictor.train(winning_numbers, epochs=30, batch_size=32)
+                                lstm_predictor.train(winning_numbers, epochs=30, batch_size=32,
+                                                     trained_round=latest_round)
                             except Exception as lstm_train_e:
                                 logging.warning(f"  - LSTM 학습 실패: {lstm_train_e}")
                                 logging.info("  - LSTM 모델을 건너뛰고 계속합니다...")

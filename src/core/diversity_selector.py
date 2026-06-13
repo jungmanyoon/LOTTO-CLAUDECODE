@@ -250,7 +250,10 @@ class DiversitySelector:
                 covered.add(x)
                 number_count[x] += 1
             if relaxed:
-                self.logger.debug("[다양성] 제약 완화하여 티켓 선택(풀 다양성 부족)")
+                # [E2 2026-06-13] 제약 완화(겹침<=1 보장 깨짐 가능)는 풀 다양성이 극단 부족할 때만
+                #  발생한다(1.5M 풀에선 사실상 미발생). debug로 묻으면 '겹침<=1 절대보장'이 깨진 걸
+                #  알 수 없으므로 warning으로 가시화한다. local-search 하드가드가 이후 다시 줄이려 시도함.
+                self.logger.warning("[다양성] 제약 완화하여 티켓 선택(풀 다양성 부족 -> 겹침<=1 보장 일시 해제)")
 
         # 로컬 서치: 선택 티켓 1장을 후보로 교체 시 총 목적함수 개선되면 채택
         def total_objective(sel: List[int]) -> float:

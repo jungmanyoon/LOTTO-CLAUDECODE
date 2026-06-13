@@ -2736,8 +2736,12 @@ def generate_new_predictions():
                             if tuple(numbers) not in existing_numbers:
                                 final_predictions.append({
                                     'numbers': numbers,
-                                    'confidence': 0.5 + random.uniform(0.1, 0.3),  # 50-80% 신뢰도
-                                    'source': sources[i % len(sources)]
+                                    # [F1 2026-06-13 NO FAKE DATA] 과거: 0.5+random.uniform(0.1,0.3)로
+                                    #  표시용 신뢰도를 무작위 조작(가짜 지표). 이 경로는 극단풀+QuickEngine이
+                                    #  모두 5세트 미달일 때만 도달하는 최후 폴백이며, 실제 산출 근거가 없으므로
+                                    #  무작위 대신 중립값(0.5) + 폴백 출처 라벨로 정직하게 표시한다.
+                                    'confidence': 0.5,
+                                    'source': f"{sources[i % len(sources)]} (fallback)"
                                 })
                                 break
                 except Exception as e:

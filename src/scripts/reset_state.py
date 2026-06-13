@@ -71,7 +71,15 @@ def plan_for(trigger):
         delete += _glob('cache/extremeness_pool_*.npz')
         # ML 모델 캐시: 모델 구조/특징 코드 변경 시 옛 모델 재사용 방지(회차스탬프만으론 코드변경 미감지).
         delete += _glob('cache/models')
-        notes.append("코드변경: 극단풀 npz + ML 모델캐시 무효화(재생성됨). 다음 main.py 실행에 새 코드로 재계산.")
+        # [C3 2026-06-13 Codex+Gemini 합의] 예측 경로 실모델(별도 디렉토리 models/)도 무효화한다.
+        #  과거 결함: cache/models(백테스트 해시캐시)만 비우고, 정작 사용자 최종 예측에 쓰이는
+        #  ensemble/lstm 실모델(models/ 하위)은 옛 코드/구조로 남아 silent 재사용됐다(C3=FAIL).
+        #  -> 코드/구조/feature 변경 시 이 실모델들까지 비워 다음 main.py가 새 코드로 재학습하게 한다.
+        delete += _glob('models/ensemble', 'models/filtered_ensemble',
+                        'models/lstm_lotto_predictor.h5', 'models/lstm_lotto_predictor_round.json',
+                        'models/lstm_lotto_predictor_history.json')
+        notes.append("코드변경: 극단풀 npz + ML 캐시(cache/models) + 예측경로 실모델(models/ensemble,")
+        notes.append("  models/filtered_ensemble, lstm h5/round/history) 무효화. 다음 main.py에 새 코드로 재학습/재계산.")
         notes.append("[의도적 미변경] Optuna 풀 스터디(pool_optimization_v6)는 목적함수/탐색공간이 그대로면")
         notes.append("  '의미 일관'이라 누적 유지가 옳다. 목적함수 자체를 바꿨다면 pool_optimizer.py의")
         notes.append("  study_name을 v7로 올려라(옛 trial이 sampler를 오염시키지 않도록).")
@@ -81,7 +89,11 @@ def plan_for(trigger):
 
     if trigger in ('training', 'all'):
         delete += _glob('cache/models')
-        notes.append("학습: ML 모델 캐시 무효화 -> 다음 실행에 재학습.")
+        # [C3 2026-06-13] 학습 트리거도 예측 경로 실모델(models/ 하위)을 비워 다음 실행에 재학습.
+        delete += _glob('models/ensemble', 'models/filtered_ensemble',
+                        'models/lstm_lotto_predictor.h5', 'models/lstm_lotto_predictor_round.json',
+                        'models/lstm_lotto_predictor_history.json')
+        notes.append("학습: ML 캐시(cache/models) + 예측경로 실모델(models/ 하위) 무효화 -> 다음 실행에 재학습.")
 
     if trigger in ('backtest', 'all'):
         # 백테스트 상태/캐시: 코드/전략 변경 후 옛 백테스트 결과 재사용 방지.
@@ -90,7 +102,10 @@ def plan_for(trigger):
 
     if trigger in ('new-round', 'all'):
         notes.append("새 회차: 대부분 자동(캐시 키에 train_until/회차 포함). 별도 삭제 불필요.")
-        notes.append("  main.py 실행 시 SystemStateManager가 새 회차를 감지해 패턴/필터/풀/ML을 재계산한다.")
+        # [E1 2026-06-13 문서 정정] SystemStateManager의 역할을 정확히 기술(과거 '풀/ML 재계산' 표현은 과장).
+        notes.append("  main.py 실행 시 SystemStateManager는 새 회차를 감지해 패턴/필터/상태스탬프를 갱신하고,")
+        notes.append("  극단성 풀 K 재탐색은 '예측 직전 stale 가드'(plain) 또는 AutoScheduler(--24h)가 담당하며,")
+        notes.append("  풀 npz/ML 모델 캐시는 캐시키(train_until/wver/회차스탬프)로 자동 재계산된다.")
         notes.append("  (수동 강제: python main.py 로 한 사이클 실행)")
 
     # 중복 제거

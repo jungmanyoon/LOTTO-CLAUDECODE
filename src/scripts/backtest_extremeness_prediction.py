@@ -19,6 +19,7 @@ ASCII 출력(Windows), UTF-8 인코딩, 이모지 금지.
 import os
 import sys
 import logging
+from typing import Optional
 
 import numpy as np
 
@@ -61,7 +62,7 @@ def eval_sets(sets, draw_set, bonus):
 
 
 def run_pool_selection_backtest(db_manager, folds: int = 5, window: int = 30,
-                                K: int = 1_500_000, num_sets: int = 5,
+                                K: Optional[int] = None, num_sets: int = 5,
                                 ml_predictions=None, seed: int = 42,
                                 logger=None) -> dict:
     """1.5M 극단성 풀 -> 5세트 선택의 blind walk-forward 백테스트.
@@ -77,6 +78,13 @@ def run_pool_selection_backtest(db_manager, folds: int = 5, window: int = 30,
     """
     log = logger or logging.getLogger(__name__)
     rng = np.random.RandomState(seed)
+
+    # [B2-note 2026-06-13] K 미지정(None)이면 production 예측과 '동일하게' 정책(effective_target_K)을
+    #  상속한다. 과거엔 1.5M 하드코딩이라, walk-forward 재탐색으로 정책 K가 1.5M에서 이동하면
+    #  '사용자가 실제 받는 풀 크기'와 다른 K를 검증하는 desync가 났다. None -> 정책 K로 측정 충실도 확보.
+    if K is None:
+        K = ExtremenessPoolPredictor(db_manager).target_K
+        log.info(f"[풀백테스트] K 미지정 -> 정책 effective_target_K={K:,} 상속(production과 동일)")
 
     rows = []
     for r, t in db_manager.get_numbers_with_bonus():

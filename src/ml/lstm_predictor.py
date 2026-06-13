@@ -48,6 +48,12 @@ class LSTMPredictor:
         self.model = None
         self.is_trained = False
         self.scaler_params = {}
+        # [C1 2026-06-13] 학습 기준 회차 스탬프 (새 회차 무효화용). ensemble과 동일 패턴.
+        #  - h5만으론 학습 회차를 알 수 없어 sidecar json(_round.json)에 저장/복원한다.
+        #  - None이면 '회차 미상'(레거시 h5 또는 미학습) -> main.py 가드가 재학습을 유도한다.
+        #  과거 결함: h5 존재만으로 is_trained=True가 되어 새 회차가 와도 옛 가중치를 silent 재사용.
+        self.trained_round = None
+        self.round_path = self.model_path.replace('.h5', '_round.json')
 
         # 모델 아키텍처 파라미터 (ML-003 개선: 경량화)
         self.lstm_units = [64, 32, 16]    # [128, 64, 32] → [64, 32, 16]
@@ -100,7 +106,9 @@ class LSTMPredictor:
                         pass
                     
                 self.is_trained = True
-                logging.debug(f"기존 모델 로드 및 컴파일 완료: {self.model_path}")
+                # [C1] 학습 회차 스탬프 복원 (sidecar 없으면 None=회차미상 -> main.py 가드가 재학습)
+                self.trained_round = self._load_trained_round()
+                logging.debug(f"기존 모델 로드 및 컴파일 완료: {self.model_path} (학습회차={self.trained_round})")
             except Exception as e:
                 logging.warning(f"모델 로드 실패: {str(e)}. 새 모델을 생성합니다.")
                 # 기존 모델 파일이 손상되었거나 구조가 맞지 않으므로 삭제
@@ -322,7 +330,8 @@ class LSTMPredictor:
         return np.array(X), np.array(y)
     
     def train(self, winning_numbers: List[str], epochs: int = 100,
-              batch_size: int = 32, validation_split: float = 0.2):
+              batch_size: int = 32, validation_split: float = 0.2,
+              trained_round: Optional[int] = None):
         """모델 학습
 
         Args:
@@ -330,6 +339,9 @@ class LSTMPredictor:
             epochs: 학습 에폭 수
             batch_size: 배치 크기
             validation_split: 검증 데이터 비율 (시간 기반 분할에 사용)
+            trained_round: [C1] 이 학습이 반영한 최신 회차. 성공 후 sidecar에 저장되어
+                           다음 실행에서 '회차 불일치 시 재학습' 판단 근거가 된다.
+                           호출부(main.py)에서 latest_round를 주입한다(내부 추론 금지).
         """
         if not TENSORFLOW_AVAILABLE:
             logging.error("TensorFlow가 설치되지 않아 학습할 수 없습니다.")
@@ -398,11 +410,15 @@ class LSTMPredictor:
         )
         
         self.is_trained = True
-        
+
+        # [C1] 학습 회차 스탬프 저장 (성공 후에만). 새 회차 무효화 판단 근거.
+        self.trained_round = trained_round
+        self._save_trained_round(trained_round)
+
         # 학습 결과 저장
         self._save_training_history(history)
-        
-        logging.info("LSTM 모델 학습 완료")
+
+        logging.info(f"LSTM 모델 학습 완료 (학습회차={trained_round})")
         return history
     
     def predict_next_numbers(self, recent_numbers: List[str], 
@@ -618,6 +634,33 @@ class LSTMPredictor:
                      f"(방법: {'LSTM 확률 가중' if prob_vector is not None else '랜덤 폴백'})")
         return predictions
     
+    def _save_trained_round(self, trained_round):
+        """[C1] 학습 기준 회차를 sidecar json에 원자적으로 저장(멀티프로세스 IO 안전).
+
+        trained_round=None이면 저장하지 않는다(회차 미상 표시 유지). tmp->os.replace로
+        부분 작성 파일을 다른 프로세스가 읽는 것을 방지(MEMORY #10 원자적 쓰기 패턴)."""
+        if trained_round is None:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.round_path), exist_ok=True)
+            tmp = self.round_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump({'trained_round': int(trained_round)}, f)
+            os.replace(tmp, self.round_path)
+        except Exception as e:
+            logging.debug(f"LSTM 학습회차 sidecar 저장 실패(무시): {e}")
+
+    def _load_trained_round(self):
+        """[C1] sidecar json에서 학습 기준 회차 복원 (없거나 손상 시 None)."""
+        try:
+            if os.path.exists(self.round_path):
+                with open(self.round_path, 'r', encoding='utf-8') as f:
+                    val = json.load(f).get('trained_round')
+                    return int(val) if val is not None else None
+        except Exception as e:
+            logging.debug(f"LSTM 학습회차 sidecar 로드 실패(무시): {e}")
+        return None
+
     def _save_training_history(self, history):
         """학습 히스토리 저장"""
         history_dict = {
