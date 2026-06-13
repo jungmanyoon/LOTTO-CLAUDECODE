@@ -708,8 +708,32 @@ class FilteredPoolEnsemblePredictor:
             logging.warning(f"모델 로드 실패: {e}")
             self._initialize_models()
 
-    def update_hyperparameters(self, params: Dict[str, Any]):
-        """하이퍼파라미터 업데이트"""
+    def update_hyperparameters(self, params=None, xgb_params_legacy=None, nn_params_legacy=None):
+        """하이퍼파라미터 업데이트 (두 호출 형식 모두 지원 - 호출부 호환).
+
+        [2026-06-13 수정] 과거 이 메서드는 접두사 단일 dict 1개만 받았는데(인터페이스 IMLPredictor 규약),
+        레거시 튜너(auto_ml_optimizer.py / hyperparameter_tuner.py)는 옛 ensemble_predictor.EnsemblePredictor
+        용으로 `update_hyperparameters(rf_params, xgb_params, nn_params)`(접두사 없는 3개 위치인자)로 호출했다.
+        main.py가 production 예측기로 이 FilteredPool 클래스를 넘기면서 매 Optuna trial이
+        'takes 2 positional arguments but 4 were given'으로 실패했다(앙상블 하이퍼파라미터 튜닝 전체 no-op).
+        -> 두 형식을 모두 수용해 호출부/옛 클래스를 건드리지 않고 호환성 복원.
+
+        형식:
+          (1) 권장/인터페이스: update_hyperparameters({'rf_n_estimators':.., 'xgb_max_depth':.., 'nn_alpha':..})
+          (2) 레거시 3-dict:   update_hyperparameters(rf_params, xgb_params, nn_params)  # 접두사 없는 dict
+        """
+        # (2) 레거시 3-dict 위치인자 -> 접두사 단일 dict로 병합해 (1)과 동일 경로로 처리
+        if xgb_params_legacy is not None or nn_params_legacy is not None:
+            merged = {}
+            for k, v in (params or {}).items():
+                merged[f'rf_{k}'] = v
+            for k, v in (xgb_params_legacy or {}).items():
+                merged[f'xgb_{k}'] = v
+            for k, v in (nn_params_legacy or {}).items():
+                merged[f'nn_{k}'] = v
+            params = merged
+        params = params or {}
+
         # Random Forest 파라미터 업데이트
         rf_params = {k.replace('rf_', ''): v for k, v in params.items() if k.startswith('rf_')}
         if rf_params:

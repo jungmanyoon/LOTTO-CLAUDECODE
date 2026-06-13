@@ -114,10 +114,15 @@
 - C1: 새 회차 1228 -> LSTM 재학습 -> 사이드카 `{"trained_round":1228}` 생성.
 - A1: study trial 2292->2302 누적, best_value 0.5888 유지.
 
-### 미해결/범위 외 기존 결함 (이번 수정 무관, 후속 권고)
-- **[P2 기존] 앙상블 하이퍼파라미터 튜너 시그니처 버그**: `FilteredPoolEnsemblePredictor.update_hyperparameters()
-  takes 2 positional arguments but 4 were given` -> Optuna 앙상블 튜닝 trial이 매번 실패. PoolOptimizer(활성)와
-  별개 경로, 보조 ML 신호의 하이퍼파라미터 튜닝에만 영향. 최종 5세트(극단풀)와 무관. **이번 변경이 원인 아님.**
+### 추가 수정 (2026-06-13, 후속 커밋)
+- **[P2 FIXED] 앙상블 하이퍼파라미터 튜너 시그니처 호환**: 과거 `FilteredPoolEnsemblePredictor.update_hyperparameters()
+  takes 2 positional arguments but 4 were given`으로 Optuna 앙상블 튜닝 trial이 매번 실패(no-op). 원인=production
+  FilteredPool(접두사 단일 dict 1-arg)에 레거시 튜너(auto_ml_optimizer:142/hyperparameter_tuner:207)가 옛
+  3-dict 위치인자로 호출. **수정**: FilteredPoolEnsemblePredictor.update_hyperparameters를 두 형식(레거시 3-dict +
+  인터페이스 접두사 1-dict) 모두 수용하도록 다형화(호출부/옛 클래스 불변). 테스트 추가
+  (test_ensemble_update_hyperparameters_accepts_both_forms). PoolOptimizer(활성)와 별개, 보조 ML 신호 튜닝에만 영향.
+
+### 미해결/범위 외 기존 결함 (후속 권고)
 - **[P3 기존] 새 회차 시 16필터 재저장 UNIQUE 충돌**: `UNIQUE constraint failed: filtered_combinations`
   -> 죽은 16필터 계층의 재저장 중복(이미 저장된 회차). 최종예측(극단풀) 무관, 데이터무결성 영향 없음.
 - **[P3 기존] performance_stats.db 988MB(freelist 978MB)**: 운영중 VACUUM 잠금위험으로 의도적 보류.

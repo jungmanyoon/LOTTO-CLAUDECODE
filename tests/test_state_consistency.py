@@ -293,3 +293,30 @@ def test_backtest_k_none_inherits_policy(db):
     resolved = ExtremenessPoolPredictor(db).target_K
     assert resolved == expected_k, \
         f"K=None 시 백테스트가 상속할 정책 K({expected_k})와 predictor 해석값({resolved}) 불일치"
+
+
+# ----------------------------------------------------------------------
+# P2 fix: 앙상블 하이퍼파라미터 튜너 시그니처 호환 (레거시 3-dict + 인터페이스 1-dict)
+# ----------------------------------------------------------------------
+@pytest.mark.unit
+def test_ensemble_update_hyperparameters_accepts_both_forms():
+    """FilteredPoolEnsemblePredictor.update_hyperparameters가 두 호출 형식을 모두 수용하는지.
+
+    과거: production 예측기(FilteredPool, 접두사 단일 dict)에 레거시 튜너(auto_ml_optimizer/
+    hyperparameter_tuner)가 3-dict 위치인자로 호출 -> 'takes 2 positional arguments but 4 were
+    given'으로 앙상블 Optuna 튜닝이 매 trial 실패(no-op)했다. 본 테스트로 회귀 방지."""
+    pytest.importorskip("sklearn")
+    from src.ml.filtered_pool_ensemble_predictor import FilteredPoolEnsemblePredictor
+
+    e = FilteredPoolEnsemblePredictor()
+    if 'rf' not in e.models:
+        pytest.skip("sklearn 모델 미초기화 환경")
+
+    # (2) 레거시 3-dict 위치인자(auto_ml_optimizer:142 / hyperparameter_tuner:207 형식)
+    e.update_hyperparameters({'n_estimators': 210}, {'n_estimators': 107}, {'alpha': 0.0086})
+    assert e.models['rf'].get_params()['n_estimators'] == 210, "레거시 3-dict rf 파라미터 미적용"
+
+    # (1) 인터페이스 접두사 단일 dict
+    e2 = FilteredPoolEnsemblePredictor()
+    e2.update_hyperparameters({'rf_n_estimators': 150})
+    assert e2.models['rf'].get_params()['n_estimators'] == 150, "접두사 1-dict rf 파라미터 미적용"
