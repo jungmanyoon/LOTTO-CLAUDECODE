@@ -340,6 +340,15 @@ class AutoMLOptimizer:
             logging.warning("AutoML: 검증할 모델이 None입니다. 검증을 건너뜁니다.")
             return 0.0
 
+        # [2026-06-13] _optimize_ensemble objective는 매 trial update_hyperparameters를 호출하는데,
+        #  이는 하이퍼파라미터 변경 후 재학습이 필요하다는 의미로 is_trained=False로 둔다. 미학습 모델로
+        #  predict_next_numbers를 5회 호출하면 매번 "모델이 준비되지 않았습니다" 경고만 나고 점수는 0이
+        #  된다(검증 불가). trial마다 전체 재학습은 비용이 과도하고, 최종 예측은 PoolOptimizer/극단성 풀이
+        #  담당하므로, 미학습 시에는 예측 검증을 건너뛰고 중립 점수(0.0)를 반환해 로그 노이즈를 제거한다.
+        if not getattr(model, 'is_trained', True):
+            logging.debug("AutoML: 모델 미학습(하이퍼파라미터 변경 직후) - 예측 검증 건너뜀(중립 0.0)")
+            return 0.0
+
         # 최근 10회차로 빠른 검증
         recent_numbers = self.db_manager.get_recent_numbers(10)
 

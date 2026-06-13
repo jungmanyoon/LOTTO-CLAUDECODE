@@ -155,10 +155,18 @@ class RealtimeLearningSystem:
                 # 실제 업데이트가 일어난 경우에만 카운트/완료 로깅 (거짓 성공 보고 금지)
                 # 성공 경로는 'updated' 키가 없거나 True, 실패/스킵은 명시적으로 'updated': False
                 if update_result.get('updated', True) is False:
-                    logging.warning(
-                        f"{model_type} 업데이트 건너뜀/실패: "
-                        f"{update_result.get('error') or update_result.get('message')}"
-                    )
+                    # [2026-06-13] 의도된 스킵(skipped=True, 예: 호환 미지원/주기 미일치)은 '실패'가
+                    # 아니므로 INFO로 명시한다. 실제 실패만 WARNING으로 남겨 거짓 경보를 없앤다.
+                    if update_result.get('skipped'):
+                        logging.info(
+                            f"{model_type} 업데이트 스킵(의도): "
+                            f"{update_result.get('reason') or update_result.get('message') or update_result.get('error')}"
+                        )
+                    else:
+                        logging.warning(
+                            f"{model_type} 업데이트 건너뜀/실패: "
+                            f"{update_result.get('error') or update_result.get('message')}"
+                        )
                 else:
                     self.model_states[model_type]['last_update'] = datetime.now()
                     self.model_states[model_type]['update_count'] += 1
@@ -393,7 +401,18 @@ class RealtimeLearningSystem:
         if 'ensemble' not in self.learning_buffers:
             logging.warning("Ensemble 학습 버퍼가 없음")
             return {'updated': False, 'message': 'No learning buffer'}
-        
+
+        # [2026-06-13] production FilteredPoolEnsemblePredictor는 조합별 특징 스킴
+        # (extract_combination_features)을 쓰며, 레거시 ensemble_predictor의 extract_features
+        # (당첨번호 리스트->DataFrame) 증분학습 스킴과 호환되지 않는다. 강제 호출하면 AttributeError로
+        # "앙상블 모델 업데이트 실패" WARNING이 났다(거짓 실패). 호환 불가를 '의도된 스킵'으로 명시 처리하고,
+        # 성능평가(예측 호출)도 건너뛴다(realtime 증분학습은 dormant 보조 경로, 최종 풀 예측과 무관).
+        if not hasattr(ensemble_model, 'extract_features'):
+            return {
+                'updated': False, 'skipped': True,
+                'reason': f"{type(ensemble_model).__name__}는 realtime 증분학습 스킴(extract_features) 미지원 - 의도된 스킵",
+            }
+
         # 최근 데이터로 특징 생성
         config = self.learning_config.get('ensemble', self.default_config)
         mini_batch_size = config.get('mini_batch_size', 10)

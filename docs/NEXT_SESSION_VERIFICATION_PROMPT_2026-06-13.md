@@ -127,8 +127,17 @@
 - **[P3 FIXED] 새 회차 16필터 재저장 UNIQUE 충돌**: `UNIQUE constraint failed: filtered_combinations`
   (CombinationsDB.save_filtered_combinations의 plain INSERT, 입력 중복/동시쓰기 시). **수정**: 형제 메서드(FilterDB,
   동일 파일 ~1844줄)와 동일하게 `INSERT OR IGNORE`로 멱등화(죽은 16필터 계층, 최종예측 무관이나 ERROR 노이즈 제거).
-- 테스트 추가: test_ensemble_update_hyperparameters_accepts_both_forms, test_ensemble_apply_best_params_exists_and_applies.
-- **검증**: main.py --once 재실행 2회 -> 최종 ERROR 0건(앙상블 튜너/UNIQUE 모두 소멸), 극단풀 5세트 정상(겹침 0).
+- **[WARN FIXED] realtime 앙상블 증분학습 extract_features 거짓 "실패"**: RealtimeLearningSystem._update_ensemble이
+  production FilteredPool(조합별 특징 스킴)에 레거시 extract_features(당첨리스트->DataFrame)를 호출 ->
+  AttributeError로 "앙상블 모델 업데이트 실패" WARNING. **수정**: hasattr 가드로 '의도된 스킵'(skipped=True, INFO)
+  처리 + 오케스트레이터가 skipped는 INFO/실패는 WARNING으로 구분(dormant 보조 경로, 최종예측 무관).
+- **[WARN FIXED] AutoML _quick_validation 5x "모델 준비 안됨" 노이즈**: update_hyperparameters가 매 trial
+  is_trained=False로 둔 뒤 미학습 모델로 predict 5회 호출 -> trial마다 경고 5건 + 점수 0(hollow). **수정**:
+  미학습 모델이면 예측 검증을 건너뛰고 중립 0.0 반환(가드). repro로 5x->0 확인, optimized=True 완주.
+- 테스트 추가: test_ensemble_update_hyperparameters_accepts_both_forms, test_ensemble_apply_best_params_exists_and_applies,
+  test_automl_quick_validation_skips_untrained_model.
+- **검증**: main.py --once 재실행 검토 루프 5회 -> 최종 ERROR 0건 + 미오도(거짓 실패) WARNING 0건. 잔여 WARNING은
+  monte_carlo 주기/정체 가시화 1건뿐(의도된 staleness 알림 [P2-3], 유지). 극단풀 5세트 정상(겹침 0, cover 30/45).
 
 ### 미해결/범위 외 기존 결함 (후속 권고)
 - **[P3 기존] performance_stats.db 988MB(freelist 978MB)**: 운영중 VACUUM 잠금위험으로 의도적 보류.

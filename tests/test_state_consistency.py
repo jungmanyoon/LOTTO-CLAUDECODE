@@ -340,3 +340,23 @@ def test_ensemble_apply_best_params_exists_and_applies():
     e.apply_best_params({'rf_n_estimators': 175, 'rf_max_depth': 12, 'xgb_max_depth': 7})
     assert e.models['rf'].get_params()['n_estimators'] == 175
     assert e.models['rf'].get_params()['max_depth'] == 12
+
+
+@pytest.mark.unit
+def test_automl_quick_validation_skips_untrained_model():
+    """[noise fix] AutoMLOptimizer._quick_validation이 미학습 모델에 대해 예측을 시도하지 않고
+    중립 점수(0.0)를 반환하는지.
+
+    과거: update_hyperparameters가 매 trial is_trained=False로 둔 뒤 _quick_validation이 미학습
+    모델로 predict_next_numbers를 5회 호출해 "모델이 준비되지 않았습니다" 경고가 trial마다 5건씩
+    났다(hollow 검증). 가드로 미학습 시 예측 검증을 건너뛰고 0.0을 반환해 노이즈를 제거했다."""
+    pytest.importorskip("sklearn")
+    from src.ml.auto_ml_optimizer import AutoMLOptimizer
+    from src.ml.filtered_pool_ensemble_predictor import FilteredPoolEnsemblePredictor
+    from src.core.db_manager import DatabaseManager
+
+    auto = AutoMLOptimizer(DatabaseManager())
+    ens = FilteredPoolEnsemblePredictor()  # fresh -> is_trained=False
+    assert ens.is_trained is False
+    score = auto._quick_validation(ens)  # 미학습 -> 예측 호출 없이 0.0
+    assert score == 0.0
