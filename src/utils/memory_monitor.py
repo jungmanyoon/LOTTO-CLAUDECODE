@@ -205,8 +205,10 @@ def get_memory_monitor(enable_warnings: bool = False) -> MemoryMonitor:
     """전역 메모리 모니터 반환"""
     global _global_monitor
     if _global_monitor is None:
-        # 기본적으로 경고 비활성화, 임계값은 1500MB로 설정
-        _global_monitor = MemoryMonitor(threshold_mb=1500, enable_warnings=enable_warnings)
+        # [P3-4] 기본 경고 비활성화. 임계값은 실측 피크(약 3455MB) 기준 현실값 4000MB로 상향
+        # (구 1500은 상시 초과라 여유율 지표가 항상 0%로 무의미했음). main.py 실행경로는
+        # 자체 MemoryMonitor(--rss-warn-mb)를 쓰고, 이 전역 인스턴스는 log_memory 등 보조 호출용.
+        _global_monitor = MemoryMonitor(threshold_mb=4000, enable_warnings=enable_warnings)
     return _global_monitor
 
 def log_memory(stage: str = ""):

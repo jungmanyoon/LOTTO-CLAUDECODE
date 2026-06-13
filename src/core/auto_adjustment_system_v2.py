@@ -65,7 +65,7 @@ class AutoAdjustmentSystemV2:
         # YAML 파일의 값을 항상 우선 사용
         yaml_threshold = self._get_current_threshold()
         if abs(self.state['current_threshold'] - yaml_threshold) > 0.01:
-            logging.info(f"  [알림] YAML 설정 우선 적용: {self.state['current_threshold']}% → {yaml_threshold}%")
+            logging.info(f"  [알림] 설정파일(YAML) 값으로 자동 통일: {self.state['current_threshold']}% -> {yaml_threshold}% (옛 임시값을 정식 설정값으로 자가 교정 - 정상 동작)")
             self.state['current_threshold'] = yaml_threshold
         
         # debug 레벨: main.py에서 동일 메시지를 info로 출력하므로 중복 방지

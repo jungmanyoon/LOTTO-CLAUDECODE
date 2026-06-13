@@ -30,12 +30,22 @@ class ExtremenessPoolPredictor:
     def __init__(self, db_manager, target_K: Optional[int] = None,
                  weights_path: str = "configs/extremeness_weights.json",
                  cache_dir: str = "cache",
-                 spread: float = 0.5):
+                 spread: float = 0.5,
+                 scoring_method: Optional[str] = None):
         self.db = db_manager
         self.weights_path = weights_path
         self.cache_dir = cache_dir
         self.spread = spread
         self.logger = logging.getLogger(__name__)
+        # 점수 방식 (2026-06-13 사용자 채택, Claude+Codex gpt-5.5+Gemini 3.1-pro 합의): 기본 'hybrid'.
+        #  - 'hybrid'        : 풀 '선택'은 마할라노비스(정확도 - blind 6fold 당첨보존율 21.2%로 최상),
+        #    '제거 사유 설명'은 비모수 꼬리확률(tail)로 화이트박스 표시. 정확도+투명성 양립(권장 기본).
+        #  - 'mahalanobis'   : 선택=마할라, 설명도 마할라(거리 숫자 1개, blackbox). env로 선택 가능.
+        #  - 'tail_group_max': 선택·설명 모두 tail 꼬리확률. 보존율 점추정 18.8%로 약간 열위(비유의)
+        #    라 기본에서 내림. 투명성만 원하면 env LOTTO_SCORING_METHOD=tail_group_max.
+        #  근거: 보존율(=당첨번호 보존) 점추정 마할라 21.2% > tail 18.8%(McNemar 비유의 p>0.24).
+        #  KPI=등수적중률이면 점추정 우위인 마할라로 '선택'하고, '설명'만 tail로 얻는 게 최선.
+        self.scoring_method = scoring_method or os.environ.get('LOTTO_SCORING_METHOD', 'hybrid')
         # target_K 결정 (하위호환): 명시 인자가 오면 그 값을 그대로 쓴다(기존 호출처 불변).
         # 명시 인자가 없으면(None) 정책 json(SSOT) -> 환경변수 -> 기본 1.5M 순으로 해석한다.
         if target_K is not None:
@@ -146,52 +156,90 @@ class ExtremenessPoolPredictor:
         # 풀 캐시가 자동 무효화되어 새 가중치로 재계산됨.
         wpath = os.path.join(self._project_root(), self.weights_path) \
             if not os.path.isabs(self.weights_path) else self.weights_path
-        wver = int(os.path.getmtime(wpath)) if os.path.exists(wpath) else 0
+        # 선택(selection) 방식: 'hybrid'는 풀을 마할라노비스로 고르고(정확도) tail은 '설명'에만
+        # 쓰므로 캐시/버전을 마할라노비스와 공유한다(동일 풀 -> 캐시 중복 방지).
+        sel_method = 'mahalanobis' if self.scoring_method in ('mahalanobis', 'hybrid') else self.scoring_method
+        # 캐시 버전(wver): 마할라(선택)는 weights.json mtime, tail(선택)은 스코어러 로직 파일 mtime.
+        # [2026-06-13] 과거 tail은 wver=0 고정이라 알고리즘을 고쳐도 같은 회차/K면 옛 풀이 silent
+        # 재사용됐다 -> 로직 파일 mtime을 버전에 포함해 코드 수정 즉시 캐시 무효화(마할라와 대칭).
+        if sel_method == 'mahalanobis':
+            # [2026-06-13 코드변경 무효화 보강] 가중치(weights.json) mtime '과' 스코어러 로직 파일
+            # (extremeness_scorer.py) mtime의 최대값을 버전으로 쓴다. 과거엔 weights.json mtime만 반영해
+            # 마할라 계산/특징셋 코드를 고쳐도(가중치 불변) 같은 회차/K면 옛 풀이 silent 재사용됐다.
+            # -> 로직 파일 mtime을 OR로 포함해 '코드 변경 시에도' 캐시 자동 무효화(새 회차뿐 아니라).
+            _scorer_py = os.path.join(self._project_root(), 'src', 'core', 'extremeness_scorer.py')
+            _wmt = int(os.path.getmtime(wpath)) if os.path.exists(wpath) else 0
+            _smt = int(os.path.getmtime(_scorer_py)) if os.path.exists(_scorer_py) else 0
+            wver = max(_wmt, _smt)
+        else:
+            _scorer_py = os.path.join(self._project_root(), 'src', 'core', 'tail_probability_scorer.py')
+            wver = int(os.path.getmtime(_scorer_py)) if os.path.exists(_scorer_py) else 0
+        # 캐시 키에 '선택 방식' 포함 -> tail/mahalanobis 캐시 분리 공존(hybrid는 마할라와 공유).
         cache_path = os.path.join(self._project_root(), self.cache_dir,
-                                  f"extremeness_pool_{train_until}_{self.target_K}_w{wver}.npz")
+                                  f"extremeness_pool_{sel_method}_{train_until}_{self.target_K}_w{wver}.npz")
         if not force and os.path.exists(cache_path):
             try:
                 data = np.load(cache_path)
                 self._pool_combos = data['combos']
                 self._pool_quality = data['quality']
                 self.logger.info(f"[극단풀] 캐시 로드: {cache_path} ({len(self._pool_combos):,}개)")
+                _logfn = self._log_tail_diagnostics if sel_method == 'tail_group_max' \
+                    else self._log_pool_diagnostics
                 # 하위호환: 구캐시(diagnostics 키 없음)는 기본 제거율만 출력.
                 if 'diagnostics' in data:
                     try:
                         diag = json.loads(str(data['diagnostics']))
-                        self._log_pool_diagnostics(diag)
+                        _logfn(diag)
                     except Exception as de:
                         self.logger.warning(f"[극단풀] 진단 요약 파싱 실패({de}) - 기본 표시")
-                        self._log_pool_diagnostics(None)
+                        _logfn(None)
                 else:
-                    self._log_pool_diagnostics(None)
+                    _logfn(None)
                 return len(self._pool_combos)
             except Exception as e:
                 self.logger.warning(f"[극단풀] 캐시 로드 실패({e}) - 재계산")
 
-        weight_json = self._load_weight_params()
-        scorer, weighted = self._build_scorer(weight_json)
-
         win_train = np.array(
             [sorted(int(x) for x in s.split(',')) for r, s, _ in self.db.get_all_numbers()
              if r <= train_until], dtype=np.int16)
-        scorer.fit(win_train)
-        if weighted and getattr(scorer, '_feature_scale', None) is not None:
-            S = np.diag(scorer._feature_scale).astype(np.float32)
-            scorer.cov_inv = (S @ scorer.cov_inv @ S).astype(np.float32)
-
         combos = ExtremenessScorer.all_combinations()
-        # score() 대신 score_components()를 1회 호출(추가 전수패스 금지). total을 선택에
-        # 그대로 사용하므로 점수/풀이 score() 사용과 비트 단위로 동일하다(회귀 보장).
-        comp = scorer.score_components(combos)
-        scores = comp['total']
-        pool_idx = ExtremenessScorer.select_pool(scores, self.target_K)
-        self._pool_combos = combos[pool_idx]
-        self._pool_quality = (-scores[pool_idx]).astype(np.float32)
 
-        # 진단 요약 생성(원본 scores 절대 수정 금지, 전체정렬 금지). 로그 + 캐시 저장.
-        diag = self._build_pool_diagnostics(comp, scores, pool_idx, weighted, train_until)
-        self._log_pool_diagnostics(diag)
+        if sel_method == 'tail_group_max':
+            # [2026-06-07 사용자 채택] 비모수 꼬리확률(화이트박스). 각 특징 역사 꼬리확률 기반.
+            from src.core.tail_probability_scorer import TailProbabilityScorer
+            scorer = TailProbabilityScorer(self.db, mode='group_max')
+            scorer.fit(win_train)
+            scores = scorer.score(combos).astype(np.float32)
+            pool_idx = TailProbabilityScorer.select_pool(scores, self.target_K)
+            self._pool_combos = combos[pool_idx]
+            self._pool_quality = (-scores[pool_idx]).astype(np.float32)
+            diag = self._build_tail_diagnostics(scorer, scores, pool_idx, train_until)
+            self._log_tail_diagnostics(diag)
+        else:
+            # 'mahalanobis' (구 현행, 롤백용): 마할라노비스거리^2 + 페널티.
+            weight_json = self._load_weight_params()
+            scorer, weighted = self._build_scorer(weight_json)
+            scorer.fit(win_train)
+            if weighted and getattr(scorer, '_feature_scale', None) is not None:
+                S = np.diag(scorer._feature_scale).astype(np.float32)
+                scorer.cov_inv = (S @ scorer.cov_inv @ S).astype(np.float32)
+            # score() 대신 score_components()를 1회 호출(추가 전수패스 금지). total을 선택에
+            # 그대로 사용하므로 점수/풀이 score() 사용과 비트 단위로 동일하다(회귀 보장).
+            comp = scorer.score_components(combos)
+            scores = comp['total']
+            pool_idx = ExtremenessScorer.select_pool(scores, self.target_K)
+            self._pool_combos = combos[pool_idx]
+            self._pool_quality = (-scores[pool_idx]).astype(np.float32)
+            # 진단 요약 생성(원본 scores 절대 수정 금지, 전체정렬 금지). 로그 + 캐시 저장.
+            diag = self._build_pool_diagnostics(comp, scores, pool_idx, weighted, train_until)
+            self._log_pool_diagnostics(diag)
+            if self.scoring_method == 'hybrid':
+                # 화이트박스 설명(표시 전용, 예측 불변): 선택은 마할라(정확도)로 하되, 제거된
+                # 극단 예시를 비모수 꼬리확률(tail)로 '왜 버렸는지' 사람이 읽게 설명한다.
+                try:
+                    self._log_hybrid_tail_explanations(win_train, combos, scores, pool_idx)
+                except Exception as _he:
+                    self.logger.debug(f"[극단풀-하이브리드] tail 설명 생략({_he})")
 
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         try:
@@ -210,6 +258,137 @@ class ExtremenessPoolPredictor:
             self.logger.warning(f"[극단풀] 캐시 저장 실패({e})")
 
         return len(pool_idx)
+
+    # ------------------------------------------------------------------
+    # 꼬리확률 제거 진단 (2026-06-07 사용자 채택 - '왜 버렸는지' 투명 표시)
+    # ------------------------------------------------------------------
+    def _build_tail_diagnostics(self, scorer, scores: np.ndarray,
+                                pool_idx: np.ndarray, train_until: Optional[int]) -> dict:
+        """비모수 꼬리확률 제거 사유 진단. 제거된 가장 극단 조합 + 특징별 '역사 하위 %' 사유.
+
+        화이트박스 핵심: 마할라노비스(거리 숫자 1개, blackbox)와 달리 '어느 특징이 역사적으로
+        하위 몇% 꼬리라 제거됐는가'를 explain()으로 사람이 읽게 표시한다. 표시 전용(예측 불변).
+        """
+        from src.core.extremeness_scorer import ExtremenessScorer as _ES
+        total_n = len(scores)
+        keep_n = len(pool_idx)
+        removed_n = total_n - keep_n
+        keep_mask = np.zeros(total_n, dtype=bool)
+        keep_mask[pool_idx] = True
+        removed_mask = ~keep_mask
+        cutoff = float(scores[pool_idx].max()) if keep_n > 0 else float('nan')
+        combos_all = _ES.all_combinations()
+
+        # 제거된 가장 극단적 조합 Top-5 + 특징별 사유 (argpartition - 전체정렬 금지)
+        examples = []
+        if removed_n > 0:
+            rem_idx = np.flatnonzero(removed_mask)
+            rem_sc = scores[rem_idx]
+            topn = min(5, removed_n)
+            part = np.argpartition(rem_sc, removed_n - topn)[removed_n - topn:]
+            part = part[np.argsort(rem_sc[part])[::-1]]
+            for p in part:
+                gi = int(rem_idx[p])
+                nums = [int(x) for x in combos_all[gi]]
+                ex = scorer.explain(nums)[:3]  # 상위 3개 제거 사유
+                examples.append({
+                    'numbers': nums,
+                    'score': round(float(scores[gi]), 2),
+                    'reasons': [[r['feature'], r['tail_pct'], r['tail_side']] for r in ex],
+                })
+
+        # 가장자리 제거율 (양끝은 역사상 드물어 데이터 본질적으로 많이 제거됨 - 검증 확인됨)
+        has1 = (combos_all == 1).any(axis=1)
+        has45 = (combos_all == 45).any(axis=1)
+        both = has1 & has45
+        edge = {
+            'all': round(float(removed_mask.mean()) * 100, 1),
+            'n1': round(float(removed_mask[has1].mean()) * 100, 1),
+            'n45': round(float(removed_mask[has45].mean()) * 100, 1),
+            'both': round(float(removed_mask[both].mean()) * 100, 1) if bool(both.any()) else 0.0,
+        }
+
+        pool_sum_mean = 0.0
+        pool_odd_mean = 0.0
+        if keep_n > 0:
+            kc = self._pool_combos.astype(np.int32)
+            pool_sum_mean = round(float(kc.sum(axis=1).mean()), 1)
+            pool_odd_mean = round(float((kc % 2 == 1).sum(axis=1).mean()), 1)
+
+        return {
+            'total': int(total_n), 'keep': int(keep_n), 'removed': int(removed_n),
+            'removed_pct': round(float((1 - keep_n / TOTAL_COMBINATIONS) * 100), 1),
+            'cutoff': round(cutoff, 2) if keep_n > 0 else None,
+            'edge': edge, 'examples': examples,
+            'pool_sum_mean': pool_sum_mean, 'pool_odd_mean': pool_odd_mean,
+            'method': 'tail_group_max',
+            'train_until': int(train_until) if train_until is not None else None,
+        }
+
+    def _log_tail_diagnostics(self, diag: Optional[dict]) -> None:
+        """꼬리확률 제거 진단을 ASCII/한국어로 로그 출력. diag=None(구캐시)이면 기본만."""
+        if diag is None:
+            if self._pool_combos is not None:
+                keep_n = len(self._pool_combos)
+                removed = (1 - keep_n / TOTAL_COMBINATIONS) * 100
+                self.logger.info(
+                    f"[극단풀-꼬리확률] 형성 완료: {keep_n:,}개 (제거율 {removed:.1f}%) "
+                    f"- 진단 없음(구캐시). 재계산(force=True) 시 상세 사유 표시")
+            return
+        self.logger.info(
+            f"[극단풀-꼬리확률] === 역사 꼬리확률 제거 진단 ({diag['total']:,} -> {diag['keep']:,}) ===")
+        self.logger.info(
+            f"  - 제거: {diag['removed']:,}개 ({diag['removed_pct']}%) | "
+            f"컷오프 극단점수: {diag.get('cutoff')} (이 점수 초과분 제거)")
+        e = diag.get('edge', {})
+        self.logger.info(
+            f"  - 가장자리 제거율: 전체 {e.get('all')}% / 번호1 {e.get('n1')}% / "
+            f"번호45 {e.get('n45')}% / 1&45 {e.get('both')}% (양끝은 역사상 드물어 데이터본질적 제거)")
+        for ex in diag.get('examples', []):
+            reasons = ', '.join(f"{f}(역사하위 {p}% {s})" for f, p, s in ex['reasons'])
+            self.logger.info(f"  - 제거 {ex['numbers']} score={ex['score']}: {reasons}")
+        self.logger.info(
+            f"  - 남은 풀 평균: 합계 ~{diag.get('pool_sum_mean')}, "
+            f"홀수 ~{diag.get('pool_odd_mean')}개 (역대 당첨 분포 근접)")
+        self.logger.info(
+            f"  - 점수방식=tail_group_max(비모수 꼬리확률 화이트박스), 학습 ~{diag.get('train_until')}회")
+
+    def _log_hybrid_tail_explanations(self, win_train, combos, scores, pool_idx) -> None:
+        """하이브리드 모드: 풀 '선택'은 마할라노비스(정확도)로 하되, '왜 이 극단을 버렸는지'를
+        비모수 꼬리확률(tail)로 사람이 읽게 설명한다(표시 전용, 예측 불변).
+
+        마할라가 제거한 가장 극단적인 조합 Top-5에 대해 tail.explain()으로 '어느 특징이
+        역사 하위 몇% 꼬리라 극단인지'를 출력한다. 마할라(거리 숫자 1개=blackbox)의 약점인
+        '설명 불가'를 보완하는 화이트박스 계층이며, tail은 선택에 전혀 관여하지 않는다.
+        """
+        from src.core.tail_probability_scorer import TailProbabilityScorer
+        total_n = len(scores)
+        keep_mask = np.zeros(total_n, dtype=bool)
+        keep_mask[pool_idx] = True
+        removed_mask = ~keep_mask
+        removed_n = int(removed_mask.sum())
+        if removed_n == 0:
+            return
+        tail = TailProbabilityScorer(self.db, mode='group_max')
+        tail.fit(win_train)
+        # 마할라 점수가 가장 큰(=가장 극단) 제거 조합 Top-5 (argpartition - 전체정렬 금지)
+        rem_idx = np.flatnonzero(removed_mask)
+        rem_sc = scores[rem_idx]
+        topn = min(5, removed_n)
+        part = np.argpartition(rem_sc, removed_n - topn)[removed_n - topn:]
+        part = part[np.argsort(rem_sc[part])[::-1]]
+        self.logger.info(
+            "[극단풀-하이브리드] 선택=마할라노비스(정확도), 제거사유는 아래 tail 꼬리확률로 설명(표시전용):")
+        for p in part:
+            gi = int(rem_idx[p])
+            nums = [int(x) for x in combos[gi]]
+            try:
+                ex = tail.explain(nums)[:3]
+                reasons = ', '.join(
+                    f"{r['feature']}(역사하위 {r['tail_pct']}% {r['tail_side']})" for r in ex)
+            except Exception:
+                reasons = '(설명 계산 실패)'
+            self.logger.info(f"  - 제거 {nums}: {reasons}")
 
     # ------------------------------------------------------------------
     # 극단 제거 진단 (Codex 구조 + Gemini Delta Mean) - 표시 전용, 예측 불변

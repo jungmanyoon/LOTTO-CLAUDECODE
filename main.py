@@ -2686,8 +2686,9 @@ def main():
                     logging.info("  - 객체는 상태 조회/종료 정리 용도로만 유지")
 
                 if status.get('best_performance_ever'):
-                    logging.info(f"  - 역대 최고 성능: {status['best_performance_ever']['avg_matches']:.3f}")
-                    logging.info(f"  - 최적 임계값: {status['best_performance_ever']['threshold']}")
+                    _bp = status['best_performance_ever']
+                    logging.info(f"  - 지금까지 가장 좋았던 성적: 한 게임당 평균 {_bp['avg_matches']:.3f}개 맞음 (6개 중, 백분율 아님 / 무작위도 약 0.8개)")
+                    logging.info(f"  - 그때 쓴 필터 기준값: {_bp['threshold']}% (출현율이 이 % 미만인 조합을 잘라내는 컷오프 -- 위 '성적'과는 다른 '설정값')")
 
                 # 초기 백테스팅 실행 (옵션)
                 # NOTE: 구버전 Grid Search는 비활성화 - Optuna CMA-ES 기반 최적화 사용
@@ -2695,7 +2696,7 @@ def main():
                     logging.info("[CONTINUOUS IMPROVEMENT] 백그라운드 최적화 시스템 활성화됨")
                     logging.info("   - [O] Optuna CMA-ES 기반 Bayesian 최적화 사용")
                     logging.info("   - [X] 구버전 Grid Search(140개 조합)는 비활성화")
-                    logging.info("   - [O] 누적 학습: 0->10->20->30... trials (지능적 탐색)")
+                    logging.info("   - [O] 누적 학습: 최적화 시도를 10번씩 쌓아가며 점점 똑똑해짐 (0->10->20->30...회)")
                     logging.info("   - [O] SQLite persistence: 자동 중단/재시작 지원")
                     # optimization_result = continuous_improvement.manual_optimization()  # DISABLED (Grid Search)
                     # if optimization_result.get('success'):
@@ -3149,11 +3150,12 @@ def main():
             logging.info(f"  - 모드: {update_mode.upper()}")
             logging.info(f"  - 실행 시간: {filter_elapsed_time:.1f}초")
 
-            # [FIX] estimated_full_time=0 시 ZeroDivisionError 방어 (필터링 스킵/즉시완료 케이스)
-            if update_mode == 'incremental' and filter_elapsed_time > 0:
-                estimated_full_time = filter_elapsed_time * 4  # 증분 모드는 대략 1/4 시간 소요
-                time_saved = estimated_full_time - filter_elapsed_time
-                logging.info(f"  - 절약된 시간: 약 {time_saved:.0f}초 (전체 모드 대비 {(time_saved/estimated_full_time)*100:.0f}% 향상)")
+            # [2026-06-06 가짜지표 제거] 과거: estimated_full_time = 실행시간*4(가정)로 빼서
+            # 실행시간과 무관하게 항상 '75% 향상'이 찍히는 동어반복(실측 비교 없음, 0개 처리에도 '절약' 주장
+            # -> CLAUDE.md NO FAKE DATA 위반)이었다. 실측 baseline이 없으므로 가짜 절약률/시간은 출력하지 않고
+            # '변경분만 처리'라는 사실만 표기한다.
+            if update_mode == 'incremental':
+                logging.info("  - 증분 모드: 변경분만 처리(전체 8.14M 재처리 생략)")
         
         # 동적 필터 모니터링 중지 및 보고서 저장
         if enhanced_filter_manager:
@@ -3304,8 +3306,13 @@ def main():
                                 logging.warning(f"  - 필터링된 풀 미세조정 실패: {finetune_e}")
                                 logging.info("  - 기본 앙상블 모델로 계속합니다...")
 
-                        # 예측 수행 (학습 실패 시 건너뛰기)
-                        if 'ensemble_predictions' not in locals():
+                        # 예측 수행 (재사용/학습성공 경로 모두에서 예측 생성)
+                        # [2026-06-06 가드버그 수정] 과거: ensemble_predictions가 main.py:2881에서 []로
+                        # 사전 초기화돼 'not in locals()'가 항상 False -> 캐시 재사용 경로에서
+                        # predict_next_numbers가 호출조차 안 돼 매 실행 사일런트 0개가 발생했다.
+                        # -> 예측이 비어있고 모델이 학습돼 있으면 실제로 예측을 수행하도록 교정한다.
+                        # (학습 실패로 의도적 []인 경우는 is_trained=False라 자동 스킵.)
+                        if not ensemble_predictions and getattr(ensemble_predictor, 'is_trained', False):
                             ensemble_predictions = ensemble_predictor.predict_next_numbers(
                                 winning_numbers,
                                 num_predictions=args.predictions
@@ -3585,17 +3592,17 @@ def main():
                     _pool_bt = run_pool_selection_backtest(db_manager, folds=5, window=30)
                     if _pool_bt:
                         logging.info("\n" + "="*60)
-                        logging.info("[풀 백테스트] 최종 5세트(극단성 풀) blind 검증 - 사용자가 받는 실제 예측 경로")
+                        logging.info("[풀 백테스트] 실제로 받는 5게임을 '과거 시점 기준'으로 공정 검증 (미래 안 봄)")
                         logging.info("="*60)
                         logging.info(
-                            f"  - 등수적중률(어떤 티켓 3개+): {_pool_bt['rank_hit_rate']*100:.1f}% "
-                            f"(무작위 풀 {_pool_bt['rand_pool_hit']*100:.1f}% / 전체무작위 {_pool_bt['rand_all_hit']*100:.1f}%)")
+                            f"  - 5게임 중 하나라도 3개+ 맞은 비율(=등수 든 비율): {_pool_bt['rank_hit_rate']*100:.1f}% "
+                            f"(같은 풀 무작위 {_pool_bt['rand_pool_hit']*100:.1f}% / 완전 무작위 {_pool_bt['rand_all_hit']*100:.1f}%)")
                         logging.info(
-                            f"  - 평균 best-match: {_pool_bt['mean_bm']:.3f} "
-                            f"(무작위 풀 {_pool_bt['rand_pool_bm']:.3f} / 전체무작위 {_pool_bt['rand_all_bm']:.3f})")
+                            f"  - 한 회차에서 가장 많이 맞은 개수의 평균: {_pool_bt['mean_bm']:.3f}개 "
+                            f"(같은 풀 무작위 {_pool_bt['rand_pool_bm']:.3f} / 완전 무작위 {_pool_bt['rand_all_bm']:.3f})")
                         logging.info(
-                            f"  - 무작위 대비 우위: 등수적중 {_pool_bt['lift_rounds_vs_all']:+d}회 "
-                            f"(다양성 순수이득 {_pool_bt['lift_rounds_vs_pool']:+d}회), n={_pool_bt['n']}")
+                            f"  - 무작위보다 나은 정도: 등수 {_pool_bt['lift_rounds_vs_all']:+d}회 더 적중 "
+                            f"(번호 다양화 효과만 {_pool_bt['lift_rounds_vs_pool']:+d}회), 검증 {_pool_bt['n']}회차")
                         logging.info("="*60)
                         globals()['_POOL_BACKTEST_SUMMARY'] = _pool_bt
                 except Exception as _pe:
@@ -3666,8 +3673,11 @@ def main():
                         except Exception as e:
                             logging.error(f"모니터링 업데이트 실패: {str(e)}")
                     
-                    # 피드백 루프 실행
-                    if (args.feedback_loop or args.enhanced_feedback) and backtest_results:
+                    # [2026-06-06] 레거시 no-op 피드백 루프 비실행: EnhancedFeedbackLoop/FeedbackLoopSystem 은
+                    # 실질 no-op(개선이 best_params={}로 최종 예측에 미반영)이라 '[피드백 루프]' 로그가 혼란만 유발했다.
+                    # 실제 '실행할수록 좋아지는' 최적화는 PoolOptimizer(OPTUNA, 백그라운드 누적 trial)가 담당.
+                    # (본문은 비실행 - 변수 의존성 때문에 즉시 물리삭제 대신 게이트 차단. 추후 전용 정리에서 파일째 제거 예정.)
+                    if False and (args.feedback_loop or args.enhanced_feedback) and backtest_results:
                         try:
                             logging.info("\n" + "="*60)
                             if args.enhanced_feedback:

@@ -134,8 +134,12 @@ class PerformanceDashboard(metaclass=SingletonMeta):
         # [FIX N-W13] 비공개 내부 API(lotto_db.get_last_round) 대신 공개 API 사용
         winning_numbers = self.db_manager.get_numbers_with_bonus()
         latest_round = winning_numbers[-1][0] if winning_numbers else 1
-        start_round = max(1, latest_round - 49)
-        end_round = latest_round
+        # [2026-06-06] main.py ML검증 백테스트(start=latest-50, end=latest-1)와 범위를 통일.
+        # 과거: latest-49 ~ latest 라 1회차 어긋나 같은 backtest_state.json 캐시가 매 사이클 불일치 ->
+        # '[RESET] 설정이 변경되어 새 백테스팅'(실제 설정변경 아님)이 반복돼 사이클이 길어졌다.
+        # 범위를 main.py와 일치시켜 캐시를 공유 -> 무의미한 재백테스트 제거.
+        start_round = max(1, latest_round - 50)
+        end_round = latest_round - 1
         
         results = self.backtesting_framework.run_backtest(
             start_round=start_round,

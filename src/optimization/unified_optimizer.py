@@ -74,7 +74,7 @@ class UnifiedOptimizer:
         self._thread.start()
         self.logger.info("[UnifiedOptimizer] 백그라운드 최적화 시작")
         self.logger.info("   - Optuna CMA-ES 기반 Bayesian 최적화 (10 trials/cycle)")
-        self.logger.info("   - 피드백 루프 주기: 30분마다")
+        self.logger.info("   - 백테스팅 모니터링 주기: 30분마다 (PoolOptimizer 워커, 비실행 레거시 피드백루프와 무관)")
         self.logger.info("   - 상태 저장: data/optimization.db")
         return self._thread
 

@@ -460,8 +460,8 @@ class FilterValidator:
                 # [O] PROTECTION: 역대 최고 통과율보다 낮으면 경고 및 롤백 제안
                 if current_pass_rate < best_pass_rate:
                     drop_amount = best_pass_rate - current_pass_rate
-                    logging.warning(f"[STAT] (참고) 필터 통과율 하락: -{drop_amount:.2f}%p "
-                                    f"(역대 최고 {best_pass_rate:.2f}% 대비)")
+                    logging.info(f"[STAT] (참고) 필터 통과율 변동: -{drop_amount:.2f}%p "
+                                 f"(역대 최고 {best_pass_rate:.2f}% 대비, 통과율은 참고 지표 - 강제 제약 아님)")
                     # [전략 정합 2026-06-01] 통과율은 '참고 지표'일 뿐 강제 제약이 아님.
                     # (사용자 확정 전략: 역사적 극단을 최대한 제거하는 것이 우선, 통과율 95% 제약 제거.)
                     # 따라서 통과율 하락으로 인한 '자동 롤백'을 제거한다 - 하락은 참고용으로만 표시하고,
@@ -472,20 +472,19 @@ class FilterValidator:
         except Exception as e:
             logging.error(f"통과율 보호 체크 실패: {e}")
 
-        # 경고 메시지 및 자동 조정
+        # [2026-06-13 전략 정합 완결] 통과율 기반 '자동 필터 완화'를 비활성화한다.
+        # 사용자 확정 전략(MEMORY user-strategy-final-decision): 통과율(당첨번호 보존율)은
+        # '참고 지표'일 뿐 강제 제약이 아니며, 통과율 95% 목표로 필터를 자동 완화하던 경로
+        # (_trigger_auto_adjustment -> suggest_optimized_criteria(target_pass_rate=95))는
+        # '역사적 극단 최대 제거 우선' 전략과 정면 충돌한다. main.py:3060-3072가 동일 의도로
+        # 이미 비활성화한 것과 정합 -> 통과율 저하는 '참고용'으로만 표시하고 필터 기준을
+        # 자동 변경하지 않는다. (제거 강도는 사용자/Optuna 최적화가 조절)
         if results['overall_pass_rate'] < 90:
-            # FIX: Removed \n prefix to avoid empty WARNING lines + Added range info
-            logging.warning(
-                f"[WARN] 주의: 전체 통과율이 {results['overall_pass_rate']:.2f}%로 낮습니다! "
-                f"(검증: {results['total_rounds']}개 회차, {results['overall_pass_count']}개 통과)"
+            logging.info(
+                f"  - (참고) 전체 통과율 {results['overall_pass_rate']:.2f}% "
+                f"(검증 {results['total_rounds']}개 회차, {results['overall_pass_count']}개 통과). "
+                f"통과율은 참고 지표이며 자동 완화하지 않음(극단 제거 우선 전략)."
             )
-            logging.warning("필터 기준을 재조정해야 합니다.")
-
-            # 85% 미만이면 자동 조정 실행
-            if results['overall_pass_rate'] < 85:
-                # FIX: Removed \n prefix to avoid empty WARNING lines
-                logging.warning("[SYNC] 필터 자동 조정을 시작합니다...")
-                self._trigger_auto_adjustment(results)
     
     def suggest_optimized_criteria(self, validation_results: Dict[str, Any], target_pass_rate: float = 95) -> Dict[str, Any]:
         """검증 결과를 바탕으로 최적화된 필터 기준 제안

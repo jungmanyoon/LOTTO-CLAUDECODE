@@ -193,7 +193,7 @@ class ThresholdManager:
                 self._notify_observers("threshold", old_value, new_value)
 
                 # 로그 출력
-                logging.info(f"[ThresholdManager] 임계값 변경: {float(old_value):.2f}% → {float(new_value):.2f}% (소스: {source})")
+                logging.info(f"[ThresholdManager] 필터 기준값 변경: {float(old_value):.2f}% -> {float(new_value):.2f}% (출처: {source}, 뜻: 출현율 이 % 미만 조합을 제거)")
 
     def set_ml_relaxed_threshold(self, value: float, source: str = "manual") -> None:
         """
@@ -233,7 +233,7 @@ class ThresholdManager:
                 self._record_change(change)
 
                 self._notify_observers("ml_relaxed_threshold", old_value, new_value)
-                logging.info(f"[ThresholdManager] ML 임계값 변경: {float(old_value):.2f}% → {float(new_value):.2f}% (소스: {source})")
+                logging.info(f"[ThresholdManager] ML 완화 기준값 변경: {float(old_value):.2f}% -> {float(new_value):.2f}% (출처: {source}, 뜻: ML 예측엔 더 느슨한 컷오프)")
 
     def set_ml_bypass_filters(self, value: int, source: str = "manual") -> None:
         """
@@ -265,7 +265,7 @@ class ThresholdManager:
                 self._record_change(change)
 
                 self._notify_observers("ml_bypass_filters", old_value, value)
-                logging.info(f"[ThresholdManager] ML 우회 필터 변경: {old_value} → {value} (소스: {source})")
+                logging.info(f"[ThresholdManager] ML 우회 허용 필터 수 변경: {old_value} -> {value}개 (출처: {source}, 뜻: ML 예측이 통과 못해도 봐주는 필터 개수)")
 
     def set_ml_weight(self, value: float, source: str = "manual") -> None:
         """

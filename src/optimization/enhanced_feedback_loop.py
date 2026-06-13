@@ -81,7 +81,7 @@ class EnhancedFeedbackLoop:
         """
         logging.info("\n" + "="*60)
         logging.info("[START] 향상된 자동 개선 사이클 시작")
-        logging.info(f"[STAT] [시작 시점] 현재까지 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info(f"[STAT] [모델개선 피드백루프][시작 시점] 현재까지 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
         logging.info("="*60)
 
         # 시작 시점에서는 상태 보고서를 출력하지 않음 (혼란 방지)
@@ -187,9 +187,9 @@ class EnhancedFeedbackLoop:
         # 최종 보고서 출력
         logging.info("\n" + "="*60)
         logging.info("[DONE] 개선 사이클 완료!")
-        logging.info(f"[STAT] [완료 시점] 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info(f"[STAT] [모델개선 피드백루프][완료 시점] 총 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
         logging.info(f"[UP] 이번 사이클에서 실행된 반복 횟수: {iteration}회")
-        logging.info(f"[O] 총 누적 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회")
+        logging.info(f"[O] [모델개선 피드백루프] 총 누적 백테스팅 횟수: {self.improvement_manager.state['total_backtest_count']}회 (임계값조정 카운터와 별개)")
         logging.info("="*60)
 
         # 완료 후 전체 상태 보고서 출력

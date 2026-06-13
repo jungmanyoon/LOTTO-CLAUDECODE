@@ -175,8 +175,10 @@ class FilterValidator:
             self.logger.info(f"  - 제외: {failed_rounds}개")
             
             if failed_rounds > 0:
-                self.logger.warning(f"[WARN] 주의: {failed_rounds}개 회차의 당첨번호가 필터에 의해 제외되었습니다!")
-                self.logger.warning("  필터 기준이 너무 엄격할 수 있습니다.")
+                # [2026-06-06 전략 정합] 통과율은 사용자 확정상 '참고 지표'(강제 제약 아님). 극단 최대 제거가
+                # 우선 전략이라 일부 당첨번호가 컷오프에 걸리는 것은 '버그'가 아닌 의도된 동작 -> INFO/참고 톤.
+                self.logger.info(f"  - 참고: {failed_rounds}개 회차 당첨번호가 현재 컷오프에 걸려 풀에서 제외됨 "
+                                 f"(통과율은 참고 지표, 강제 제약 아님 - 극단 제거 우선 전략상 정상).")
         
         return results
     
@@ -210,12 +212,12 @@ class FilterValidator:
         suggestions = {}
         current_pass_rate = (total_rounds - sum(filter_failures.values())) / total_rounds * 100
         
-        self.logger.info(f"\n[필터 최적화 제안]")
+        self.logger.info(f"\n[필터 최적화 제안(참고)] - 자동 적용 안 함 (통과율은 참고 지표, 사용자 확정)")
         self.logger.info(f"  현재 통과율: {current_pass_rate:.1f}%")
-        self.logger.info(f"  목표 통과율: {target_pass_rate}%")
-        
+        self.logger.info(f"  참고 기준선: {target_pass_rate}% (강제 목표 아님)")
+
         if current_pass_rate < target_pass_rate:
-            self.logger.info("\n  필터 기준 완화 필요:")
+            self.logger.info("\n  (참고) 통과율 기준선 미달 - 자동 완화 비활성(사용자 확정). 아래는 참고용 제안:")
             
             # 가장 많이 실패한 필터부터 완화 제안
             sorted_failures = sorted(filter_failures.items(), key=lambda x: x[1], reverse=True)

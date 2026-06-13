@@ -657,7 +657,12 @@ class FilterOrchestrator(IFilterOrchestrator):
         """필터링 결과 표시"""
         try:
             logging.info("\n[필터링 결과 요약]")
-            initial_count = len(self.db_manager.combinations_db.get_base_combinations())
+            # [P3-7] 캐시 히트(이미 최신 필터링) 경로에서는 8.14M 조합 전체를 메모리에
+            # 로드하던 get_base_combinations() (약 49초)를 호출하지 않고, 동일한 이론적
+            # 전체 조합 수(C(45,6)=8,145,060)를 즉시 반환하는 count_all_combinations()를 사용.
+            # 이로써 "이미 최신 필터링 완료" 직후 "초기 조합 수" 요약이 지연 없이 출력되어
+            # 로그 순서 역전(오독 유발)을 해소한다.
+            initial_count = self.db_manager.combinations_db.count_all_combinations()
             logging.info(f"- 초기 조합 수: {initial_count:,}개")
 
             # 각 필터 결과 로깅

@@ -674,13 +674,16 @@ class TestUpdateChain:
         cache_dir = tmp_path / "cache" / "models"
         cache_dir.mkdir(parents=True)
 
-        with patch('src.automation.auto_scheduler.os.path.exists', return_value=True):
-            with patch('shutil.rmtree') as mock_rmtree:  # shutil is locally imported
-                with patch('src.automation.auto_scheduler.os.makedirs') as mock_makedirs:
-                    scheduler._invalidate_ml_cache()
+        # [2026-06-13] _invalidate_ml_cache는 '회차 스탬프 기반 자동 재학습' 정책으로
+        # cache/models 물리 삭제를 의도적 no-op으로 전환함(재사용 가능한 모델까지 날리는
+        # 파괴적 재학습 방지). 따라서 rmtree/makedirs가 '호출되지 않음'을 검증하고,
+        # 예외 없이 정상 반환하는지만 확인한다.
+        with patch('shutil.rmtree') as mock_rmtree:  # shutil is locally imported
+            with patch('src.automation.auto_scheduler.os.makedirs') as mock_makedirs:
+                scheduler._invalidate_ml_cache()
 
-                    mock_rmtree.assert_called_once()
-                    mock_makedirs.assert_called_once()
+                mock_rmtree.assert_not_called()
+                mock_makedirs.assert_not_called()
 
     def test_update_system_state(self, scheduler):
         """시스템 상태 업데이트"""

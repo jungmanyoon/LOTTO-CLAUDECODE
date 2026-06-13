@@ -268,6 +268,25 @@ class DiversitySelector:
             val -= self.lambda_overlap * ov
             return val
 
+        # [2026-06-13 직교성 하드 가드] 로컬서치 교체가 pairwise overlap<=1 / 번호반복<=2 제약을
+        # 깨지 않도록 feasibility를 명시적으로 재확인한다. 기존엔 total_objective의 overlap '패널티'만
+        # 의존해 큰 커버리지 이득이 있으면 겹침 2가 끼어들 수 있었다(직교성=공멸방지의 핵심이라 하드화).
+        def swap_feasible(sel: List[int], pos: int, new_idx: int) -> bool:
+            new_set = set(combos[new_idx])
+            # pairwise overlap 제약 (교체 대상 pos를 제외한 나머지 티켓들과)
+            for k, s_idx in enumerate(sel):
+                if k == pos:
+                    continue
+                if len(new_set & set(combos[s_idx])) > self.max_pairwise_overlap:
+                    return False
+            # 번호 반복 제약 (pos를 new로 바꿨을 때 어떤 번호도 max_number_repeat 초과 금지)
+            cnt = np.zeros(46, dtype=np.int16)
+            for k, s_idx in enumerate(sel):
+                use = new_set if k == pos else set(combos[s_idx])
+                for x in use:
+                    cnt[x] += 1
+            return bool((cnt <= self.max_number_repeat).all())
+
         cur_obj = total_objective(selected_idx)
         for _ in range(local_search_iters):
             improved = False
@@ -275,6 +294,8 @@ class DiversitySelector:
             if trial in selected_idx:
                 continue
             for pos in range(len(selected_idx)):
+                if not swap_feasible(selected_idx, pos, int(trial)):
+                    continue
                 old = selected_idx[pos]
                 selected_idx[pos] = int(trial)
                 new_obj = total_objective(selected_idx)

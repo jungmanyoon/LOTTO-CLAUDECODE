@@ -1668,7 +1668,7 @@ HTML_TEMPLATE_V2 = """
                 <div id="backtestGrid"><div class="state"><div class="spinner"></div><p>로딩 중...</p></div></div>
             </div>
             <div class="card span-3" id="optimizerCard">
-                <div class="card-h"><span class="dot"></span>Optuna 최적화</div>
+                <div class="card-h"><span class="dot"></span>자동 튜닝 현황 (Optuna)</div>
                 <div id="optimizerStatusGrid"><div class="state"><div class="spinner"></div></div></div>
             </div>
 
@@ -2258,16 +2258,16 @@ HTML_TEMPLATE_V2 = """
             grid.innerHTML =
                 '<div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">' +
                 '<span class="status-dot" style="background:' + (running ? 'var(--good)' : 'var(--muted)') + '"></span>' +
-                '<b style="color:' + (running ? 'var(--good)' : 'var(--muted)') + ';font-size:14px;">' + (running ? '실행 중' : '대기 중') + '</b></div>' +
+                '<b style="color:' + (running ? 'var(--good)' : 'var(--muted)') + ';font-size:14px;">' + (running ? '최적화 작동 중' : '대기 중') + '</b></div>' +
                 '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">' +
-                kpiMini(status.total_trials || 0, '누적 trials') +
-                kpiMini(status.total_runs || 0, '실행 횟수') +
-                kpiMini((status.best_score != null ? status.best_score.toFixed(3) : 'N/A'), '최적 점수') +
-                kpiMini(remain, '다음 실행') +
+                kpiMini(status.total_trials || 0, '누적 시도(회)') +
+                kpiMini(status.total_runs || 0, '완료(회)') +
+                kpiMini((status.best_score != null ? status.best_score.toFixed(3) : 'N/A'), '최고 점수(0~1)') +
+                kpiMini(remain, '다음 실행까지') +
                 '</div>' +
-                (status.best_params ? '<div style="margin-top:11px; font-size:12px; color:var(--text-2); font-family:var(--font-mono);">threshold ' +
-                    (status.best_params.threshold != null ? status.best_params.threshold.toFixed(2) : 'N/A') + ' · bypass ' +
-                    (status.best_params.ml_bypass || 'N/A') + '</div>' : '');
+                (status.best_params ? '<div style="margin-top:11px; font-size:12px; color:var(--text-2);">필터 기준값 ' +
+                    (status.best_params.threshold != null ? status.best_params.threshold.toFixed(2) + '%' : 'N/A') + ' · ML우회 ' +
+                    (status.best_params.ml_bypass || 'N/A') + '개</div>' : '');
         }
         function kpiMini(v, l) {
             return '<div style="background:var(--elev-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:11px;text-align:center;">' +
@@ -2286,8 +2286,8 @@ HTML_TEMPLATE_V2 = """
                     '<td style="text-align:center;font-family:var(--font-mono);">' + (it.score != null ? it.score.toFixed(3) : '-') + '</td>' +
                     '<td style="text-align:center;font-family:var(--font-mono);">' + (it.avg_matches != null ? it.avg_matches.toFixed(3) : '-') + '</td></tr>';
             });
-            t.innerHTML = '<table class="data-table"><thead><tr><th>날짜</th><th style="text-align:center;">시도</th>' +
-                '<th style="text-align:center;">Threshold</th><th style="text-align:center;">Score</th><th style="text-align:center;">Avg</th>' +
+            t.innerHTML = '<table class="data-table"><thead><tr><th>날짜</th><th style="text-align:center;">시도(회)</th>' +
+                '<th style="text-align:center;">필터기준값</th><th style="text-align:center;">점수</th><th style="text-align:center;">평균맞은개수</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table>';
         }
 
@@ -2916,13 +2916,35 @@ def get_optimizer_status():
                     with sqlite3.connect(_pool_db) as _c:
                         _cur = _c.cursor()
                         _n = _cur.execute('SELECT COUNT(*) FROM trials').fetchone()
+                        # [2026-06-06] 완료/진행 trial을 읽어 '실행 횟수'(완료 trial)·running을 진실되게
+                        # 채운다. (기존엔 total_runs=0 고정 -> trial이 누적되는데도 '실행 횟수 0' 오표시.)
+                        _done = _cur.execute("SELECT COUNT(*) FROM trials WHERE state='COMPLETE'").fetchone()
+                        _run = _cur.execute("SELECT COUNT(*) FROM trials WHERE state='RUNNING'").fetchone()
+                        # [2026-06-13 stale RUNNING 가드] 강제킬/크래시로 남은 orphan RUNNING이
+                        # '최적화 작동 중'으로 거짓 표시되던 문제 수정. 절대시각 비교(타임존 위험)
+                        # 대신 같은 DB의 상대시각만 사용: RUNNING의 최신 시작이 COMPLETE의 최신
+                        # 완료보다 이후일 때만 '진짜 작동 중'으로 판정(옛 orphan은 이후 COMPLETE가
+                        # 더 늦게 찍혀 자동 배제됨).
+                        _run_start = _cur.execute("SELECT MAX(datetime_start) FROM trials WHERE state='RUNNING'").fetchone()
+                        _done_end = _cur.execute("SELECT MAX(datetime_complete) FROM trials WHERE state='COMPLETE'").fetchone()
                         _b = _cur.execute('SELECT MAX(value) FROM trial_values').fetchone()
                     if _n and _n[0]:
                         _resp['total_trials'] = int(_n[0])
+                    if _done and _done[0] is not None:
+                        _resp['total_runs'] = int(_done[0])      # 완료된 최적화 trial 수(=실행 횟수)
+                    _running_now = False
+                    if _run_start and _run_start[0] is not None:
+                        _latest_complete = _done_end[0] if (_done_end and _done_end[0] is not None) else None
+                        # RUNNING 시작이 마지막 COMPLETE 완료보다 이후 = 현재 진짜 작동 중
+                        _running_now = (_latest_complete is None) or (str(_run_start[0]) > str(_latest_complete))
+                    if _running_now:
+                        _resp['running'] = True
+                        _resp['current_trial'] = int(_run[0]) if (_run and _run[0]) else 1
                     if _b and _b[0] is not None:
                         _resp['best_score'] = float(_b[0])
-                    _resp['message'] = ('상주(--24h) 미실행 - 누적 trial만 표시 '
-                                        '(실시간 최적화는 --24h 실행 시).')
+                    _resp['message'] = (
+                        '백그라운드 최적화 진행 중 (상주 모드에서 자동 누적).' if _running_now
+                        else '백그라운드 최적화 누적 기록 (orphan 제외, 상주 모드 실행 시 계속 증가).')
             except Exception as _oe:
                 logging.debug(f"pool_optimization.db 읽기 실패(무시): {_oe}")
             return jsonify(_resp)

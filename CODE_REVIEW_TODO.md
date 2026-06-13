@@ -526,37 +526,46 @@
 
 ## 다음 세션 시작 프롬프트 (복사해서 새 세션에 붙여넣기)
 
-> 현재 상태(2026-06-03): **0순위 3 + 1순위 P1 11 + 2순위 P2 28 = 42/81 완료**. 베이스라인 `789 passed`.
-> 남은 작업 = **P3 39건 + 보류 P2 automation-6 1건**(automation-1 미연결 의존). 모든 수정은 미커밋(working tree).
+> 현재 상태(2026-06-03): **코드리뷰 81/81 전부 완료 + 커밋(c69d9b4)**. 전체회귀 `794 passed`.
+> 다음 단계 = **실제 main.py 실행 검증**(단위테스트를 넘어 실제 통합 실행에서 수정사항이 작동하는지).
+> 보류 1건: automation-6(주간사이클 활성화 시).
 
 ```
-로또 예측 시스템 코드리뷰 P3 39건을 이어서 진행한다.
-작업 추적: CODE_REVIEW_TODO.md (루트, 42/81 완료). 상세 근거는 같은 파일 '부록: 영역별 상세'.
+로또 예측 시스템 실제 실행 검증을 워크플로우로 진행한다.
+직전 세션에서 코드리뷰 81건(P0~P3)을 전부 수정·커밋(c69d9b4)했다(794 passed).
+이제 단위테스트를 넘어 실제 main.py 실행 로그로 수정사항이 의도대로 작동하는지 검증한다.
+작업 추적: CODE_REVIEW_TODO.md(81/81 완료) + 메모리 p3-complete-2026-06-03.md.
 
-먼저 'python -m pytest tests/ --timeout=120 --no-cov -q'로 베이스라인(789 passed) 재확인.
+[1단계: 실제 실행 + 로그 수집]
+- 실행 전 logs/lotto_app.log를 타임스탬프로 백업(새 로그만 분석).
+- main.py를 백그라운드로 실행한다. 무한 루프(백그라운드 최적화)이므로,
+  초기 전체 사이클(데이터 동기화->필터링->ML 예측->백테스팅->대시보드 5001 시작)이
+  완료되거나 최대 15분 경과 시까지 logs/lotto_app.log를 수집.
+- 충분히 수집되면 graceful 종료(SIGINT/프로세스 종료)하고 종료 로그(graceful_shutdown,
+  데이터오염 방지, 30초내 워커 종료)까지 확보.
 
-[★최우선 - P3지만 사용자 결정 충돌] optimization-6:
-  threshold 경로 목적함수(v5)가 '통과율 95% hard constraint'를 강제하는데,
-  이는 사용자 최종확정 결정('통과율 제약 제거, 출현율 낮은 극단패턴 최대 제거 우선')과 정면충돌.
-  -> 가장 먼저 처리. CLAUDE.md 핵심전략 5번 항목 참조.
+[2단계: 워크플로우 로그 분석 - 영역별 병렬 fan-out] (각 에이전트가 실제 로그 라인 인용)
+- 에러/예외: ERROR/Traceback + "broad except에 삼켜진 거짓 완료보고"(성공 로그인데 실제 실패) 탐지
+- 필터링: 실제 풀 크기(815만->몇 개?), 빈풀 과제거(filters-16-6 3사유 로그), 0개제거 조기탈출
+- ML 예측: LSTM sequence_length=15 적용 확인, ensemble/MC, "0개 반환", 가짜/랜덤 폴백 흔적
+- 최적화: 목적함수 v6 SCORE 로그, pool/threshold 모드, optimization-7 캐시, sub-batch 종료
+- 대시보드: 5001 포트 정상, 예측 생성
+- 데이터 무결성: 회차 동기화, 가짜데이터(NO FAKE), 보너스번호
+- 종료: graceful_shutdown 30초내 종료, 종료 중 쓰레기 trial 방지
 
-이후 P3를 영역별로 묶어 진행(한 번에 한 묶음, 너무 많이 X):
-  [필터/설정] filters-16-2~7, adaptive-threshold-2~5, optimization-3
-  [ML] ml-lstm-ensemble-2/3/6/7, ml-probabilistic-6, extremeness-pool-2~4
-  [DB/백테스팅] db-1/5/6, backtesting-4/5, optimization-7
-  [자동화/대시보드/health] automation-3/4/7/8, dashboard-monitoring-7, health-repair-4/8, orchestration-3~6, log-analysis-2/5
+[3단계: 수정사항 매핑 + 적대 검증]
+- 이번 81건(특히 optimization-6 v6, LSTM 15, 빈풀, MultiOutput, ensemble분기, all_combinations 캐시)이
+  실제 로그에서 의도대로 작동하는 증거를 매핑.
+- 작동 안 하거나 새 이슈 발견 시 적대적 검증(refute 시도) 후 확정, P0~P3 우선순위 부여.
 
-규칙(이전 세션과 동일):
-1. 한 건씩 (a)수정 (b)관련 테스트 'pytest -k 관련 --no-cov -q' (c)통과 확인 (d)TODO [x]+기록+카운트 갱신.
-2. 핵심전략 절대 준수: '역사적 극단패턴 제거->남은풀 다양성예측'. 확률론 비판/통과율95% 강제 금지(optimization-6은 이 강제를 '제거'하는 방향).
-3. 가짜/더미 데이터는 fail-fast로 대체, 또다른 가짜 금지. 각 수정은 외과적(최소변경).
-4. 죽은코드 삭제 후보는 import/참조 0건 grep + 의존 테스트 동반정리, 삭제 vs DEPRECATED 판단지점에서 질문.
-5. 마지막에 전체회귀 + TODO/메모리(MEMORY.md + 토픽파일) 기록.
+규칙:
+1. 핵심전략 절대 준수: "역사적 극단패턴 제거->남은풀 다양성예측". 확률론 비판/통과율95% 강제 금지.
+2. 가짜/더미 데이터 fail-fast. 실제 데이터/로그만 근거.
+3. 발견 이슈는 새 리포트(RUNTIME_VERIFICATION_TODO.md)에 우선순위+로그근거인용+수정안으로 기록.
+4. 쉬운 설명(비유) 곁들일 것.
 
-[보류] automation-6: WeeklyCycleManager graceful_shutdown 연동. automation-1이 '대체-미연결'로
-  결정됐으므로, 사용자가 주간사이클 실제 활성화를 원할 때만 UnifiedOptimizer와 통합 후 진행.
-
-먼저 CODE_REVIEW_TODO.md를 읽고 optimization-6부터 착수 계획을 제안해줘.
+먼저 main.py 실행 계획(수집 시간/종료 방법)을 제안하고, 실행 후 워크플로우로 분석해줘.
+울트라코드(워크플로우)로 진행해.
 ```
 
 

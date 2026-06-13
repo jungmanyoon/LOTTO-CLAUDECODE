@@ -43,7 +43,7 @@ class FeedbackLoopSystem:
         self.best_performance = 0
         self.no_improvement_count = 0
         
-        logging.info("피드백 루프 시스템 초기화 완료")
+        logging.info("[성능모니터링 보조] 백테스팅 피드백 모듈 초기화 완료 (비실행 레거시 피드백루프와 무관)")
     
     def run_feedback_loop(self, models: Dict[str, Any], 
                          start_round: int, end_round: int) -> Dict[str, Any]:

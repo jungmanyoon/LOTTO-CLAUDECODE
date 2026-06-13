@@ -599,7 +599,7 @@ class BayesianFilter:
         # 가중치 샘플링
         selected = np.random.choice(45, 6, replace=False, p=probs)
         
-        return sorted([n + 1 for n in selected])
+        return sorted([int(n) + 1 for n in selected])  # [P3-3] np.int32 -> 일반 int (로그 가독성)
     
     def _calculate_confidence_interval(self, combination: List[int], 
                                      confidence_level: float = 0.95) -> Dict[str, float]:

@@ -140,6 +140,10 @@ filters:
   section: false
   sum_range: true
   ten_section: false
+# [2026-06-13 주의/DEAD KNOB] 이 값(1.1)은 '옛 16필터 시스템' 전용 컷오프이며 최종 5세트 예측에
+# 미사용이다. 실제 레버는 극단성 풀(configs/extremeness_pool_policy.json 의 effective_target_K +
+# configs/extremeness_weights.json 마할라 가중치)이다. 이 값을 자동 조정하던 threshold 최적화기는
+# 2025-03 부터 정지(dormant) 상태라 '항상 1.1'로 고정된 것이며, 고장이 아니다. 변경 불필요.
 global_probability_threshold: 1.1
 logging:
   log_excluded_patterns: true

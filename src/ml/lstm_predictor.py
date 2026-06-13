@@ -480,7 +480,7 @@ class LSTMPredictor:
             selected_indices = np.random.choice(
                 self.feature_dims, 6, replace=False, p=weights
             )
-            selected_numbers = sorted([i + 1 for i in selected_indices])
+            selected_numbers = sorted([int(i) + 1 for i in selected_indices])  # [P3-3] np.int32 -> 일반 int (로그 가독성)
             
             # 예측 신뢰도 계산
             confidence = np.mean([probabilities[i] for i in selected_indices])

@@ -693,25 +693,20 @@ class AutoScheduler:
             logging.error(f"[AutoScheduler] 필터 업데이트 실패: {e}")
 
     def _invalidate_ml_cache(self):
-        """ML 캐시 무효화"""
+        """ML 캐시 점검 (3/4)
+
+        [2026-06-06 수정] 과거: cache/models 전체를 shutil.rmtree로 삭제 -> 새 회차 감지마다
+        재사용 가능한 모델까지 통째로 날려 다음 실행이 처음부터 재학습(느림)하게 만들었다.
+        그러나 LSTM/앙상블은 trained_round != 최신회차면 자동 재학습+재저장(회차 스탬프 재사용
+        로직)하므로 캐시를 '물리 삭제'할 필요가 없다(불필요+파괴적, 재사용 최적화 무력화).
+        -> 물리 삭제 제거. 모델 staleness 는 회차 스탬프 비교가 안전하게 처리한다.
+        """
         try:
-            logging.info("[AutoScheduler] 3/4: ML 캐시 무효화 시작...")
-
-            # 캐시 디렉토리 경로
-            cache_dir = 'cache/models'
-
-            if os.path.exists(cache_dir):
-                import shutil
-                # 기존 캐시 삭제
-                shutil.rmtree(cache_dir)
-                # 디렉토리 재생성
-                os.makedirs(cache_dir)
-                logging.info("[AutoScheduler] [O] ML 캐시 무효화 완료 (다음 실행 시 재학습)")
-            else:
-                logging.info("[AutoScheduler] ML 캐시가 없음 (스킵)")
-
+            logging.info("[AutoScheduler] 3/4: ML 캐시 점검 (회차 스탬프 기반 - 물리삭제 없음)")
+            # 의도적 no-op: 회차 불일치 시 각 예측기가 자동 재학습/재저장하므로 캐시 보존이 안전.
+            logging.info("[AutoScheduler] [O] ML 캐시는 회차 스탬프로 자동 갱신됨 (재사용 최적화 보존)")
         except Exception as e:
-            logging.error(f"[AutoScheduler] ML 캐시 무효화 실패: {e}")
+            logging.error(f"[AutoScheduler] ML 캐시 점검 실패: {e}")
 
     def _update_system_state(self, round_num: int):
         """시스템 상태 업데이트"""

@@ -104,7 +104,7 @@ from tqdm import tqdm
 import os
 import hashlib
 import copy  # 버그 수정: deep copy 추가
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import multiprocessing as mp
 import pickle
 from functools import lru_cache
@@ -244,7 +244,9 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
         self.validation_window = backtesting_config.get('validation_window', 300)  # 51 → 300
         self.training_window = backtesting_config.get('training_window', 150)
         self.min_confidence_level = backtesting_config.get('min_confidence_level', 0.95)
-        logging.info(f"[백테스팅] 검증 윈도우: {self.validation_window} 회차 (훈련: {self.training_window} 회차)")
+        # [P3-5] 이 설정값(validation_window/training_window)은 참고용이며, 실제 백테스트 검증 범위는
+        #        run_backtest(start_round, end_round, window_size) 호출 인자로 결정된다(설정 300 vs 실제 50 오해 방지).
+        logging.info(f"[백테스팅] 설정 검증 윈도우(참고): {self.validation_window}회차, 학습: {self.training_window}회차 (실제 범위는 호출 시 결정)")
         
         # WeightedFilterSystem 사용 (1% 임계값 적용)
         try:
@@ -253,7 +255,7 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             self.filter_manager = WeightedFilterSystem(base_filter_manager)
             # 1% 임계값을 위해 30점으로 설정
             self.filter_manager.pass_threshold = 30.0
-            logging.info(f"[백테스팅] WeightedFilterSystem 활성화 (임계값: {self.filter_manager.pass_threshold}점)")
+            logging.info(f"[백테스팅] 가중점수 필터 켜짐 (합격선 {self.filter_manager.pass_threshold}점 -- 확률 임계값 %와는 다른 '점수' 기준)")
         except ImportError:
             # WeightedFilterSystem이 없으면 기본 FilterManager 사용
             self.filter_manager = FilterManager(self.db_manager)
@@ -448,6 +450,8 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
             sys.stderr = _SafeStderr()
         logging.debug(f"\n최적화된 백테스팅 시작: {start_round}회차 ~ {end_round}회차")
         logging.info(f"학습 윈도우 크기: {window_size}회차")
+        # [P3-5] 실제 검증 회차 수를 명시(init 로그의 설정 윈도우 300과 혼동 방지)
+        logging.info(f"[백테스팅] 실제 검증 회차: {end_round - start_round + 1}개 ({start_round}~{end_round}회차)")
         
         # 카운터 초기화
         self.counter_manager.reset_all()
@@ -546,7 +550,24 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                 # 결과 수집: tqdm은 항상 disable=True (status_printer가 sys.stderr를 직접 flush하므로 Windows 백그라운드 스레드 오류 방지)
                 _futures_iter = iter(futures)
                 for test_round, future in _futures_iter:
-                    prediction_result = future.result()
+                    # [P2-3] future.result()를 무한 대기하면 main 스레드가 네이티브 대기에 묶여
+                    #        작업중 Ctrl+C(SIGINT)가 graceful_shutdown으로 처리될 기회를 잃는다
+                    #        (재현 확인: SIGINT 후 90초 무처리 -> 강제킬). 타임아웃 폴링으로 0.5초마다
+                    #        Python 레벨에 복귀시켜 신호 처리/조기 중단(_is_shutting_down)을 가능케 한다.
+                    interrupted = False
+                    prediction_result = None
+                    while True:
+                        if self._is_shutting_down():
+                            interrupted = True
+                            break
+                        try:
+                            prediction_result = future.result(timeout=0.5)
+                            break
+                        except FuturesTimeoutError:
+                            continue
+                    if interrupted:
+                        logging.info("[SHUTDOWN] 종료 감지 - 백테스팅 결과 수집 중단")
+                        break
 
                     # 카운터 증가
                     self.counter_manager.increment('total_rounds')
