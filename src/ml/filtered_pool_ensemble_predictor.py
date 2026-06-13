@@ -756,6 +756,17 @@ class FilteredPoolEnsemblePredictor:
         self.is_trained = False  # 재학습 필요
         logging.info(f"필터링된 풀 앙상블 하이퍼파라미터 업데이트: {params}")
 
+    def apply_best_params(self, best_params: Dict[str, Any]):
+        """Optuna 최적 파라미터 적용 (접두사 rf_/xgb_/nn_ 키 단일 dict).
+
+        [2026-06-13 수정] AutoMLOptimizer(auto_ml_optimizer.py:181)가 study.best_params(접두사 키)를
+        그대로 넘긴다. 과거 이 메서드 부재로 update_hyperparameters 시그니처 수정 직후
+        "'FilteredPoolEnsemblePredictor' object has no attribute 'apply_best_params'"가 발생했다.
+        update_hyperparameters가 접두사 단일 dict를 수용하므로 그대로 위임한다(옛 ensemble_predictor와 동일 의미).
+        """
+        self.update_hyperparameters(best_params)
+        logging.info(f"[FilteredPool] 최적 파라미터 적용 완료: {list(best_params.keys())}")
+
     # ============================================================================
     # Backward Compatibility Wrappers for main.py
     # ============================================================================

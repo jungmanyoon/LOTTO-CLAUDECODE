@@ -114,17 +114,23 @@
 - C1: 새 회차 1228 -> LSTM 재학습 -> 사이드카 `{"trained_round":1228}` 생성.
 - A1: study trial 2292->2302 누적, best_value 0.5888 유지.
 
-### 추가 수정 (2026-06-13, 후속 커밋)
+### 추가 수정 (2026-06-13, main.py --once 재실행 검토 루프로 발견·해결)
 - **[P2 FIXED] 앙상블 하이퍼파라미터 튜너 시그니처 호환**: 과거 `FilteredPoolEnsemblePredictor.update_hyperparameters()
   takes 2 positional arguments but 4 were given`으로 Optuna 앙상블 튜닝 trial이 매번 실패(no-op). 원인=production
   FilteredPool(접두사 단일 dict 1-arg)에 레거시 튜너(auto_ml_optimizer:142/hyperparameter_tuner:207)가 옛
-  3-dict 위치인자로 호출. **수정**: FilteredPoolEnsemblePredictor.update_hyperparameters를 두 형식(레거시 3-dict +
-  인터페이스 접두사 1-dict) 모두 수용하도록 다형화(호출부/옛 클래스 불변). 테스트 추가
-  (test_ensemble_update_hyperparameters_accepts_both_forms). PoolOptimizer(활성)와 별개, 보조 ML 신호 튜닝에만 영향.
+  3-dict 위치인자로 호출. **수정**: update_hyperparameters를 두 형식(레거시 3-dict + 인터페이스 접두사 1-dict)
+  모두 수용하도록 다형화(호출부/옛 클래스 불변).
+- **[P2-2 FIXED] apply_best_params 누락**: 위 수정으로 trial이 통과하자 best 적용 단계에서
+  `'FilteredPoolEnsemblePredictor' object has no attribute 'apply_best_params'`가 드러남(AutoMLOptimizer:181이
+  study.best_params 접두사 dict로 호출). **수정**: FilteredPoolEnsemblePredictor에 apply_best_params 추가
+  (update_hyperparameters 위임). 직접 실행 검증: AutoMLOptimizer ensemble 경로(trials+apply) 무에러 완주(optimized=True).
+- **[P3 FIXED] 새 회차 16필터 재저장 UNIQUE 충돌**: `UNIQUE constraint failed: filtered_combinations`
+  (CombinationsDB.save_filtered_combinations의 plain INSERT, 입력 중복/동시쓰기 시). **수정**: 형제 메서드(FilterDB,
+  동일 파일 ~1844줄)와 동일하게 `INSERT OR IGNORE`로 멱등화(죽은 16필터 계층, 최종예측 무관이나 ERROR 노이즈 제거).
+- 테스트 추가: test_ensemble_update_hyperparameters_accepts_both_forms, test_ensemble_apply_best_params_exists_and_applies.
+- **검증**: main.py --once 재실행 2회 -> 최종 ERROR 0건(앙상블 튜너/UNIQUE 모두 소멸), 극단풀 5세트 정상(겹침 0).
 
 ### 미해결/범위 외 기존 결함 (후속 권고)
-- **[P3 기존] 새 회차 시 16필터 재저장 UNIQUE 충돌**: `UNIQUE constraint failed: filtered_combinations`
-  -> 죽은 16필터 계층의 재저장 중복(이미 저장된 회차). 최종예측(극단풀) 무관, 데이터무결성 영향 없음.
 - **[P3 기존] performance_stats.db 988MB(freelist 978MB)**: 운영중 VACUUM 잠금위험으로 의도적 보류.
   정지 시점 1회 VACUUM 권장. 누설0(is_contaminated=0)이라 정직성 무관.
 - **[P3] A4 비대칭**: 정책 K는 round만 무효화 키 -> selector 코드변경+회차동일이면 자동 재탐색 안 됨

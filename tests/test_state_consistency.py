@@ -320,3 +320,23 @@ def test_ensemble_update_hyperparameters_accepts_both_forms():
     e2 = FilteredPoolEnsemblePredictor()
     e2.update_hyperparameters({'rf_n_estimators': 150})
     assert e2.models['rf'].get_params()['n_estimators'] == 150, "접두사 1-dict rf 파라미터 미적용"
+
+
+@pytest.mark.unit
+def test_ensemble_apply_best_params_exists_and_applies():
+    """[P2 fix] AutoMLOptimizer가 study.best_params(접두사 키)로 호출하는 apply_best_params가
+    FilteredPoolEnsemblePredictor에 존재하고 정상 적용되는지.
+
+    과거: update_hyperparameters 시그니처 수정 후 trial은 통과했으나 best 적용 단계에서
+    "'FilteredPoolEnsemblePredictor' object has no attribute 'apply_best_params'"로 실패했다."""
+    pytest.importorskip("sklearn")
+    from src.ml.filtered_pool_ensemble_predictor import FilteredPoolEnsemblePredictor
+
+    e = FilteredPoolEnsemblePredictor()
+    if 'rf' not in e.models:
+        pytest.skip("sklearn 모델 미초기화 환경")
+    assert hasattr(e, 'apply_best_params'), "apply_best_params 메서드 부재(AutoMLOptimizer 호출 실패)"
+    # Optuna study.best_params 형식(접두사 키)
+    e.apply_best_params({'rf_n_estimators': 175, 'rf_max_depth': 12, 'xgb_max_depth': 7})
+    assert e.models['rf'].get_params()['n_estimators'] == 175
+    assert e.models['rf'].get_params()['max_depth'] == 12

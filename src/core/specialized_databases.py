@@ -1241,8 +1241,13 @@ class CombinationsDB(BaseDatabase):
                 for batch_idx in range(0, len(combinations), batch_size):
                     batch = combinations[batch_idx:batch_idx + batch_size]
                     batch_data = [(round_num, comb) for comb in batch]
+                    # [2026-06-13] INSERT -> INSERT OR IGNORE (멱등화). 과거: 입력 리스트 내 중복 조합
+                    #  또는 새 회차 재저장/동시쓰기 시 'UNIQUE constraint failed: filtered_combinations.
+                    #  round, combination'으로 배치 전체가 IntegrityError -> save False + ERROR 로그가 났다.
+                    #  형제 메서드(FilterDB.save, 동일 파일 ~1844줄)와 동일하게 OR IGNORE로 중복을 무시한다.
+                    #  (DELETE-then-INSERT라 정상 케이스엔 영향 없고, 중복만 조용히 스킵된다.)
                     cursor.executemany('''
-                        INSERT INTO filtered_combinations (round, combination)
+                        INSERT OR IGNORE INTO filtered_combinations (round, combination)
                         VALUES (?, ?)
                     ''', batch_data)
                     inserted_count += len(batch)
