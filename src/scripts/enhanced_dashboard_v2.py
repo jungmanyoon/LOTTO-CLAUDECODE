@@ -2959,34 +2959,40 @@ def get_optimizer_status():
 @app.route('/api/optimizer-history')
 @limiter.limit("300 per hour")  # [2026-06-01] read-only 히스토리 폴링: 기본 limit 초과 방지(로컬 전용)
 def get_optimizer_history():
-    """최적화 히스토리 API"""
+    """최적화 히스토리 API.
+
+    [2026-06-14 honesty] 과거: 죽은 옛 threshold 옵티마이저 DB(data/threshold_optimization.db,
+    optimization_sessions 테이블)를 읽어 stale/빈 데이터를 반환했다. 현재 활성 최적화기는
+    PoolOptimizer(Optuna study=pool_optimization_v6 @ data/pool_optimization.db)이므로 그 실제
+    trial 누적/점수를 조회하도록 교정한다(최종예측 가중치 최적화의 실제 진행을 표시).
+    """
     try:
-        db_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "data/threshold_optimization.db"
-        )
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        db_path = os.path.join(root, "data/pool_optimization.db")
 
         if not os.path.exists(db_path):
             return jsonify([])
 
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
+            # Optuna 표준 스키마: trials(number,state,datetime_complete) + trial_values(value)
             cursor.execute("""
-                SELECT session_date, n_trials, best_threshold, best_ml_bypass,
-                       best_ml_weight, best_score, avg_matches, ml_inclusion_rate,
-                       combination_count
-                FROM optimization_sessions
-                ORDER BY session_date DESC
+                SELECT t.number, tv.value, t.datetime_complete
+                FROM trials t JOIN trial_values tv ON t.trial_id = tv.trial_id
+                WHERE t.state = 'COMPLETE'
+                ORDER BY t.trial_id DESC
                 LIMIT 20
             """)
-
-            columns = ['date', 'trials', 'threshold', 'ml_bypass', 'ml_weight',
-                      'score', 'avg_matches', 'ml_inclusion_rate', 'combinations']
-
             history = []
-            for row in cursor.fetchall():
-                history.append(dict(zip(columns, row)))
-
+            for number, value, dt in cursor.fetchall():
+                history.append({
+                    'date': dt,
+                    'trials': number,          # Optuna trial 번호(누적)
+                    'score': value,            # PoolOptimizer 목적함수 점수(AUC분리+lift)
+                    # 아래 필드는 극단성 풀 가중치 최적화에는 해당 없음(옛 threshold 전용) -> null
+                    'threshold': None, 'ml_bypass': None, 'ml_weight': None,
+                    'avg_matches': None, 'ml_inclusion_rate': None, 'combinations': None,
+                })
             return jsonify(history)
     except Exception as e:
         logging.error(f"최적화 히스토리 조회 실패: {e}")

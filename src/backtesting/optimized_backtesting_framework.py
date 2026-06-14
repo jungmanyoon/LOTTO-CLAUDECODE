@@ -1139,9 +1139,12 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                         'total': len(model_validations)
                     }
                     
-                    # 로그 출력 개선 - 두 지표의 의미 명확화
-                    logging.info(
-                        f"[백테스팅] {model_name} - "
+                    # [2026-06-14 honesty/noise] 모델별x라운드별 라인은 한 백테스트에 200+회 반복되는 노이즈라
+                    #  DEBUG로 강등(요약만 INFO 유지). 또한 'DB 풀 포함률'은 해당 회차에 DB 풀이 없으면
+                    #  런타임 통과율로 폴백되어 통과율과 동일값이 될 수 있음(별개 측정처럼 보이나 동어반복).
+                    #  이 백테스트는 ML 보조신호(레거시 7.7M 풀 기준) 검증이며 최종 5세트(극단성 풀)와 무관.
+                    logging.debug(
+                        f"[백테스팅] {model_name}(ML 보조신호, 레거시 풀 기준) - "
                         f"필터 통과율(런타임): {pass_rate:.1f}% ({model_passed}/{len(model_validations)}), "
                         f"DB 풀 포함률: {pool_inclusion_rate:.1f}% ({model_in_pool}/{len(model_validations)})"
                     )
@@ -1168,9 +1171,10 @@ class OptimizedBacktestingFramework(metaclass=SingletonMeta):
                 result['filtered_pool_inclusion_rate'] = overall_pool_rate
                 
                 logging.info(
-                    f"[백테스팅 요약] "
+                    f"[백테스팅 요약/ML보조신호] "
                     f"전체 필터 통과율(런타임): {overall_pass_rate:.1f}% ({passed_predictions}/{total_predictions}), "
-                    f"DB 풀 포함률: {overall_pool_rate:.1f}% ({in_filtered_pool}/{total_predictions})"
+                    f"DB 풀 포함률: {overall_pool_rate:.1f}% ({in_filtered_pool}/{total_predictions}) "
+                    f"- 최종 5세트(극단성 풀)는 별도 [풀 백테스트]가 검증"
                 )
 
                 # Only warn if DB pool data exists for this round

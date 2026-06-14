@@ -17,7 +17,8 @@ from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
-import importlib.util
+# [2026-06-14 죽은코드 제거] import importlib.util 삭제: 실제 import 검증에 쓰려던 잔재이나 사용처 0건.
+#  클래스 존재 점검은 소스 텍스트('class X' 문자열) 매칭이라 importlib 불필요(아래 _check_required_classes).
 import json
 import yaml
 
@@ -222,13 +223,13 @@ class ErrorPreventionSystem:
                     ))
                     continue
 
-                # 클래스 존재 확인 (단순 문자열 검사)
+                # 클래스 존재 확인 (소스 텍스트 'class X' 문자열 매칭 - import 검증 아님)
                 if f"class {class_name}" in content:
                     self.health_results.append(HealthCheckResult(
                         check_name=f"Required Class: {class_name}",
                         priority=Priority.CRITICAL,
                         status=True,
-                        message=f"{class_name} 클래스 존재 확인됨"
+                        message=f"{class_name} class 정의 소스 존재(텍스트 확인 - 실제 import 검증 아님)"
                     ))
                 else:
                     # 클래스가 없는 경우 자동 생성 시도
@@ -340,8 +341,12 @@ class {class_name}:
         ))
 
     def _check_database_integrity(self):
-        """데이터베이스 무결성 검사"""
-        self.logger.info("데이터베이스 무결성 검사 시작")
+        """데이터베이스 연결/테이블 존재 점검.
+
+        [2026-06-14 honesty] 이름은 'integrity'지만 실제로는 sqlite connect + sqlite_master 테이블
+        존재 확인만 한다(PRAGMA integrity_check/quick_check 미수행). 손상/페이지/체크섬 같은 '깊은
+        무결성'은 검증하지 않으므로 로그 문구를 정직하게 '연결/테이블 점검'으로 표기한다."""
+        self.logger.info("데이터베이스 연결/테이블 존재 점검 시작 (참고: 깊은 무결성 PRAGMA는 미수행)")
 
         for db_path in self.required_databases:
             full_path = self.project_root / db_path
