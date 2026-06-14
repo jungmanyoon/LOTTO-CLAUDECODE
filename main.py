@@ -3496,16 +3496,17 @@ def main():
             pass  # ML만 수행 모드에서는 별도 처리 없음
 
         # ================================================================
-        # [Phase 3] UnifiedOptimizer 백그라운드 최적화 시작 (ML 학습 완료 후)
+        # [Phase 3] UnifiedOptimizer 백그라운드 최적화 - 시작 시점 (2026-06-14 메모리경합 수정)
         # ================================================================
-        # FIX: ML 학습 전에 시작하면 백테스팅에서 미학습 모델로 예측 시도 → WARNING 발생
-        #      ML 학습 완료 후 시작하여 모델 캐시를 활용하도록 이동
-        if unified_optimizer_global is not None:
-            try:
-                unified_optimizer_global.start_background(optimization_stop_flag)
-                logging.info("[UnifiedOptimizer] 백그라운드 최적화 시작 (ML 학습 완료 후)")
-            except Exception as e:
-                logging.warning(f"[UnifiedOptimizer] 백그라운드 최적화 시작 실패: {e}")
+        # [근본 수정] 백그라운드 PoolOptimizer는 main.py와 '같은 프로세스의 daemon 스레드'다. 과거엔 여기
+        #  (전경 사이클 시작 전)서 start_background를 호출해, 전경의 백테스트+build_pool+풀백테스트(각 8.14M
+        #  전수 채점)와 백그라운드 trial(8.14M 채점)이 '한 프로세스 안에서 동시 메모리 피크'를 만들어
+        #  PoolOpt trial이 'Unable to allocate'로 실패했다(활성 최적화기가 죽음). 게다가 --once는 사이클 후
+        #  즉시 종료하므로 백그라운드 최적화가 누적될 시간조차 없어 무의미하다.
+        #  -> 여기서 시작하지 않고, '상주 모드'에서 전경 사이클이 끝난 뒤(keep-alive 직전) 시작한다.
+        #     그러면 전경 8.14M 채점과 겹치지 않고 idle 시간에만 누적되어 경합/OOM이 사라진다.
+        if unified_optimizer_global is not None and not _resident_mode:
+            logging.info("[UnifiedOptimizer] --once/1회 모드: 백그라운드 최적화 생략(즉시 종료라 누적 불가 + 메모리 경합 방지)")
 
         # ================================================================
         # 백테스팅 - 필터링+ML 통합 검증 (최적화)
@@ -4146,6 +4147,15 @@ def main():
             logging.info("[상주] 백그라운드 최적화(OPTUNA) + 새 회차 자동 감지 유지 중")
             logging.info("[상주] 종료: Ctrl+C  (1회만 실행하려면: python main.py --once)")
             logging.info("="*60)
+            # [2026-06-14 메모리경합 수정] 전경 사이클(8.14M 채점)이 끝난 지금 백그라운드 최적화를 시작한다.
+            #  -> 전경과 메모리 피크가 겹치지 않아 PoolOpt 'Unable to allocate' 경합/OOM이 사라지고,
+            #     상주 idle 시간 동안 안전하게 trial을 누적한다. (--once는 이 블록에 안 들어와 자동 생략.)
+            if unified_optimizer_global is not None:
+                try:
+                    unified_optimizer_global.start_background(optimization_stop_flag)
+                    logging.info("[UnifiedOptimizer] 백그라운드 최적화 시작(상주 - 사이클 완료 후, 전경 경합 없음)")
+                except Exception as e:
+                    logging.warning(f"[UnifiedOptimizer] 백그라운드 최적화 시작 실패: {e}")
             try:
                 while not optimization_stop_flag.get('stop', False):
                     time.sleep(5)
