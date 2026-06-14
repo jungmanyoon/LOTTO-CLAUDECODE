@@ -2,6 +2,12 @@
 """
 자동화된 필터 업데이트 스케줄러
 매주 자동으로 필터를 업데이트하고 814만개 조합을 재필터링
+
+[DEAD/미사용 - 최종예측 무관]
+이 모듈(AutomatedFilterScheduler)은 현재 어떤 진입점에도 연결되어 있지 않다(미인스턴스화).
+실제 주간 자동화 경로는 src/automation/auto_scheduler.py가 담당하며, 최종 5세트 예측은
+극단성 풀(ExtremenessPoolPredictor)이 생성한다. 본 클래스의 정교한 5단계 파이프라인 로그
+('STEP 1/5 백업' ~ '주간 업데이트 완료' 등)는 실제 운영에서 실행되지 않는다.
 """
 import logging
 import time

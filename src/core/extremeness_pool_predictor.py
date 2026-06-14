@@ -631,7 +631,10 @@ class ExtremenessPoolPredictor:
         # [2026-06-05] 정직한 per-set 점수: 모든 세트를 0.5(50%)로 고정하던 것을 '전형성 점수'로 교체.
         # 의미: 당첨확률이 아니라 "이 세트가 역대 당첨 분포에 얼마나 가까운가(=극단 회피도)"의 백분위.
         # 근거: pool_quality(=-극단성)가 클수록 덜 극단적/더 전형적. 풀 내 백분위를 50~95% 로 표시.
-        # NO FAKE DATA: 가짜 '당첨확률'이 아니라 실제로 계산되는 전형성 지표(라벨도 '당첨확률 아님' 명시됨).
+        # NO FAKE DATA: 가짜 '당첨확률'이 아니라 실제로 계산되는 전형성 지표.
+        # 주의(정직성): 이 함수가 반환하는 dict 는 키 'confidence' 만 가지며, '당첨확률 아님'
+        #   같은 disclaimer 라벨 자체를 emit 하지 않는다. 그 disclaimer 는 표시 계층
+        #   (대시보드 툴팁 / main.py 백테스트 요약)에서 부착된다.
         typ = self._ticket_typicality(tickets)
 
         src = f"ExtremePool-Diversity(K={self.target_K//1000}K, cover={rep['unique_numbers']}/45)"
@@ -643,6 +646,6 @@ class ExtremenessPoolPredictor:
                 'source': src,
                 'in_pool': True,
             })
-        self.logger.info(f"[극단풀] 5세트 생성: 커버 {rep['unique_numbers']}/45번호, "
+        self.logger.info(f"[극단풀] {len(out)}세트 생성: 커버 {rep['unique_numbers']}/45번호, "
                         f"티켓간 최대겹침 {rep['max_pairwise_overlap']}")
         return out

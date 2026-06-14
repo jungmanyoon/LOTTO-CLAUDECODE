@@ -581,7 +581,12 @@ class ContinuousImprovementEngine:
             raise
 
     def start_continuous_improvement(self):
-        """지속적 개선 시스템 시작"""
+        """지속적 개선 시스템 시작.
+
+        [2026-06-14 honesty/DEAD] 이 스케줄러는 main.py의 ENABLE_CONTINUOUS_IMPROVEMENT_SCHEDULER=False로
+        기본 비활성이며 production에서 호출되지 않는다. 또한 이 엔진의 최적화 대상은 옛 threshold/criteria
+        (레거시 컷오프)라 최종 5세트(극단성 풀) 예측에 미반영된다. 활성 최적화는 UnifiedOptimizer(PoolOptimizer,
+        극단성 풀 가중치)가 전담한다. (객체는 상태조회/종료정리 용도로만 유지됨.)"""
         if self.is_running:
             self.logger.warning("지속적 개선 시스템이 이미 실행 중입니다.")
             return

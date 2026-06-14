@@ -829,7 +829,10 @@ class ThresholdOptimizer:
         total_trials_target = previous_trials + n_trials
 
         self.logger.info(f"최적화 시작: {study_name}")
-        self.logger.info(f"  - Sampler: CMA-ES (중복 시도 <20% 목표)")
+        # [정직화] 이 옵티마이저(CMA-ES + study 'lotto_threshold_v4')는 폴백/CLI 전용 경로다.
+        # 기본 활성 최적화는 unified_optimizer mode='pool' -> PoolOptimizer(TPE @ pool_optimization_v6).
+        # 여기서 탐색/적용하는 global_probability_threshold는 최종 5세트(극단성 풀) 예측에 미반영(레거시 16필터 레버).
+        self.logger.info(f"  - Sampler: CMA-ES (중복 시도 <20% 목표) [폴백 모드 전용 - 기본 활성 최적화는 PoolOptimizer/TPE @ pool_optimization_v6, 최종예측 미반영]")
         self.logger.info(f"  - 임계값 범위: {self.threshold_range[0]}~{self.threshold_range[1]}%")
         self.logger.info(f"  - 고정 검증 세트: {self.fixed_validation_start}~{self.fixed_validation_end} 회차")
         self.logger.info(f"  - 기존 시도: {previous_trials}회")
@@ -896,13 +899,13 @@ class ThresholdOptimizer:
         if previous_trials == 0 or new_round_detected:
             # 새 회차가 감지되면 이전 최고 성능 파라미터 사용
             if new_round_detected and self.best_params:
+                # [정직화] objective()는 threshold/ml_bypass/ml_weight 3개만 suggest한다(위 553-558 주석).
+                # lstm_epochs/ensemble_n_estimators/monte_carlo_simulations는 검색공간에서 제거되어
+                # enqueue해도 objective에서 쓰이지 않는 무효 잔재이므로 enqueue dict에서도 제거(검색공간과 일치).
                 initial_params = {
                     'threshold': self.best_params.get('threshold', 1.0),
                     'ml_bypass': self.best_params.get('ml_bypass', 15),
                     'ml_weight': self.best_params.get('ml_weight', 0.5),
-                    'lstm_epochs': self.best_params.get('lstm_epochs', 30),
-                    'ensemble_n_estimators': self.best_params.get('ensemble_n_estimators', 100),
-                    'monte_carlo_simulations': self.best_params.get('monte_carlo_simulations', 6000),
                 }
                 study.enqueue_trial(initial_params)
                 self.logger.info(f"[새 회차] 이전 최고 성능 파라미터로 초기화: {initial_params}")

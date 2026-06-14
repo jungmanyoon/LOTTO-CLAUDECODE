@@ -1853,12 +1853,13 @@ def combine_ml_predictions(lstm_predictions=None, ensemble_predictions=None,
                 model_diversity = len([p for p in prediction_sources.values() if p])
                 combined_confidence = avg_confidence * (0.8 + 0.1 * model_diversity)
 
-                # Task 6: Combined 신뢰도 계산 과정 투명성
+                # [2026-06-14 honesty] Combined 'confidence'는 모델별 이종스케일 평균에 모델수 가산을 곱한
+                #  휴리스틱 합성가중점수이지 당첨확률이 아니다(보조 다양성 신호로만 쓰임). 라벨을 정직화.
                 if i == 0:  # 첫 번째 전략만 상세 로깅
-                    logging.info(f"\n  [Combined 신뢰도 계산]")
-                    logging.info(f"    - 평균 신뢰도: {avg_confidence:.3f}")
+                    logging.info(f"\n  [Combined 합성가중점수 계산 (당첨확률 아님, 보조 다양성 신호)]")
+                    logging.info(f"    - 모델 평균점수: {avg_confidence:.3f} (모델별 이종스케일 평균)")
                     logging.info(f"    - 모델 다양성: {model_diversity}개")
-                    logging.info(f"    - 최종 신뢰도: {avg_confidence:.3f} × (0.8 + 0.1 × {model_diversity}) = {combined_confidence:.3f}")
+                    logging.info(f"    - 합성가중점수: {avg_confidence:.3f} × (0.8 + 0.1 × {model_diversity}) = {combined_confidence:.3f}")
 
                 combined_predictions.append({
                     'numbers': numbers,

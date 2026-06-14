@@ -590,14 +590,19 @@ class MonteCarloSimulator:
         return best_combinations
     
     def _calculate_confidence(self, combination: List[int], score: float) -> float:
-        """조합의 신뢰도 계산 (개선된 방법)
-        
+        """조합의 '상대 점수' 계산 (이 배치 내 순위 정규화 - 당첨확률 아님).
+
+        [2026-06-14 honesty] 반환값은 score를 이 배치(best_combinations) 내에서 min-max 정규화 후
+        부스트/클램프한 '상대 순위 점수'다. 따라서 최고점 조합은 정의상 항상 ~1.0(100%)이 된다.
+        이는 '당첨 확률'이 아니라 '이 배치 내 상대 우위'이며, 최종예측에선 ml_beta 다양성 보조신호로만 쓰인다.
+        (표시 라벨이 '신뢰도'로 보여 확률로 오해될 수 있어 의미를 여기 명시.)
+
         Args:
             combination: 번호 조합
             score: 평가 점수
-            
+
         Returns:
-            float: 신뢰도 (0-1)
+            float: 상대 점수 (0-1, 배치 내 순위 기반 - 당첨확률 아님)
         """
         # 점수 기반 신뢰도 (동적 최대값 사용)
         all_scores = [s for _, s in self.cache['best_combinations']]

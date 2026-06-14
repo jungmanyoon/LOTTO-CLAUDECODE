@@ -2,7 +2,12 @@
 Error Prevention System for Lotto Prediction System
 포괄적인 오류 예방 및 자동 복구 시스템
 
-24시간 무인 운영 환경을 위한 시스템 건강 상태 모니터링 및 자동 복구
+시스템 건강 상태 포괄 점검 + 일부 자동 복구.
+
+[2026-06-14 honesty] 실제 동작 범위 정정: 이 시스템은 main 경로에서 '시작 시 1회'
+포괄 점검만 수행한다(아래 schedule_periodic_checks는 main.py에서 호출되지 않는 옵션 데몬용).
+따라서 '24시간 무인 상시 모니터링'이라는 과거 표현은 정확하지 않으며, 상시 점검을 원하면
+schedule_periodic_checks를 별도로 기동해야 한다.
 """
 
 import os
