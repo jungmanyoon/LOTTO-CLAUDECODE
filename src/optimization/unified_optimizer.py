@@ -3,7 +3,8 @@
 통합 최적화기 (UnifiedOptimizer)
 Phase 3: SmartAutoLearning(레이어 1) + BackgroundOptimization(레이어 2) 통합
 
-- 단일 백그라운드 스레드로 Optuna CMA-ES 최적화 + 정기 피드백 루프 수행
+- 단일 백그라운드 스레드로 Optuna TPE 최적화(pool 모드: 극단성 풀 가중치 탐색) 수행
+  ([2026-06-14] 정기 피드백 루프는 결과 미반영 실효 no-op이라 비활성화됨)
 - 상태는 OptimizationDB(data/optimization.db)에 저장 (JSON 파일 불필요)
 - 종료 플래그(stop_flag)를 AutoThresholdOptimizer → OptimizedBacktestingFramework 체인으로 전파
 """
@@ -38,8 +39,8 @@ _POOL_TARGET_K = int(os.environ.get('LOTTO_TARGET_POOL_K', '1500000'))
 
 class UnifiedOptimizer:
     """
-    통합 최적화기: Optuna CMA-ES 백그라운드 최적화 + 정기 피드백 루프를
-    하나의 백그라운드 스레드로 실행하는 단일 진입점.
+    통합 최적화기: Optuna TPE 백그라운드 최적화(pool 모드: 극단성 풀 가중치)를
+    하나의 백그라운드 스레드로 실행하는 단일 진입점. (피드백 루프는 2026-06-14 비활성)
     """
 
     def __init__(self, db_manager, config_path: str = 'configs/adaptive_filter_config.yaml'):
@@ -73,8 +74,10 @@ class UnifiedOptimizer:
         )
         self._thread.start()
         self.logger.info("[UnifiedOptimizer] 백그라운드 최적화 시작")
-        self.logger.info("   - Optuna CMA-ES 기반 Bayesian 최적화 (10 trials/cycle)")
-        self.logger.info("   - 백테스팅 모니터링 주기: 30분마다 (PoolOptimizer 워커, 비실행 레거시 피드백루프와 무관)")
+        # [2026-06-14 honesty] 활성 pool 모드는 TPE 샘플러 사용(CMA-ES는 폐기된 threshold 모드 한정).
+        self.logger.info("   - Optuna TPE 기반 Bayesian 최적화 (pool 모드: 극단성 풀 가중치, 10 trials/cycle)")
+        # [2026-06-14 근본제거] 30분 피드백 루프는 결과 미반영 실효 no-op이라 무거운 연산 비활성화함.
+        self.logger.info("   - 피드백 루프: 비활성(결과 최종예측 미반영) - 최적화는 PoolOptimizer 가중치 탐색에 집중")
         self.logger.info("   - 상태 저장: data/optimization.db")
         return self._thread
 
@@ -356,72 +359,23 @@ class UnifiedOptimizer:
         self._running = False
 
     def _run_feedback_cycle(self):
+        """[2026-06-14 근본제거] 30분 피드백 루프 비활성화(레거시 실효 no-op).
+
+        과거: EnhancedFeedbackLoop.run_improvement_cycle(최근 50회차 백테스트 + AutoML 앙상블 튜닝)을 30분마다
+        실행했으나, 그 결과(ML 파라미터/통계)는 최종 5세트(극단성 풀=ExtremenessPoolPredictor)에 전혀 반영되지
+        않았다 -> '결과 미반영 실효 no-op'이면서 매 주기 수 분의 백테스트 연산만 낭비했다(정직성 감사 2026-06-14 H8).
+        최종예측 품질 최적화는 PoolOptimizer(극단성 풀 가중치) + target_K 정책이 전담한다.
+        -> 무거운 피드백 사이클을 실행하지 않고, 재시작 시 즉시 재실행만 막도록 타임스탬프만 갱신한다.
         """
-        피드백 루프 실행 (구 SmartAutoLearning.run_learning() 대체).
-        EnhancedFeedbackLoop 없으면 기본 백테스팅으로 대체.
-        """
-        # [종료 가드 2차 방어] 종료 중이면 피드백(백테스팅) 자체를 시작하지 않는다.
-        # 호출자(_worker_pool)의 가드와 별개로 함수 입구에서도 막아 어떤 경로로 들어와도 안전.
         if self._stop_flag.get('stop', False):
-            self.logger.info("[UnifiedOptimizer] 종료 중 - 피드백 루프 생략")
             return
+        self.logger.info(
+            "[UnifiedOptimizer] 피드백 루프 비활성(레거시): 결과가 최종예측에 미반영되어 연산 생략 "
+            "- 최종예측 최적화는 PoolOptimizer(극단성 풀 가중치)가 전담")
         try:
-            from src.optimization.enhanced_feedback_loop import EnhancedFeedbackLoop
-            enhanced_feedback = EnhancedFeedbackLoop(db_manager=self.db_manager)
-            # 백테스팅 싱글톤에 종료 플래그 전파 (run_backtest 내부 조기중단 + 0.000 저장 차단)
-            try:
-                from src.backtesting.optimized_backtesting_framework import OptimizedBacktestingFramework
-                _bt = OptimizedBacktestingFramework.get_instance()
-                if _bt:
-                    _bt.set_shutdown_flag(self._stop_flag)
-            except Exception:
-                pass
-            latest_round = self.db_manager.get_latest_round()
-            if latest_round is None:
-                self.logger.warning("[UnifiedOptimizer] 피드백: DB에서 회차 정보 조회 불가")
-                return
-
-            start_round = max(1, latest_round - 50)
-            self.logger.info(f"[UnifiedOptimizer] 피드백 루프 시작: {start_round}~{latest_round}회차")
-            improvement_result = enhanced_feedback.run_improvement_cycle(
-                start_round=start_round,
-                end_round=latest_round,
-                max_iterations=1
-            )
-
-            # run_improvement_cycle 반환에는 'improved'/'improvement_rate' 키가 없고
-            # 'total_improvements'(개선 적용 건수)가 존재 → 이 값으로 개선 여부 판정
-            _improvements = improvement_result.get('total_improvements', 0) if improvement_result else 0
-            if _improvements > 0:
-                self.logger.info(f"[UnifiedOptimizer] 피드백 개선 완료: {_improvements}건 적용")
-            else:
-                self.logger.info("[UnifiedOptimizer] 피드백: 현재 최적 상태 유지")
-
-        except ImportError:
-            # EnhancedFeedbackLoop 없으면 기본 백테스팅으로 대체
-            try:
-                from src.backtesting.optimized_backtesting_framework import OptimizedBacktestingFramework
-                backtesting = OptimizedBacktestingFramework(self.db_manager)
-                # run_backtest 필수 인자: start_round, end_round
-                latest = self.db_manager.get_latest_round() if self.db_manager else 0
-                _end = latest if latest > 0 else 50
-                _start = max(1, _end - 49)
-                result = backtesting.run_backtest(start_round=_start, end_round=_end)
-                perf = result.get('performance_metrics', {})
-                self.logger.info(
-                    f"[UnifiedOptimizer] 피드백 백테스팅 완료: "
-                    f"평균 매치 {perf.get('overall_avg_matches', 0):.2f}개"
-                )
-            except Exception as e2:
-                self.logger.error(f"[UnifiedOptimizer] 피드백 대체 백테스팅 실패: {e2}")
-
-        except Exception as e:
-            self.logger.error(f"[UnifiedOptimizer] 피드백 루프 실패: {e}")
-
-        finally:
-            # FIX: 모든 경로(정상/ImportError/Exception)에서 피드백 시간 저장
-            # 이전: except 블록의 return으로 저장이 누락되어 재시작 시 즉시 피드백 실행됨
             self._opt_db.set_state('last_feedback_time', datetime.now().isoformat())
+        except Exception:
+            pass
 
     def _generate_predictions_after_cycle(self, cycle_count: int):
         """최적화 사이클 완료 후 예측 번호 5세트 생성 (선택적)"""

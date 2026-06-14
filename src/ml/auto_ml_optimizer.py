@@ -6,8 +6,8 @@ ML 모델 자동 개선 시스템
 import logging
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-from sklearn.metrics import mean_squared_error
+# [2026-06-14 죽은코드 제거] GridSearchCV/RandomizedSearchCV/mean_squared_error 미사용 import 삭제
+#  (전 모듈에서 사용처 0건 - Optuna TPE만 사용). 혼동/불필요 의존 제거.
 import optuna
 from datetime import datetime
 import json
