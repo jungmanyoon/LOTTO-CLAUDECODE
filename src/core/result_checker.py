@@ -53,7 +53,22 @@ class ResultChecker:
             numbers_str = actual_data[1]
             all_numbers = [int(n) for n in numbers_str.split(',')]
             actual_numbers = all_numbers[:6]
-            bonus_number = all_numbers[6] if len(all_numbers) > 6 else 0
+            # [F22 수정] get_numbers_by_round의 SQL은 bonus_number 컬럼을 select하지 않아
+            # actual_data에는 보너스가 없다(6개뿐). 과거엔 0으로 폴백해 prediction_results에
+            # 가짜 보너스 0이 저장되고, 2등(5+보너스) 판정이 구조적으로 불가능했다.
+            # DB에는 실제 보너스가 존재하므로 get_numbers_with_bonus()(7번째 원소)로 보강 조회한다.
+            bonus_number = 0
+            try:
+                _with_bonus = {r: t for r, t in self.db_manager.get_numbers_with_bonus()}
+                _t = _with_bonus.get(round_num)
+                if _t and len(_t) > 6:
+                    bonus_number = _t[6]
+                elif len(all_numbers) > 6:
+                    bonus_number = all_numbers[6]
+            except Exception as _e:
+                # 조회 실패 시에만 기존 폴백 유지(가짜 생성 아님, 데이터 부재 시 0)
+                self.logger.debug(f"[F22] 보너스 보강 조회 실패, 폴백 사용: {_e}")
+                bonus_number = all_numbers[6] if len(all_numbers) > 6 else 0
             
             self.logger.info(f"\n{'='*60}")
             self.logger.info(f"[STAT] {round_num}회차 전체 예측 대조 시작")
