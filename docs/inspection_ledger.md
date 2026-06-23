@@ -35,7 +35,7 @@
 | F17 | ML 보조신호 백테스팅 | [PASS] | [PASS] |
 | F18 | 극단성 풀 생성 + 극단패턴 제거 진단 + 5세트 생성 (핵심전략) | [PASS] | [PASS] |
 | F19 | 풀 백테스트 (실제 5게임 과거시점 공정 검증) | [PASS] | [PASS] |
-| F20 | 실시간 학습 (온라인 모델 업데이트) | [PASS] | [PASS] |
+| F20 | 실시간 학습 (온라인 모델 업데이트) | [FIXED] | [FIXED] |
 | F21 | 성능 모니터링 대시보드/종합 성능 보고서 생성 | [PASS] | [PASS] |
 | F22 | 이전 예측 당첨 여부 확인 (결과 대조) | [FIXED] | [FIXED] |
 | F23 | 최종 예측 5세트 생성/저장 (극단성 풀 경로) | [PASS] | [PASS] |
@@ -129,9 +129,11 @@ Pass2 종합: 24/25 [PASS], 1/25 [FIXED](F22). `python main.py --once` 재실행
 - 증거: 로그 1949-1953줄(등수16.7%>무작위14.0%, mean_bm1.953, n150). production 클래스 그대로 호출(재구현 아님), 누설0(holdout/build_pool/predict 모두 train_until 이하). 반환 dict 키가 F19로그/F23검증라인 소비키와 정합.
 - low 결함(무파손): 완전무작위 기준선 표본분산 역전(결론 불변), ML보조신호 미주입(의도).
 
-### F20 실시간 학습 — Pass1 [PASS] (med 결함, user_confirm 필요, 무파손)
+### F20 실시간 학습 — Pass1 [FIXED]
 - 증거: 로그 1959-2003줄. 1229 실DB로 lstm 업데이트(0->0.1667), ensemble 추세하락 스킵, mc 주기미일치 스킵 — 거짓성공 없이 정직 분기. NO FAKE 준수.
-- med 결함(breaks_consumer=false): LSTM in-memory fit 후 save_model() 미호출 -> 온라인 갱신분 다음 사이클 소실('보조 효과 무영속'). 수정은 ML 캐시/영속 정책 변경 -> [사용자확인필요], 강제수정 대상 아님. low: _evaluate 0.15 placeholder 점수.
+- 결함(med, 사용자 승인 후 수정): LSTM in-memory fit 후 save_model() 미호출 -> 온라인 갱신분 다음 사이클 소실('보조 효과 무영속').
+- 수정(외과적): src/ml/realtime_learning_system.py `_update_lstm` fit 성공 블록에서 `lstm_model.save_model()` 호출 추가(동일 .h5=F11 로드 경로, 사이드카 trained_round 불변=새 회차 전체재학습이 정상 대체). 반환 dict에 'persisted' 플래그 추가(정직 보고).
+- 검증: 직접 `_update_lstm` 호출 -> persisted=True + .h5 mtime 갱신. 전체 테스트 829 passed, --once EXIT 0(이 실행은 추세하락으로 정직 스킵). low 잔여: _evaluate 0.15 placeholder 점수(후공정 무파손).
 
 ### F21 성능 모니터링/종합 보고서 — Pass1 [PASS]
 - 증거: 로그 2006-2032줄([Step1-4/4]->저장). performance_report json 유효 UTF-8, model_performance 실측 채워짐(overall_avg_matches=0.895), 차트3 생성. NO FAKE.
@@ -141,7 +143,7 @@ Pass2 종합: 24/25 [PASS], 1/25 [FIXED](F22). `python main.py --once` 재실행
 - 결함(적대검증 confirmed_real=true, breaks_consumer=true): get_numbers_by_round(specialized_databases.py:129-139)가 bonus_number 컬럼 미조회 -> result_checker.py:53-56이 보너스 0으로 폴백. 동일 DB에 실제 보너스(1229=16) 존재함에도 prediction_results 75행 전부 가짜 보너스0 영속(NO FAKE 위반) + 2등(5+보너스) 판정 구조적 불가(5개일치시 3등 오분류). 이번 사이클 최대일치 2개라 등수결과 미발현이나 데이터 오염+잠재 후공정 파손.
 - 수정(외과적): result_checker.py:53-72 actual 파싱부에서 db_manager.get_numbers_with_bonus()(7번째 원소)로 보너스 보강 조회, 실패시에만 기존 폴백. DB 스키마/get_numbers_by_round 시그니처 불변(3튜플 의존 소비자 보호).
 - 검증: `pytest -k "result or rank or bonus"` 27 passed.
-- 잔여(사용자확인필요): 이미 오염 저장된 1229회 75행 bonus_number=0은 _save_result_to_db 중복스킵이라 자동 갱신 안 됨. 과거 데이터 일회성 보정은 DB 데이터 수정이라 사용자 확인 후 별도 진행(이번 사이클 등수결과엔 영향 없음).
+- 과거 데이터 보정(사용자 승인 후 완료): _save_result_to_db 중복스킵이라 기존 75행이 자동 갱신 안 되므로, in-place UPDATE로 보정(bonus_number 0->16 전 75행, bonus_match 0->1 15행=16 포함 예측, rank 불변=5개일치 없음). 검증: 보정후 bonus 분포 {16:75}, bonus_match {0:60, 1:15}, rank {0:75}.
 
 ### F23 최종 예측 5세트 생성/저장 — Pass1 [PASS]
 - 증거: 로그 2080-2142줄 + predictions.db(round1230 5행) + week_1230.json 완전 일치. K=1.5M 극단성 풀 5세트(커버30/45 겹침0), predict 반환 {numbers,confidence(전형성0.945x),source} -> save_predictions 키정합. confidence=전형성 지표(NO FAKE), '당첨확률 아님' 로그/대시보드 양쪽 정직 라벨.
@@ -164,10 +166,16 @@ Pass2 종합: 24/25 [PASS], 1/25 [FIXED](F22). `python main.py --once` 재실행
 - 조건부 미트리거(정상, 회귀 아님; 해당 경로는 Pass1 스냅샷에서 이미 실행·검증): F08(새 회차 없음=1229 기존), F21(plain --once에 monitoring/auto_improve 플래그 없음), F24(--once는 대시보드 자동 OFF; Pass1에서 Flask test_client 14엔드포인트 200 검증).
 - F22 회귀검증(결정론): get_numbers_by_round(1229)=6개(보너스 없음), get_numbers_with_bonus[1229][6]=16. 수정된 check_all_predictions_for_round(1229) 실행 -> bonus_number=16 사용(이전 0 폴백 해소). status=checked.
 
-## 잔여 미해결(FAIL 없음) / 사용자확인필요 항목
-- F22 데이터 보정(과거 1229회 prediction_results 75행 bonus_number=0): 일회성 재집계는 DB 데이터 수정이라 사용자 확인 필요. 이번 사이클 등수결과 무영향. (전방 수정은 완료)
-- F20 LSTM 온라인 갱신 영속화(save_model 미호출): ML 캐시/영속 정책 변경이라 사용자 확인 필요. breaks_consumer=false라 강제수정 아님.
+## 잔여 미해결(FAIL 없음) — 모두 사용자 승인 후 처리 완료
+- [완료] F22 데이터 보정: 사용자 승인. 과거 1229회 prediction_results 75행을 in-place 보정
+  (bonus_number 0->16 전 75행, bonus_match 0->1 15행=16 포함 예측, rank 불변=5개일치 없음). 검증: bonus 분포 {16:75}.
+- [완료] F20 LSTM 영속화: 사용자 승인. realtime_learning_system.py `_update_lstm`에서 fit 실제 수행 시
+  save_model() 호출 추가(동일 .h5=F11 로드 경로, 사이드카 불변). 검증: 직접 호출 persisted=True + .h5 mtime 갱신.
+- 남은 사용자확인 항목: 없음.
 
 ## 수정 커밋 로그
 - 38e083e inspect: 로깅/시작 초기화 Pass1 PASS (원장 생성)
-- (예정) inspect: 결과대조 보너스 보강 Pass1 FIXED
+- 87274e3 inspect: 결과대조 보너스 보강 Pass1 FIXED (F22 전방 수정)
+- 8db8fb0 inspect: Pass2 전 기능 재검증 완료(24 PASS + F22 FIXED)
+- 14b7eff inspect: 원장 범례/제목 태그표기 정리
+- (이번) inspect: F22 과거데이터 보정 + F20 LSTM 영속화 (사용자 승인 후속). F22 DB 보정은 데이터 수정이라 코드 커밋 없음(검증 로그는 원장 기록).

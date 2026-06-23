@@ -370,6 +370,7 @@ class RealtimeLearningSystem:
         # 부분 데이터로 재학습 (기존 가중치 유지)
         X_train, y_train = lstm_model.prepare_training_data(winning_numbers)
         
+        persisted = False
         if len(X_train) > 0:
             history = lstm_model.model.fit(
                 X_train, y_train,
@@ -377,7 +378,19 @@ class RealtimeLearningSystem:
                 batch_size=16,
                 verbose=0
             )
-        
+            # [F20 수정] 온라인 갱신 가중치 영속화: 과거엔 in-memory fit만 하고 save_model()을
+            # 호출하지 않아, 다음 사이클에서 캐시 .h5(또는 전체 재학습)로 덮여 온라인 갱신분이
+            # 소실됐다('다음 사이클 예측 보조' 표방과 불일치). fit이 실제 수행된 경우에만
+            # save_model()로 동일 .h5(models/lstm_lotto_predictor.h5, F11 로드 경로)에 저장한다.
+            # 사이드카(trained_round)는 갱신하지 않는다: 온라인 갱신도 동일 최신회차 데이터까지만
+            # 반영하므로 회차 의미가 정확하고, 새 회차 도래 시 main.py 가드의 전체 재학습이 정상 대체한다.
+            try:
+                if hasattr(lstm_model, 'save_model'):
+                    lstm_model.save_model()
+                    persisted = True
+            except Exception as _e:
+                logging.warning(f"LSTM 온라인 갱신 영속화 실패(다음 사이클 갱신분 소실 가능): {_e}")
+
         # 새로운 성능 평가
         new_performance = self._evaluate_model_performance(lstm_model, recent_data)
         
@@ -392,7 +405,8 @@ class RealtimeLearningSystem:
             'old_performance': old_performance,
             'new_performance': new_performance,
             'improvement': improvement,
-            'learning_rate': current_lr
+            'learning_rate': current_lr,
+            'persisted': persisted  # [F20] 온라인 갱신 가중치가 .h5에 영속화됐는지(정직 보고)
         }
     
     def _update_ensemble(self, ensemble_model: EnsemblePredictor) -> Dict[str, Any]:
