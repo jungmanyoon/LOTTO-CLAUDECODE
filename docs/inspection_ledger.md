@@ -16,34 +16,37 @@
 ## 진행 상태 요약표
 | ID | 기능명 | Pass1 | Pass2 |
 |----|--------|-------|-------|
-| F01 | 로깅/시작 초기화 (setup_logging, env, 로그파일 초기화, 메모리모니터 시작) | [PASS] | [PENDING] |
-| F02 | 시스템 상태 자동 점검 (SystemHealthChecker + 보너스 확인/수집) | [PASS] | [PENDING] |
-| F03 | 포괄적 건강 상태 검사 (ErrorPreventionSystem) + 캐시 점검 | [PASS] | [PENDING] |
-| F04 | DB/매니저 초기화 + DB 호환성/마이그레이션 검사 | [PASS] | [PENDING] |
-| F05 | 시작 동기화 (SystemStateManager) + 실시간 모니터링 활성 | [PASS] | [PENDING] |
-| F06 | UnifiedOptimizer + ContinuousImprovementEngine 초기화 | [PASS] | [PENDING] |
-| F07 | 데이터 수집 (DataCollector) | [PASS] | [PENDING] |
-| F08 | 수집후 동기화 + 새회차 자동 업데이트 | [PASS] | [PENDING] |
-| F09 | 패턴 분석 시스템 (16패턴 분석 + 캐시 저장) | [PASS] | [PENDING] |
-| F10 | 레거시 확률필터/16필터 적용 (7.7M 진단 풀, 참고용) | [PASS] | [PENDING] |
-| F11 | LSTM 시계열 예측 (캐시/재학습) | [PASS] | [PENDING] |
-| F12 | Ensemble 예측 (RF+XGBoost+NN, 캐시/재학습) | [PASS] | [PENDING] |
-| F13 | Monte Carlo 시뮬레이션 | [PASS] | [PENDING] |
-| F14 | Bayesian 추론 | [PASS] | [PENDING] |
-| F15 | Fractal 패턴 분석 (+시각화/json 저장) | [PASS] | [PENDING] |
-| F16 | Combined ML 예측 통합 | [PASS] | [PENDING] |
-| F17 | ML 보조신호 백테스팅 | [PASS] | [PENDING] |
-| F18 | 극단성 풀 생성 + 극단패턴 제거 진단 + 5세트 생성 (핵심전략) | [PASS] | [PENDING] |
-| F19 | 풀 백테스트 (실제 5게임 과거시점 공정 검증) | [PASS] | [PENDING] |
-| F20 | 실시간 학습 (온라인 모델 업데이트) | [PASS] | [PENDING] |
-| F21 | 성능 모니터링 대시보드/종합 성능 보고서 생성 | [PASS] | [PENDING] |
-| F22 | 이전 예측 당첨 여부 확인 (결과 대조) | [FIXED] | [PENDING] |
-| F23 | 최종 예측 5세트 생성/저장 (극단성 풀 경로) | [PASS] | [PENDING] |
-| F24 | 웹 대시보드 (포트 5001) | [PASS] | [PENDING] |
-| F25 | 종료/상주 처리 + 백그라운드 최적화 (UnifiedOptimizer PoolOptimizer TPE) | [PASS] | [PENDING] |
+| F01 | 로깅/시작 초기화 (setup_logging, env, 로그파일 초기화, 메모리모니터 시작) | [PASS] | [PASS] |
+| F02 | 시스템 상태 자동 점검 (SystemHealthChecker + 보너스 확인/수집) | [PASS] | [PASS] |
+| F03 | 포괄적 건강 상태 검사 (ErrorPreventionSystem) + 캐시 점검 | [PASS] | [PASS] |
+| F04 | DB/매니저 초기화 + DB 호환성/마이그레이션 검사 | [PASS] | [PASS] |
+| F05 | 시작 동기화 (SystemStateManager) + 실시간 모니터링 활성 | [PASS] | [PASS] |
+| F06 | UnifiedOptimizer + ContinuousImprovementEngine 초기화 | [PASS] | [PASS] |
+| F07 | 데이터 수집 (DataCollector) | [PASS] | [PASS] |
+| F08 | 수집후 동기화 + 새회차 자동 업데이트 | [PASS] | [PASS] |
+| F09 | 패턴 분석 시스템 (16패턴 분석 + 캐시 저장) | [PASS] | [PASS] |
+| F10 | 레거시 확률필터/16필터 적용 (7.7M 진단 풀, 참고용) | [PASS] | [PASS] |
+| F11 | LSTM 시계열 예측 (캐시/재학습) | [PASS] | [PASS] |
+| F12 | Ensemble 예측 (RF+XGBoost+NN, 캐시/재학습) | [PASS] | [PASS] |
+| F13 | Monte Carlo 시뮬레이션 | [PASS] | [PASS] |
+| F14 | Bayesian 추론 | [PASS] | [PASS] |
+| F15 | Fractal 패턴 분석 (+시각화/json 저장) | [PASS] | [PASS] |
+| F16 | Combined ML 예측 통합 | [PASS] | [PASS] |
+| F17 | ML 보조신호 백테스팅 | [PASS] | [PASS] |
+| F18 | 극단성 풀 생성 + 극단패턴 제거 진단 + 5세트 생성 (핵심전략) | [PASS] | [PASS] |
+| F19 | 풀 백테스트 (실제 5게임 과거시점 공정 검증) | [PASS] | [PASS] |
+| F20 | 실시간 학습 (온라인 모델 업데이트) | [PASS] | [PASS] |
+| F21 | 성능 모니터링 대시보드/종합 성능 보고서 생성 | [PASS] | [PASS] |
+| F22 | 이전 예측 당첨 여부 확인 (결과 대조) | [FIXED] | [FIXED] |
+| F23 | 최종 예측 5세트 생성/저장 (극단성 풀 경로) | [PASS] | [PASS] |
+| F24 | 웹 대시보드 (포트 5001) | [PASS] | [PASS] |
+| F25 | 종료/상주 처리 + 백그라운드 최적화 (UnifiedOptimizer PoolOptimizer TPE) | [PASS] | [PASS] |
 
 Pass1 종합: 24/25 [PASS], 1/25 [FIXED](F22). 후공정 파손 확정 결함은 F22 1건뿐(적대검증 confirmed).
 나머지 결함은 전부 low severity(거짓 라벨/죽은 코드/고아 출력 등) breaks_consumer=false라 동작 무파손.
+
+Pass2 종합: 24/25 [PASS], 1/25 [FIXED](F22). `python main.py --once` 재실행 EXIT_CODE=0, 로그 무결성 클린
+(ERROR/거짓/가짜/더미/Traceback 0건). F22 회귀검증 통과(보너스 16 사용). 전체 테스트 829 passed, 0 실패.
 
 ---
 
@@ -153,6 +156,13 @@ Pass1 종합: 24/25 [PASS], 1/25 [FIXED](F22). 후공정 파손 확정 결함은
 - low 결함(무파손): PoolOpt 지표 정체(알려진 in-sample AUC 한계), --once exit0 로그증거는 Pass2에서 라이브 확인 예정.
 
 ---
+
+## Pass2 재검증 (신선 `python main.py --once` 사이클)
+- 재실행: 2026-06-23 20:40~20:45, EXIT_CODE=0 정상종료(상주 배너 없이 graceful shutdown -> F25 --once 경로 라이브 확인). 메모리 피크 3228MB < 4000 임계.
+- 로그 무결성: `logs/_pass2_snapshot.log`(1069줄) 스캔 결과 ERROR/거짓/가짜/더미/dummy/fake/sample/Traceback 0건. 최종 5세트 전형성 라벨 '당첨확률 아님' 정직 유지.
+- 라이브 실행·정상(증거 라인): F01~F07(8-103), F09 패턴(103), F10 레거시 7.7M 정직(466/684/702), F11 LSTM(711), F12 Ensemble(717), F13 MC(725), F14 Bayesian(739), F15 Fractal(750), F16 Combined(770-785), F17 ML백테(793), F18 극단성풀 진단6회(977 등, 핵심전략 정상), F19 풀백테(904), F20 실시간학습(914-926), F22 결과확인(966), F23 최종예측 5세트 극단성풀 경로(972-1034), F25 종료 exit0(1060+).
+- 조건부 미트리거(정상, 회귀 아님; 해당 경로는 Pass1 스냅샷에서 이미 실행·검증): F08(새 회차 없음=1229 기존), F21(plain --once에 monitoring/auto_improve 플래그 없음), F24(--once는 대시보드 자동 OFF; Pass1에서 Flask test_client 14엔드포인트 200 검증).
+- F22 회귀검증(결정론): get_numbers_by_round(1229)=6개(보너스 없음), get_numbers_with_bonus[1229][6]=16. 수정된 check_all_predictions_for_round(1229) 실행 -> bonus_number=16 사용(이전 0 폴백 해소). status=checked.
 
 ## 잔여 [FAIL] / 사용자확인필요 항목
 - F22 데이터 보정(과거 1229회 prediction_results 75행 bonus_number=0): 일회성 재집계는 DB 데이터 수정이라 사용자 확인 필요. 이번 사이클 등수결과 무영향. (전방 수정은 완료)
