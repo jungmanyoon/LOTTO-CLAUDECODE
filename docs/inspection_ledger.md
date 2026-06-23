@@ -10,7 +10,7 @@
 - 출처 로그: `logs/lotto_app.log` -> 안정 스냅샷 `logs/_inspection_snapshot.log` (2675줄, 2026-06-22 20:02~20:36 회차 1229 처리, 상주 모드 1사이클).
   - 단계 구성은 `--once`와 동일하며 마지막만 상주(상주 대신 --once는 exit 0).
 - 추출 원칙: 로그에 실제로 나타난 단계만 등록(추측 금지).
-- 상태 태그(ASCII): [PENDING] [PASS] [FAIL] [FIXED]
+- 상태 태그(ASCII): PENDING / PASS / FAIL / FIXED (범례; 실제 기능 상태는 아래 요약표 참조)
 - Pass1 방법: 24개 기능 병렬 워크플로우(코드+로그 결정론 증거 판정) + 후공정 파손 결함은 적대검증으로 확정.
 
 ## 진행 상태 요약표
@@ -164,7 +164,7 @@ Pass2 종합: 24/25 [PASS], 1/25 [FIXED](F22). `python main.py --once` 재실행
 - 조건부 미트리거(정상, 회귀 아님; 해당 경로는 Pass1 스냅샷에서 이미 실행·검증): F08(새 회차 없음=1229 기존), F21(plain --once에 monitoring/auto_improve 플래그 없음), F24(--once는 대시보드 자동 OFF; Pass1에서 Flask test_client 14엔드포인트 200 검증).
 - F22 회귀검증(결정론): get_numbers_by_round(1229)=6개(보너스 없음), get_numbers_with_bonus[1229][6]=16. 수정된 check_all_predictions_for_round(1229) 실행 -> bonus_number=16 사용(이전 0 폴백 해소). status=checked.
 
-## 잔여 [FAIL] / 사용자확인필요 항목
+## 잔여 미해결(FAIL 없음) / 사용자확인필요 항목
 - F22 데이터 보정(과거 1229회 prediction_results 75행 bonus_number=0): 일회성 재집계는 DB 데이터 수정이라 사용자 확인 필요. 이번 사이클 등수결과 무영향. (전방 수정은 완료)
 - F20 LSTM 온라인 갱신 영속화(save_model 미호출): ML 캐시/영속 정책 변경이라 사용자 확인 필요. breaks_consumer=false라 강제수정 아님.
 
