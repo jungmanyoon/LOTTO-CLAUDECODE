@@ -2068,7 +2068,8 @@ def parse_args():
     # 대시보드 옵션 추가 (기본값: OFF, 성능 최적화를 위해 opt-in 방식으로 변경)
     parser.add_argument('--dashboard', action='store_true', help='웹 대시보드 활성화 (포트 5001)')
     parser.add_argument('--no-dashboard', action='store_true', help='[DEPRECATED] Use --dashboard to enable. Dashboard is now OFF by default.')
-    parser.add_argument('--dashboard-port', type=int, default=5000, help='웹 대시보드 포트 (기본: 5000, 실제로는 5001 고정)')
+    # [F2 정리] --dashboard-port 옵션 제거: 포트는 start_web_dashboard에서 5001로 고정되어 있어
+    #  이 값이 어디서도 소비되지 않는 죽은 옵션이었다(소비처 0건 확인). 혼란 방지를 위해 삭제.
     
     args = parser.parse_args()
     
@@ -3412,9 +3413,10 @@ def main():
                             log_likelihood = pred.get('log_likelihood', -np.inf)
                             logging.info(f"    {i}. {pred['numbers']} (점수: {relative_score:.1f}, 로그우도: {log_likelihood:.2f})")
                         
-                        # 신념 시각화 저장
-                        bayesian_filter.visualize_beliefs()
-                        bayesian_filter.save_beliefs()
+                        # 신념 시각화 저장 [F5 정리] 루트 대신 results/ 하위로 저장(루트 청결)
+                        os.makedirs('results', exist_ok=True)
+                        bayesian_filter.visualize_beliefs(save_path='results/bayesian_beliefs.png')
+                        bayesian_filter.save_beliefs(filepath='results/bayesian_beliefs.json')
                     
                     except Exception as e:
                         logging.error(f"  - 베이지안 추론 실패: {str(e)}")
@@ -3453,9 +3455,10 @@ def main():
                         for i, pred in enumerate(fractal_predictions[:3], 1):
                             logging.info(f"    {i}. {pred['numbers']} (신뢰도: {pred['confidence']:.2%})")
                         
-                        # 분석 결과 저장
-                        fractal_analyzer.visualize_fractal_analysis()
-                        fractal_analyzer.save_analysis()
+                        # 분석 결과 저장 [F5 정리] 루트 대신 results/ 하위로 저장(루트 청결)
+                        os.makedirs('results', exist_ok=True)
+                        fractal_analyzer.visualize_fractal_analysis(save_path='results/fractal_analysis.png')
+                        fractal_analyzer.save_analysis(filepath='results/fractal_analysis.json')
                     
                     except Exception as e:
                         logging.error(f"  - 프랙탈 분석 실패: {str(e)}")

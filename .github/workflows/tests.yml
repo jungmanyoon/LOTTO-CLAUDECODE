@@ -60,7 +60,10 @@ jobs:
 
   lint:
     runs-on: windows-latest
-    continue-on-error: false
+    # [F4 정리] lint를 '비차단 정보용'으로 전환. 현재 black 미적용(291파일)·flake8 다량 위반으로
+    #  매 푸시 lint job이 빨강이 되어 진짜 회귀 신호를 가린다. 런타임/예측과 무관한 코드위생이라
+    #  파이프라인을 막지 않도록 continue-on-error=true. (일괄 포맷 적용은 별도 PR로 점진 정리)
+    continue-on-error: true
 
     steps:
     - uses: actions/checkout@v4

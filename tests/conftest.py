@@ -43,7 +43,10 @@ def db_manager(test_db_path):
     from src.core.db_manager import DatabaseManager
 
     # 테스트용 DB 경로로 DatabaseManager 생성
-    db = DatabaseManager(db_path=str(test_db_path))
+    # [F1 수정] 생성자 시그니처는 base_dir(디렉터리)다. 기존 db_path=(파일)는 잘못된 키워드라
+    # 이 fixture가 소비되면 TypeError가 났다(현재 소비처 0이라 잠복). base_dir에 임시 디렉터리를
+    # 전달하도록 교정(autouse reset_singletons가 매 테스트 DatabaseManager._instance를 리셋하므로 반영됨).
+    db = DatabaseManager(base_dir=str(test_db_path.parent))
 
     yield db
 
