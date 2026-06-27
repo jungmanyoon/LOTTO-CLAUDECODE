@@ -362,10 +362,7 @@ class ExtremenessScorer:
         idx = np.argpartition(scores, target_size - 1)[:target_size]
         return idx
 
-    def coverage(self, holdout_winning, cutoff: float) -> float:
-        """hold-out 당첨번호 중 점수<=cutoff(풀 포함) 비율."""
-        w = self._to_array(holdout_winning)
-        if len(w) == 0:
-            return 1.0
-        s = self.score(w)
-        return float((s <= cutoff).mean())
+    # [코드리뷰 2026-06-27 P3] coverage(holdout, cutoff) 제거: 레포 전체 호출처 0건의 죽은 public
+    # 메서드였고, (s<=cutoff).mean() 산식이 실제 풀(select_pool=정확히 K개)과 동점(tie) 구간에서
+    # 불일치(커버리지 과대평가)했다. 운영 커버리지/풀비율은 extremeness_threshold_selector·
+    # pool_optimizer가 동점 견고한 별도 재계산((scores<=cutoff).mean())으로 이미 처리한다.

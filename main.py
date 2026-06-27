@@ -3282,7 +3282,10 @@ def main():
                         if not ensemble_predictor.is_trained:
                             logging.info("  - 앙상블 모델 학습 중...")
                             try:
-                                evaluation = ensemble_predictor.train(winning_numbers, test_size=0.2)
+                                # [코드리뷰 2026-06-27 P3] 학습 회차 도장을 train 내부 저장 전에 찍어
+                                # --predict-only(filter_manager=None) 경로의 trained_round=None 오염 차단.
+                                evaluation = ensemble_predictor.train(winning_numbers, test_size=0.2,
+                                                                      trained_round=latest_round)
                                 if evaluation:
                                     logging.info(f"  - 학습 완료: 정확도 {evaluation.get('ensemble', {}).get('accuracy', 0):.4f}")
                             except Exception as ensemble_train_e:

@@ -584,9 +584,14 @@ class AutoScheduler:
                     conn.execute("ANALYZE")
     
     def _update_filter_criteria(self):
-        """필터 기준 업데이트"""
-        # IntegratedFilterManager의 update_filters_weekly 호출
-        logging.info("[AutoScheduler] 필터 기준 업데이트 (주간)")
+        """주간 필터 기준 갱신.
+
+        [코드리뷰 2026-06-27] 실제 criteria/풀 갱신은 새 회차 감지 경로
+        (_trigger_filter_update -> IntegratedFilterManager.update_filters_weekly)가 담당한다.
+        과거 이 메서드는 미배선 stub인데 '필터 기준 업데이트' 로그만 찍어 일한 척했다(정직성 결함).
+        또한 레거시 16필터는 최종 예측(극단성 풀)에 미사용이라 주간 중복 갱신은 불필요하므로,
+        실제 갱신은 새 회차 경로에 위임하고 여기서는 그 사실만 정직하게 기록한다(no-op)."""
+        logging.info("[AutoScheduler] 주간 필터 기준 갱신은 새 회차 감지 경로가 담당 (여기선 no-op)")
     
     def _retrain_models(self):
         """ML 모델 재학습"""
@@ -598,14 +603,15 @@ class AutoScheduler:
             os.makedirs(model_cache)
     
     def _notify_prediction_complete(self):
-        """예측 완료 알림"""
-        logging.info("[AutoScheduler] 예측 완료 알림 전송")
-        # 이메일, 텔레그램, 웹훅 등
-    
+        """예측 완료 통지.
+        [코드리뷰 2026-06-27] 외부 알림 채널(이메일/텔레그램/웹훅)은 미구현이라 실제 '전송'은
+        일어나지 않는다. '전송' 표현이 외부 발신을 오인시키므로 내부 로깅만임을 정직 표기."""
+        logging.info("[AutoScheduler] 예측 완료 (알림 채널 미구성: 내부 로깅만)")
+
     def _send_alert(self, message: str):
-        """경고 알림 전송"""
-        logging.critical(f"[AutoScheduler] [!] {message}")
-        # 관리자 알림
+        """경고 통지.
+        [코드리뷰 2026-06-27] 외부 알림 채널 미구현, 내부 로깅만 수행(정직 표기)."""
+        logging.critical(f"[AutoScheduler] [!] {message} (알림 채널 미구성: 내부 로깅만)")
     
     def _trigger_update_chain(self, round_num: int):
         """

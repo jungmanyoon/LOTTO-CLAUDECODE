@@ -106,29 +106,10 @@ class FrequencyAnalyzer:
         weights = (1.0 - spread) + 2.0 * spread * s  # mean ~1.0, range [1-spread,1+spread]
         return weights.astype(np.float32)
 
-    def get_pair_frequencies(self, until_round: Optional[int] = None,
-                             normalize: bool = True) -> np.ndarray:
-        """번호 쌍(i,j) 동시출현 빈도 행렬 (45,45) 반환 (0-based 인덱스, 대칭).
-
-        triple-cover 선택기(DiversitySelector.select_triple_cover)의 triple 가중치
-        (쌍빈도 합)에 사용. normalize=True면 양수 쌍 평균 1.0 근처로 정규화하여 단일빈도
-        가중과 스케일을 맞춘다. 역사적으로 자주 함께 나온 쌍에 높은 값.
-        """
-        rows = self._winning_arrays(until_round)
-        M = np.zeros((45, 45), dtype=np.float64)
-        for _r, nums in rows:
-            idx = [n - 1 for n in nums]
-            for a in range(len(idx)):
-                for b in range(a + 1, len(idx)):
-                    i, j = idx[a], idx[b]
-                    M[i, j] += 1
-                    M[j, i] += 1
-        if normalize:
-            pos = M[M > 0]
-            mean = pos.mean() if pos.size else 1.0
-            if mean > 0:
-                M = M / mean
-        return M.astype(np.float32)
+    # [코드리뷰 2026-06-27 P3] get_pair_frequencies() 제거: 레포 전체 호출처 0건의 고아 메서드였고,
+    # docstring이 클래스에 정의조차 없는 select_triple_cover를 '사용처'로 가리켜 활성코드로 오인시켰다
+    # (2026-06-05 triple-cover 실험 폐기 시 본체만 제거되고 helper+docstring만 잔존). 최종 5세트
+    # 경로(compute_weights -> select)는 쌍빈도를 사용하지 않는다.
 
 
 class DiversitySelector:

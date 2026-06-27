@@ -260,6 +260,8 @@ class PoolOptimizer:
                 'penalty_dims': self.penalty_dims,
                 'best_params': result['best_params'],
                 'metrics': {k: result[k] for k in ('auc_separation', 'lift_mean', 'lift_lcb', 'best_value')},
-            }, f, ensure_ascii=False, indent=2)
+                # [코드리뷰 2026-06-27 P3] 비ASCII 차단 정책 통일(extremeness_threshold_selector
+                # save_policy/save_curve와 대칭). 현 내용은 전부 ASCII라 동작 불변, 정책 일관성만 확보.
+            }, f, ensure_ascii=True, indent=2)
         os.replace(tmp, path)
         self.logger.info(f"[PoolOpt] 가중치 저장: {path}")

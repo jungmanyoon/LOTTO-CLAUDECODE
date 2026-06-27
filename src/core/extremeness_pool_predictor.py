@@ -191,6 +191,8 @@ class ExtremenessPoolPredictor:
                     try:
                         diag = json.loads(str(data['diagnostics']))
                         _logfn(diag)
+                        # [코드리뷰 2026-06-27 P3] hybrid 화이트박스 설명도 캐시 히트에서 재생(표시 일관성).
+                        self._replay_hybrid_tail_explanations(diag)
                     except Exception as de:
                         self.logger.warning(f"[극단풀] 진단 요약 파싱 실패({de}) - 기본 표시")
                         _logfn(None)
@@ -238,7 +240,10 @@ class ExtremenessPoolPredictor:
                 # 화이트박스 설명(표시 전용, 예측 불변): 선택은 마할라(정확도)로 하되, 제거된
                 # 극단 예시를 비모수 꼬리확률(tail)로 '왜 버렸는지' 사람이 읽게 설명한다.
                 try:
-                    self._log_hybrid_tail_explanations(win_train, combos, scores, pool_idx)
+                    _explain = self._log_hybrid_tail_explanations(win_train, combos, scores, pool_idx)
+                    # [코드리뷰 2026-06-27 P3] 설명을 diag에 보존 -> 캐시 히트 재실행에서도 재생(표시 일관성).
+                    if _explain:
+                        diag['hybrid_tail_explain'] = _explain
                 except Exception as _he:
                     self.logger.debug(f"[극단풀-하이브리드] tail 설명 생략({_he})")
 
@@ -368,13 +373,17 @@ class ExtremenessPoolPredictor:
         self.logger.info(
             f"  - 점수방식=tail_group_max(비모수 꼬리확률 화이트박스), 학습 ~{diag.get('train_until')}회")
 
-    def _log_hybrid_tail_explanations(self, win_train, combos, scores, pool_idx) -> None:
+    def _log_hybrid_tail_explanations(self, win_train, combos, scores, pool_idx) -> List[str]:
         """하이브리드 모드: 풀 '선택'은 마할라노비스(정확도)로 하되, '왜 이 극단을 버렸는지'를
         비모수 꼬리확률(tail)로 사람이 읽게 설명한다(표시 전용, 예측 불변).
 
         마할라가 제거한 가장 극단적인 조합 Top-5에 대해 tail.explain()으로 '어느 특징이
         역사 하위 몇% 꼬리라 극단인지'를 출력한다. 마할라(거리 숫자 1개=blackbox)의 약점인
         '설명 불가'를 보완하는 화이트박스 계층이며, tail은 선택에 전혀 관여하지 않는다.
+
+        [코드리뷰 2026-06-27 P3] 로그 라인을 리스트로 모아 반환한다 -> 호출부가 diag에 직렬화해
+        캐시 히트(0.2s 재실행)에서도 동일 설명을 재생(_replay_hybrid_tail_explanations). 과거엔
+        재계산 경로에서만 보이고 캐시 히트하는 정상 운영 다수 사이클에선 설명이 통째로 누락됐다.
         """
         from src.core.tail_probability_scorer import TailProbabilityScorer
         total_n = len(scores)
@@ -383,7 +392,7 @@ class ExtremenessPoolPredictor:
         removed_mask = ~keep_mask
         removed_n = int(removed_mask.sum())
         if removed_n == 0:
-            return
+            return []
         tail = TailProbabilityScorer(self.db, mode='group_max')
         tail.fit(win_train)
         # 마할라 점수가 가장 큰(=가장 극단) 제거 조합 Top-5 (argpartition - 전체정렬 금지)
@@ -392,8 +401,7 @@ class ExtremenessPoolPredictor:
         topn = min(5, removed_n)
         part = np.argpartition(rem_sc, removed_n - topn)[removed_n - topn:]
         part = part[np.argsort(rem_sc[part])[::-1]]
-        self.logger.info(
-            "[극단풀-하이브리드] 선택=마할라노비스(정확도), 제거사유는 아래 tail 꼬리확률로 설명(표시전용):")
+        lines = ["[극단풀-하이브리드] 선택=마할라노비스(정확도), 제거사유는 아래 tail 꼬리확률로 설명(표시전용):"]
         for p in part:
             gi = int(rem_idx[p])
             nums = [int(x) for x in combos[gi]]
@@ -403,7 +411,21 @@ class ExtremenessPoolPredictor:
                     f"{r['feature']}(역사하위 {r['tail_pct']}% {r['tail_side']})" for r in ex)
             except Exception:
                 reasons = '(설명 계산 실패)'
-            self.logger.info(f"  - 제거 {nums}: {reasons}")
+            lines.append(f"  - 제거 {nums}: {reasons}")
+        for ln in lines:
+            self.logger.info(ln)
+        return lines
+
+    def _replay_hybrid_tail_explanations(self, diag) -> None:
+        """캐시 히트 시 빌드 때 diag에 보존한 hybrid tail 제거사유 설명을 그대로 출력(표시 전용).
+        [코드리뷰 2026-06-27 P3] 재계산 경로에서만 보이던 화이트박스 설명을 캐시 히트에서도 재생해
+        '하이브리드가 약속한 투명성'이 정상 운영 다수 사이클에서 silent 누락되던 것을 해소한다."""
+        try:
+            lines = (diag or {}).get('hybrid_tail_explain')
+        except AttributeError:
+            lines = None
+        for ln in (lines or []):
+            self.logger.info(ln)
 
     # ------------------------------------------------------------------
     # 극단 제거 진단 (Codex 구조 + Gemini Delta Mean) - 표시 전용, 예측 불변

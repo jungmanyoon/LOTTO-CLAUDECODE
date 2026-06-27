@@ -160,7 +160,8 @@ def evaluate_threshold_curve(db_manager,
     total_rows = len(rows)
 
     # 최근 folds*window 회차를 hold-out 풀로 사용. 데이터가 부족하면 fold 수를 줄인다.
-    need = folds * window
+    # [코드리뷰 2026-06-27 P3] 'need = folds * window'는 이후 분할이 eff_folds 기반으로 재계산되며
+    # 한 번도 참조되지 않는 죽은 변수라 제거함.
     if total_rows < window + 1:
         # 데이터가 너무 적으면 단일 fold(가능한 만큼)로 축소
         usable_window = max(1, min(window, total_rows - 1))
@@ -248,8 +249,10 @@ def evaluate_threshold_curve(db_manager,
 
     return {
         'latest_round': int(latest_round),
-        'folds': int(eff_folds if 'eff_folds' in locals() else folds),
-        'window': int(eff_window if 'eff_window' in locals() else window),
+        # [코드리뷰 2026-06-27 P3] eff_folds/eff_window는 if/else 양 분기에서 항상 대입되므로
+        # 'in locals()' else 가지는 도달 불가능한 죽은 가드였다. 직접 사용으로 단순화.
+        'folds': int(eff_folds),
+        'window': int(eff_window),
         'n_total': int(n_total),
         'grid': [int(k) for k in sorted(candidate_grid)],
         'curve': curve,

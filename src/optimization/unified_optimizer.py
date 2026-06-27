@@ -392,7 +392,10 @@ class UnifiedOptimizer:
                 _predictions = main_mod.generate_final_predictions(_db, _fm, num_sets=5)
 
                 print("\n" + "=" * 60)
-                print(f"[사이클 #{cycle_count} 완료] 추천 번호 5세트")
+                # [코드리뷰 2026-06-27 P3] 이 5세트는 레거시 폴백 경로(generate_final_predictions,
+                # ML-필터 하이브리드) 결과이지 사용자 최종 산출물(ExtremenessPoolPredictor.predict)이
+                # 아니다. 콘솔만 보는 사용자가 최종 추천으로 오인하지 않도록 '참고용/레거시'를 명시.
+                print(f"[사이클 #{cycle_count} 완료] 참고용 예측 5세트 (레거시 경로, 최종 산출물 아님)")
                 print("=" * 60)
                 for i, pred in enumerate(_predictions, 1):
                     nums = ', '.join(f"{n:2d}" for n in pred['numbers'])

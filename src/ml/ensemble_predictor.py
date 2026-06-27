@@ -547,12 +547,15 @@ class EnsemblePredictor:
 
         return np.array(targets)
     
-    def train(self, winning_numbers: List[str], test_size: float = 0.2):
+    def train(self, winning_numbers: List[str], test_size: float = 0.2,
+              trained_round: Optional[int] = None):
         """앙상블 모델 학습
-        
+
         Args:
             winning_numbers: 과거 당첨번호 리스트
             test_size: 테스트 데이터 비율
+            trained_round: 학습 기준 회차 도장. 내부 save_models() '전에' 설정해 None 오염을
+                           원천 차단(LSTM과 대칭). None이면 기존 self.trained_round 보존.
         """
         if not SKLEARN_AVAILABLE:
             logging.error("scikit-learn이 설치되지 않아 학습할 수 없습니다.")
@@ -661,7 +664,14 @@ class EnsemblePredictor:
                     self._nn_is_individual = False
         
         self.is_trained = True
-        
+
+        # [코드리뷰 2026-06-27 P3] 학습 회차 도장을 저장 '전에' 찍는다. train()이 회차 미설정 채
+        # save_models()를 호출하면 trained_round=None이 디스크에 박혀(특히 --predict-only=
+        # filter_manager None 경로) 재시작 시 회차 재사용 가드가 영구 False가 된다(LSTM과 대칭).
+        # None이면 기존값 보존(다른 호출처 무회귀).
+        if trained_round is not None:
+            self.trained_round = trained_round
+
         # 모델 저장
         self.save_models()
         
