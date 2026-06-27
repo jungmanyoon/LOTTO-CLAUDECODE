@@ -47,6 +47,9 @@ class EnsemblePredictor:
         self.scalers = {}
         self.feature_importances = {}
         self.is_trained = False
+        # [코드리뷰 2026-06-27 P3] 학습 회차 도장. 미영속화 시 main.py 회차 무효화 가드가
+        # 항상 None과 비교돼 '재학습 스킵' 최적화가 죽은 코드가 된다(FilteredPool과 대칭화).
+        self.trained_round = None
         self._nn_is_individual = False  # Neural Network 모델 타입 플래그
         
         # 앙상블 가중치
@@ -1138,7 +1141,8 @@ class EnsemblePredictor:
         config = {
             'ensemble_weights': self.ensemble_weights,
             'feature_config': self.feature_config,
-            'is_trained': self.is_trained
+            'is_trained': self.is_trained,
+            'trained_round': getattr(self, 'trained_round', None)  # [코드리뷰 2026-06-27 P3] 회차 도장
         }
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
@@ -1155,7 +1159,8 @@ class EnsemblePredictor:
                 self.ensemble_weights = config.get('ensemble_weights', self.ensemble_weights)
                 self.feature_config = config.get('feature_config', self.feature_config)
                 self.is_trained = config.get('is_trained', False)
-        
+                self.trained_round = config.get('trained_round', None)  # [코드리뷰 2026-06-27 P3] 회차 도장 복원
+
         # 모델 로드
         self._initialize_models()
         

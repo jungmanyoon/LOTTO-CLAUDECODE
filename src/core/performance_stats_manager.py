@@ -35,10 +35,26 @@ class PerformanceStatsManager:
         
         # 테이블 생성
         self._create_tables()
-    
+
+    def _connect(self):
+        """모든 연결에 timeout+WAL+busy_timeout 적용 (다른 DB와 동시성 일관성).
+
+        [코드리뷰 2026-06-27 P3] performance_stats.db만 bare sqlite3.connect로
+        WAL/busy_timeout(기본 5초)을 우회해, 대용량 DB의 cleanup DELETE와 대시보드
+        동시 조회 시 'database is locked'가 가능했다. 다른 모든 DB가 쓰는
+        120초 timeout + WAL로 통일한다.
+        """
+        conn = sqlite3.connect(self.db_path, timeout=120)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=120000")
+        except Exception:
+            pass
+        return conn
+
     def _create_tables(self):
         """성능 통계 테이블 생성"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
 
             # 백테스팅 세션 테이블 (임계값 추적 추가)
@@ -232,7 +248,7 @@ class PerformanceStatsManager:
             self.logger.debug("[저장 생략] 취소되었거나 0건(total_rounds=0) 백테스팅 결과 - DB 저장 거부")
             return -1
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 # 백테스팅 세션 정보 저장
@@ -359,7 +375,7 @@ class PerformanceStatsManager:
     def get_latest_performance(self, limit: int = 10) -> List[Dict[str, Any]]:
         """최근 성능 통계 조회"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
@@ -384,7 +400,7 @@ class PerformanceStatsManager:
     def get_model_performance_summary(self) -> Dict[str, Any]:
         """모델별 성능 요약 통계"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 # 전체 통계
@@ -458,7 +474,7 @@ class PerformanceStatsManager:
     def get_match_distribution_stats(self) -> Dict[str, Any]:
         """일치 개수별 분포 통계"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 # 전체 일치 분포
@@ -521,7 +537,7 @@ class PerformanceStatsManager:
     def cleanup_old_data(self, keep_days: int = 30):
         """오래된 데이터 정리"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 
                 # 30일 이전 데이터 삭제 - 파라미터화 쿼리로 SQL 인젝션 방지
@@ -564,7 +580,7 @@ class PerformanceStatsManager:
     def get_threshold_performance_history(self, limit: int = 20) -> List[Dict[str, Any]]:
         """임계값별 성능 이력 조회"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
 
                 cursor.execute("""
@@ -609,7 +625,7 @@ class PerformanceStatsManager:
     def get_optimal_threshold_stats(self) -> Dict[str, Any]:
         """최적 임계값 통계 분석"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
 
                 # 임계값별 평균 성능

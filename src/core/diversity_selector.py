@@ -292,7 +292,8 @@ class DiversitySelector:
 
         cur_obj = total_objective(selected_idx)
         for _ in range(local_search_iters):
-            improved = False
+            # [코드리뷰 2026-06-27 P3] 기존의 `improved` 플래그 + 루프 끝 `if not improved: continue`는
+            # for 본문 마지막 문장이라 분기 양쪽 결과가 동일한 죽은 코드였다(결과 불변). 제거함.
             trial = rng.choice(cand_idx)
             if trial in selected_idx:
                 continue
@@ -304,11 +305,8 @@ class DiversitySelector:
                 new_obj = total_objective(selected_idx)
                 if new_obj > cur_obj + 1e-9:
                     cur_obj = new_obj
-                    improved = True
                     break
                 selected_idx[pos] = old
-            if not improved:
-                continue
 
         return [tuple(sorted(combos[i])) for i in selected_idx]
 

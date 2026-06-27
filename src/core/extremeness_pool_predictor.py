@@ -15,6 +15,7 @@
 ML은 "당첨 예측"이 아니라 "풀 내 번호 다양성 가중치"로만 사용(CLAUDE.md 핵심전략 정합).
 """
 import os
+import glob
 import json
 import logging
 from typing import Dict, List, Optional, Tuple
@@ -254,6 +255,20 @@ class ExtremenessPoolPredictor:
                                     quality=self._pool_quality,
                                     diagnostics=np.array(diag_str))
             os.replace(tmp_cache, cache_path)
+            # [코드리뷰 2026-06-27 P2] 같은 (선택방식, 학습회차, K)의 옛 wver npz 정리.
+            # 캐시키가 결정적이라 옛 wver는 절대 재로드되지 않지만 디스크에 영구 누적되므로
+            # (실측 다수 누적), 새 캐시 저장 직후 동일 prefix의 구버전 파일을 제거한다.
+            try:
+                _prefix = f"extremeness_pool_{sel_method}_{train_until}_{self.target_K}_w"
+                _cdir = os.path.dirname(cache_path)
+                for _old in glob.glob(os.path.join(_cdir, _prefix + "*.npz")):
+                    if os.path.abspath(_old) != os.path.abspath(cache_path):
+                        try:
+                            os.remove(_old)
+                        except OSError:
+                            pass
+            except Exception:
+                pass
         except Exception as e:
             self.logger.warning(f"[극단풀] 캐시 저장 실패({e})")
 

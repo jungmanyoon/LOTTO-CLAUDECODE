@@ -2714,10 +2714,13 @@ def main():
                 continuous_improvement_global = None
 
             # AutoScheduler 초기화 - 자동 업데이트를 위해 실행
-            # NOTE: --fetch-only, --predict-only, --ml-only 모드에서는 건너뜀
-            #       (subprocess에서 main.py를 호출할 때 무한 스폰 방지)
-            if args.fetch_only or args.predict_only or getattr(args, 'ml_only', False):
-                logging.info("[자동 업데이트] 서브프로세스 모드 - AutoScheduler 건너뜀")
+            # NOTE: 모든 one-shot/서브프로세스 모드(--once/--skip-fetch/--ml-only/--predict-only/
+            #       --fetch-only/--automation-test)에서는 건너뜀. 상주 모드에서만 기동한다.
+            #       [코드리뷰 2026-06-27 P3] 기존 가드는 fetch_only/predict_only/ml_only만 검사해
+            #       --skip-fetch(AutoScheduler가 일일예측을 띄우는 모드)가 누락 -> 2분 살다 버려지는
+            #       daemon 스레드+콜백이 매번 기동됐다. _one_shot(2341에서 계산)으로 통일.
+            if _one_shot:
+                logging.info("[자동 업데이트] 서브프로세스/1회 실행 모드 - AutoScheduler 건너뜀")
             else:
                 try:
                     from src.automation.auto_scheduler import AutoScheduler

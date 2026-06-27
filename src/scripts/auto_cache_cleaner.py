@@ -104,6 +104,15 @@ class AutoCacheCleaner:
         total_size = 0
         for cache_dir in self.cache_dirs.values():
             total_size += self.get_directory_size(cache_dir)
+        # [코드리뷰 2026-06-27 P2] cache/ 루트 직속 npz(극단풀 디스크 캐시)도 합산.
+        # cache_dirs에 없어 캐시크기 로그가 과소보고되던 것을 교정(하위 디렉토리 중복 없음).
+        cache_root = self.project_root / 'cache'
+        if cache_root.exists():
+            for f in cache_root.glob('*.npz'):
+                try:
+                    total_size += f.stat().st_size
+                except (OSError, IOError):
+                    continue
         return total_size
 
     def get_file_info(self, file_path: Path) -> Dict:
@@ -136,6 +145,17 @@ class AutoCacheCleaner:
                         if file_info:
                             file_info['cache_type'] = cache_name
                             all_files.append(file_info)
+
+        # [코드리뷰 2026-06-27 P2] cache/ 루트 직속 npz(극단풀 디스크 캐시)는 cache_dirs에
+        # 없어 7일/용량 정리에서 누락돼 영구 누적됐다. 하위 디렉토리 중복 없이 직속 .npz만 수집.
+        cache_root = self.project_root / 'cache'
+        if cache_root.exists():
+            for file_path in cache_root.glob('*.npz'):
+                if file_path.is_file():
+                    file_info = self.get_file_info(file_path)
+                    if file_info:
+                        file_info['cache_type'] = 'extremeness_pool'
+                        all_files.append(file_info)
 
         return all_files
 

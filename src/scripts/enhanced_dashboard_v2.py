@@ -786,7 +786,10 @@ class EnhancedLottoDashboard:
     def _load_backtest_from_db(self, db_path: str) -> Optional[Dict]:
         """데이터베이스에서 백테스팅 성능 데이터 로드"""
         try:
-            with sqlite3.connect(db_path) as conn:
+            # [코드리뷰 2026-06-27 P3] 대용량 DB의 cleanup DELETE와 동시 조회 시 'database is
+            # locked' 회피: 기본 5초 대신 120초 busy_timeout 부여(쓰기 측 WAL은 영속).
+            with sqlite3.connect(db_path, timeout=120) as conn:
+                conn.execute("PRAGMA busy_timeout=120000")
                 cursor = conn.cursor()
 
                 # 최신 세션 정보 조회 - 캐시 무효화를 위해 매번 새로 조회

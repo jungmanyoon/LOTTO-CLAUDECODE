@@ -157,8 +157,13 @@ def test_pool_cache_invalidated_by_mtime(db, tmp_path, small_combos):
         new_after_weights = files2 - files1
         assert new_after_weights, "A3 실패: weights.json mtime 변경이 풀 캐시를 무효화하지 못함"
 
-        # 캐시 파일명에 wver가 실제로 반영되어 서로 다른 파일임을 확인
-        assert len(files2) >= 3, f"무효화 시 새 캐시가 누적되어야 함: {files2}"
+        # 캐시 파일명에 wver가 실제로 반영되어 매번 다른 파일임을 확인(무효화=재계산).
+        assert files0 != files1 and files1 != files2, \
+            f"mtime 변경마다 wver(파일명)가 달라져야 함: {files0} {files1} {files2}"
+        # [코드리뷰 2026-06-27 P2] build_pool 자기정리: 같은 (선택방식,학습회차,K)의 옛 wver npz는
+        # 새 캐시 저장 직후 제거되어 회차당 최신 1개만 잔존한다(디스크 무한누적 방지). 무효화 자체는
+        # 위 D1/A3에서 이미 확인됨(옛 동작의 '3개 누적' 가정은 자기정리로 폐기).
+        assert len(files2) == 1, f"자기정리 후 최신 wver 1개만 남아야 함: {files2}"
     finally:
         os.utime(scorer_py, (orig_scorer_mt, orig_scorer_mt))  # 원복(중요)
 
