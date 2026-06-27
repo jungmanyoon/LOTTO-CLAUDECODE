@@ -299,6 +299,18 @@ def setup_logging(config_path: str = None):
         return logging.getLogger()
         
     try:
+        # [버그수정 2026-06-27] 콘솔(stderr)을 가장 먼저 UTF-8로 재구성한다.
+        # Windows 기본 콘솔은 cp949라, 핸들러 부착 전 설정 로딩 단계의 경고
+        # (예: ConfigManager의 '설정 파일 경로 미지정')까지 한글이 깨지는 것을 막는다.
+        # 전역 재배정 없이 in-place reconfigure만 수행(다른 모듈과 충돌 없음).
+        import sys
+        _reconfigure = getattr(sys.stderr, "reconfigure", None)
+        if callable(_reconfigure):
+            try:
+                _reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
         # 기본 로그 디렉토리 생성
         log_dir = "logs"
         if not os.path.exists(log_dir):
@@ -351,6 +363,7 @@ def setup_logging(config_path: str = None):
             root_logger.removeHandler(handler)
 
         # 콘솔 핸들러 설정 (컬러 포맷터 사용)
+        # 콘솔 stderr는 함수 진입부에서 이미 UTF-8로 재구성됨(한글 깨짐 방지).
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(console_formatter)
         root_logger.addHandler(console_handler)

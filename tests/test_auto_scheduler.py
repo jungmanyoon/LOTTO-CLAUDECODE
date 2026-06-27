@@ -401,12 +401,38 @@ class TestWebDataFetching:
             assert result is not None
             assert isinstance(result, int)
 
-    def test_fetch_latest_round_network_error(self, scheduler):
-        """네트워크 오류 시 None 반환"""
-        with patch('src.automation.auto_scheduler.requests.get', side_effect=Exception("Network error")):
-            result = scheduler._fetch_latest_round_from_web()
+    def test_fetch_latest_round_network_error(self, scheduler, caplog):
+        """[버그수정 2026-06-27] 네트워크 단절(RequestException)은 WARNING으로 톤다운하고
+        추정 회차로 오프라인 폴백한다(ERROR 과경보 금지)."""
+        import logging as _logging
+        import requests as _requests
 
-            assert result is None
+        with patch('src.automation.auto_scheduler.requests.get',
+                   side_effect=_requests.exceptions.ConnectionError("Failed to resolve dhlottery")):
+            with caplog.at_level(_logging.WARNING):
+                result = scheduler._fetch_latest_round_from_web()
+
+        # 네트워크 단절 시 legacy도 같은 단절 -> 추정 회차(int)로 오프라인 폴백
+        assert isinstance(result, int)
+        # ERROR가 아니라 WARNING으로만 기록되어야 한다(과경보 금지)
+        assert not any(r.levelno >= _logging.ERROR for r in caplog.records)
+        assert any('네트워크' in r.getMessage() for r in caplog.records)
+
+    def test_fetch_latest_round_code_error_stays_error(self, scheduler, caplog):
+        """[버그수정 2026-06-27] 진짜 코드 오류(응답 파싱 KeyError 등)는 ERROR를 유지한다
+        (네트워크 톤다운이 진짜 버그를 숨기지 않도록)."""
+        import logging as _logging
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.side_effect = KeyError('list')  # 응답 구조 파싱 중 코드 오류
+
+        with patch('src.automation.auto_scheduler.requests.get', return_value=mock_response):
+            with caplog.at_level(_logging.WARNING):
+                scheduler._fetch_latest_round_from_web()
+
+        # KeyError는 RequestException이 아니므로 ERROR 경로로 남아야 한다
+        assert any(r.levelno >= _logging.ERROR for r in caplog.records)
 
     def test_fetch_and_save_new_round_success(self, scheduler):
         """새 회차 데이터 저장 성공"""

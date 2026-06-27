@@ -181,3 +181,71 @@ def test_monte_carlo_maxlen_deadlock_force_update(rls):
     assert rls._should_update(mt) is False
     assert rls._should_update(mt) is True
     assert rls.model_states[mt]['consecutive_skips'] == 0
+
+
+@pytest.mark.unit
+def test_added_count_gate_resolves_maxlen_freeze(rls):
+    """[버그수정 2026-06-27] 주기 판정을 버퍼 '절대 길이' 대신 '추가 누적 카운터(added_count)'로
+    하므로, 버퍼가 maxlen에 포화돼도 update_frequency 사이클마다 반드시 _should_update가 True가
+    되어 동결(준동결)되지 않는다.
+
+    과거 버그: 주기 게이트가 len(deque)에 모듈로 -> maxlen 포화 후 80%3=2로 monte_carlo가 영구
+    False(30일 강제통과로만 풀림). _add_to_buffer가 증가시키는 added_count로 바꿔 동결을 없앴다.
+    """
+    from datetime import datetime
+    mt = 'monte_carlo'  # update_frequency=3, buffer maxlen=80
+    # 안정 성능(추세 하락 아님) -> consecutive_skips 강제통과 비발동
+    rls.performance_history[mt] = deque([0.15, 0.15, 0.15], maxlen=8)
+    # 최근 업데이트로 설정 -> 30일/7일 stale 경로 비발동 (added_count 게이트만 순수 검증)
+    rls.model_states[mt]['last_update'] = datetime.now()
+    rls.model_states[mt]['added_count'] = 0
+    # 버퍼를 maxlen(80)까지 채워, '절대 길이 모듈로'였다면 80%3=2로 영원히 False가 될 상태로 고정
+    rls.learning_buffers[mt] = deque(
+        [{'round': i, 'numbers': [1, 2, 3, 4, 5, 6]} for i in range(80)], maxlen=80
+    )
+    assert len(rls.learning_buffers[mt]) == 80 and 80 % 3 != 0  # 과거라면 영구 False 전제
+
+    results = []
+    for _ in range(6):
+        rls._add_to_buffer(mt, {'round': 999, 'numbers': [1, 2, 3, 4, 5, 6]})
+        results.append(rls._should_update(mt))
+
+    # added_count 1..6 -> freq 3 주기로 3,6에서만 True (영구 False였던 과거와 달리 주기적으로 풀림)
+    assert results == [False, False, True, False, False, True]
+    # 버퍼는 여전히 maxlen 80 포화(절대길이 모듈로였다면 영원히 못 풀렸을 것)
+    assert len(rls.learning_buffers[mt]) == 80
+
+
+@pytest.mark.unit
+def test_added_count_persisted_across_save_load(rls):
+    """[버그수정 2026-06-27] 주기 카운터(added_count)가 save/load로 영속화되어 재시작 간 누적된다."""
+    mt = 'monte_carlo'
+    rls.model_states[mt]['added_count'] = 7
+    rls._save_state()
+
+    reloaded = RealtimeLearningSystem(db_manager=MagicMock())
+    assert reloaded.model_states[mt]['added_count'] == 7
+
+
+@pytest.mark.unit
+def test_load_state_backward_compat_missing_added_count(rls):
+    """[버그수정 2026-06-27] 구버전 상태파일(added_count 키 없음) 로드 시 키를 만들지 않아
+    _should_update가 buffer_size 폴백(기존 동작)을 쓴다(KeyError/회귀 없음)."""
+    import json
+    import os
+
+    os.makedirs('results', exist_ok=True)
+    legacy = {
+        'model_states': {
+            'monte_carlo': {'last_update': None, 'update_count': 5, 'consecutive_skips': 0},
+        },
+        'performance_history': {'monte_carlo': [0.1]},
+        'learning_buffers': {},
+    }
+    with open('results/realtime_learning_state.json', 'w', encoding='utf-8') as f:
+        json.dump(legacy, f)
+
+    system = RealtimeLearningSystem(db_manager=MagicMock())
+    assert system.model_states['monte_carlo']['update_count'] == 5
+    # added_count 키는 만들어지지 않음 -> _should_update가 buffer_size 폴백 사용
+    assert 'added_count' not in system.model_states['monte_carlo']

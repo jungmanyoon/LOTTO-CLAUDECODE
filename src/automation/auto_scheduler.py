@@ -297,8 +297,13 @@ class AutoScheduler:
             logging.warning("[AutoScheduler] 새 API 실패, 레거시 방식 시도...")
             return self._fetch_latest_round_legacy()
 
+        except requests.exceptions.RequestException as e:
+            # [버그수정 2026-06-27] 네트워크/DNS 단절 등 예상 가능한 외부 요인은 오프라인 폴백 (과경보 금지)
+            logging.warning(f"[AutoScheduler] 네트워크 미연결로 새 API 조회 실패, 오프라인 폴백 시도: {e}")
+            return self._fetch_latest_round_legacy()
         except Exception as e:
-            logging.error(f"[AutoScheduler] 웹 데이터 조회 실패: {e}")
+            # JSON 키 누락/응답 구조 변경 등 진짜 코드 점검이 필요한 경우만 ERROR 유지
+            logging.error(f"[AutoScheduler] 웹 데이터 파싱 오류(코드 점검 필요): {e}")
             return self._fetch_latest_round_legacy()
 
     def _fetch_latest_round_legacy(self) -> Optional[int]:
@@ -324,11 +329,17 @@ class AutoScheduler:
                     continue
 
             # 최종 폴백: 추정값 반환
-            logging.warning(f"[AutoScheduler] API 모두 실패, 추정 회차 반환: {estimated_round}")
+            # [버그수정 2026-06-27] 네트워크 단절로 동행복권 접근 불가 시 추정 회차로 폴백함을 정직하게 표기
+            logging.warning(f"[AutoScheduler] 네트워크 미연결로 동행복권 접근 불가 -> 추정 회차로 오프라인 폴백: {estimated_round}회")
             return estimated_round
 
+        except requests.exceptions.RequestException as e:
+            # [버그수정 2026-06-27] 네트워크 단절은 오프라인 폴백 (과경보 금지)
+            logging.warning(f"[AutoScheduler] 네트워크 미연결로 레거시 조회 실패(오프라인): {e}")
+            return None
         except Exception as e:
-            logging.error(f"[AutoScheduler] 레거시 웹 데이터 조회 실패: {e}")
+            # 진짜 코드 점검이 필요한 경우만 ERROR 유지
+            logging.error(f"[AutoScheduler] 레거시 회차 처리 중 오류(코드 점검 필요): {e}")
             return None
     
     def _fetch_and_save_new_round(self, round_num: int) -> bool:

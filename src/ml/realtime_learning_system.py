@@ -190,7 +190,16 @@ class RealtimeLearningSystem:
             logging.debug(f"{model_type} 학습 버퍼 생성 (크기: {buffer_size})")
         
         self.learning_buffers[model_type].append(new_result)
-    
+
+        # [버그수정 2026-06-27] 주기 판정용 '추가 누적 카운터'.
+        # 과거엔 _should_update가 버퍼의 '절대 길이(len)'에 모듈로를 걸었는데, deque(maxlen=N)는
+        # 포화 후 len이 N에 영구 고정되어 N % update_frequency != 0인 모델(monte_carlo: 80%3=2)은
+        # 주기 조건이 영원히 False가 되어 동결됐다. 단조 증가하는 added_count에 모듈로를 걸어 해소한다.
+        st = self.model_states.setdefault(
+            model_type, {'last_update': None, 'update_count': 0, 'consecutive_skips': 0}
+        )
+        st['added_count'] = st.get('added_count', 0) + 1
+
     def _days_since_last_update(self, model_type: str) -> Optional[float]:
         """마지막 온라인 업데이트 이후 경과일(일) 반환.
 
@@ -290,15 +299,21 @@ class RealtimeLearningSystem:
         # 업데이트 주기 확인 - 모델별 개별 주기 사용
         # update_frequency마다 업데이트 (예: LSTM은 2회차, ENSEMBLE은 1회차마다)
         update_frequency = config.get('update_frequency', 1)
-        if buffer_size % update_frequency == 0:
-            logging.info(f"{model_type}: 업데이트 조건 충족 (버퍼: {buffer_size})")
+        # [버그수정 2026-06-27] 버퍼 '절대 길이' 대신 '추가 누적 카운터(added_count)'에 모듈로.
+        # added_count는 단조 증가하므로 update_frequency 사이클마다 반드시 0이 되어 동결이 불가능하다.
+        # (구버전 상태/직접 호출 등으로 added_count가 없으면 기존 동작과 동일하게 buffer_size로 폴백)
+        added = self.model_states.get(model_type, {}).get('added_count')
+        if added is None:
+            added = buffer_size
+        if added % update_frequency == 0:
+            logging.info(f"{model_type}: 업데이트 조건 충족 (추가누적: {added}, 버퍼: {buffer_size})")
             return True
 
         # [P2-3] 주기 모듈로로 막힌 경우 정체 경과일을 가시화(수개월 동결을 조용히 넘기지 않도록)
         if stale_days is not None and stale_days >= 7:
             logging.warning(
                 f"{model_type}: 주기 미일치로 이번 업데이트 건너뜀 "
-                f"(버퍼 {buffer_size} mod 주기 {update_frequency} != 0), "
+                f"(추가누적 {added} mod 주기 {update_frequency} != 0), "
                 f"마지막 업데이트 {stale_days:.0f}일 전"
             )
 
@@ -738,6 +753,11 @@ class RealtimeLearningSystem:
                                 self.model_states[model_type]['update_count'] = model_state.get('update_count', 0)
                                 # [P2-2] 연속 스킵 카운터 복원 (구버전 상태파일엔 없으므로 0 기본)
                                 self.model_states[model_type]['consecutive_skips'] = model_state.get('consecutive_skips', 0)
+                                # [버그수정 2026-06-27] 주기 판정용 추가 누적 카운터 복원.
+                                # 구버전 상태파일엔 없으므로, 없으면 키를 만들지 않아 _should_update가
+                                # buffer_size 폴백(기존 동작)을 쓰게 둔다.
+                                if 'added_count' in model_state:
+                                    self.model_states[model_type]['added_count'] = model_state['added_count']
                                 # last_update는 datetime으로 변환
                                 last_update_str = model_state.get('last_update')
                                 if last_update_str:
@@ -791,7 +811,8 @@ class RealtimeLearningSystem:
             model_states_serializable[model_type] = {
                 'last_update': state_info['last_update'].isoformat() if state_info['last_update'] else None,
                 'update_count': state_info['update_count'],
-                'consecutive_skips': state_info.get('consecutive_skips', 0)  # [P2-2] 연속 스킵 영속화
+                'consecutive_skips': state_info.get('consecutive_skips', 0),  # [P2-2] 연속 스킵 영속화
+                'added_count': state_info.get('added_count', 0)  # [버그수정 2026-06-27] 주기 카운터 영속화
             }
         
         state = {
@@ -910,6 +931,7 @@ class RealtimeLearningSystem:
             self.model_states[model_type]['last_update'] = datetime.now()
             self.model_states[model_type]['update_count'] = 0
             self.model_states[model_type]['consecutive_skips'] = 0  # [P2-2] 재시작 시 스킵 카운터도 리셋
+            self.model_states[model_type]['added_count'] = 0  # [버그수정 2026-06-27] 재시작 시 주기 카운터 리셋
 
             # 성능 기록 초기화 (기본값으로)
             config = self.learning_config.get(model_type, self.default_config)

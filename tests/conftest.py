@@ -18,6 +18,48 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
+# ====================================================================
+# [로그 격리] 테스트 로그가 운영 로그 파일(logs/lotto_app.log)을 오염시키지 않도록 차단
+# --------------------------------------------------------------------
+# 이유: ThresholdManager 등 일부 모듈은 root 로거(logging.warning/error)에 직접 기록한다.
+#   어떤 모듈이든 한 번 setup_logging()을 호출하면 root 로거에 RotatingFileHandler(lotto_app.log)가
+#   붙고, 그 이후 모든 테스트의 '의도된' WARNING/ERROR(경계값 거부 검증, 옵저버 실패 검증 등)가
+#   운영 로그 파일에 섞여 들어간다. 그러면 실제 앱 실행 로그와 구분이 안 돼 오판을 부른다.
+#   -> 테스트 중에는 운영 로그 파일 기록을 막고, 로그는 pytest 자체 캡처(caplog)에 맡긴다.
+import logging as _logging
+import logging.handlers as _logging_handlers
+
+
+def _strip_production_log_handlers():
+    """root 로거에 붙은 운영 로그 파일 핸들러(logs/ 또는 lotto_app)만 골라 제거한다.
+
+    pytest 캡처 핸들러나 테스트가 의도적으로 만든 임시 파일 핸들러는 건드리지 않는다.
+    """
+    root = _logging.getLogger()
+    for handler in root.handlers[:]:
+        base = getattr(handler, "baseFilename", "") or ""
+        normalized = base.replace("\\", "/")
+        if "lotto_app" in normalized or "/logs/" in normalized:
+            try:
+                handler.close()
+            except Exception:
+                pass
+            root.removeHandler(handler)
+
+
+# conftest는 테스트 수집보다 먼저 로드되므로, 여기서 setup_logging을 '이미 완료' 상태로 표시하면
+# 이후 어떤 모듈이 setup_logging()을 호출해도 운영 파일 핸들러를 새로 붙이지 않는다.
+try:
+    from src import logger as _proj_logger
+
+    _proj_logger.setup_logging._initialized = True
+except Exception:
+    pass
+
+# conftest 로드 시점에 이미 붙어 있던 운영 파일 핸들러가 있으면 청소한다.
+_strip_production_log_handlers()
+
+
 @pytest.fixture(scope="session")
 def project_root_dir():
     """프로젝트 루트 디렉토리 경로"""
@@ -161,6 +203,10 @@ def reset_singletons():
         SingletonMeta._instances.clear()
     except ImportError:
         pass
+
+    # [로그 격리] 이전 테스트나 모듈 import가 운영 로그 파일 핸들러를 새로 붙였을 수 있으므로
+    # 매 테스트 시작 직전에도 한 번 더 청소한다(이중 안전망).
+    _strip_production_log_handlers()
 
     yield  # 테스트 실행
 

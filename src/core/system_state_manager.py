@@ -124,7 +124,9 @@ class SystemStateManager:
 
             # DB 회차가 상태 파일보다 최신인 경우
             if db_round > state_round:
-                logging.warning(f"[SystemState] [SYNC] 새 회차 감지: {state_round} → {db_round}")
+                # [버그수정 2026-06-27] 새 회차 감지는 직후 자동 갱신이 뒤따르는 정상 이벤트이므로 INFO.
+                # (아래 컴포넌트별 '미동기화'는 비정상 상황이라 WARNING 유지)
+                logging.info(f"[SystemState] [SYNC] 새 회차 감지: {state_round} → {db_round}")
                 logging.info(f"[SystemState] 현재 상태:")
                 logging.info(f"  - 패턴 분석: {pattern_round}회차")
                 logging.info(f"  - 필터 업데이트: {filter_round}회차")

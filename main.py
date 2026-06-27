@@ -2802,7 +2802,8 @@ def main():
                 _ssm = _SSM()
                 _latest2 = db_manager.get_latest_round()
                 if _latest2 and _ssm.check_sync_needed(_latest2):
-                    logging.warning(f"[수집후 동기화] 새 회차 감지 -> 상태/필터기준 갱신: {_latest2}회차")
+                    # [버그수정 2026-06-27] 새 회차 감지 -> 자동 갱신 시작은 정상 이벤트이므로 INFO (WARNING은 오판 유발)
+                    logging.info(f"[수집후 동기화] 새 회차 감지 -> 상태/필터기준 갱신: {_latest2}회차")
                     try:
                         from src.core.integrated_filter_manager import IntegratedFilterManager as _IFM
                         from src.core.threshold_manager import get_threshold_manager as _gtm
