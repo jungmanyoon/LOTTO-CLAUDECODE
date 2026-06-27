@@ -3282,10 +3282,13 @@ def main():
                         if not ensemble_predictor.is_trained:
                             logging.info("  - 앙상블 모델 학습 중...")
                             try:
-                                # [코드리뷰 2026-06-27 P3] 학습 회차 도장을 train 내부 저장 전에 찍어
-                                # --predict-only(filter_manager=None) 경로의 trained_round=None 오염 차단.
-                                evaluation = ensemble_predictor.train(winning_numbers, test_size=0.2,
-                                                                      trained_round=latest_round)
+                                # [코드리뷰 2026-06-27 P3] 학습 회차 도장을 train() '전에' 속성으로 설정 ->
+                                # train 내부 save_models가 getattr로 None 대신 회차를 영속화(--predict-only=
+                                # filter_manager None 경로의 None 오염 차단). EnsemblePredictor와 별칭
+                                # FilteredPoolEnsemblePredictor(train에 trained_round 인자 없음) 양쪽 모두
+                                # self.trained_round를 저장하므로 인자 대신 속성으로 통일(인자 비호환 회피).
+                                ensemble_predictor.trained_round = latest_round
+                                evaluation = ensemble_predictor.train(winning_numbers, test_size=0.2)
                                 if evaluation:
                                     logging.info(f"  - 학습 완료: 정확도 {evaluation.get('ensemble', {}).get('accuracy', 0):.4f}")
                             except Exception as ensemble_train_e:
