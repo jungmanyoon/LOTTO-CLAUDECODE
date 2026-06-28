@@ -2037,8 +2037,10 @@ HTML_TEMPLATE_V2 = """
                 const threePlus = preds.filter(p => (p.matches || 0) >= 3).length;
                 const heroMini = document.getElementById('heroMini');
                 if (heroMini) {
+                    // [2026-06-28 코드리뷰 P3] 분모(=해당 회차 누적 예측 세트수)를 라벨에 명시.
+                    //   avg/최고/3+ 는 5세트가 아니라 'total'세트 누적 집계라 '5세트 성과'로 오인 소지 -> 세트수 표기.
                     heroMini.innerHTML =
-                        '<div><div class="mv">' + avg + '</div><div class="ml">평균 일치</div></div>' +
+                        '<div><div class="mv">' + avg + '</div><div class="ml">평균 일치 (' + total + '세트)</div></div>' +
                         '<div><div class="mv">' + maxMatches + '</div><div class="ml">최고 일치</div></div>' +
                         '<div><div class="mv">' + threePlus + '</div><div class="ml">3개+ 적중</div></div>';
                 }

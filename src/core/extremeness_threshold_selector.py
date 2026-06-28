@@ -91,6 +91,51 @@ def wilson_lower(x: int, n: int, z: float = 1.96) -> float:
 
 
 # ----------------------------------------------------------------------
+# [2026-06-28 3차 코드리뷰 P2 정직성 갭 수정] 곡선 scorer = 생산 build_pool과 동일(가중)으로 통일.
+#   과거: 이 곡선은 무가중 ExtremenessScorer로 coverage/lift/pool_ratio를 측정했으나, 생산
+#   build_pool(extremeness_pool_predictor.py:_build_scorer)은 weights.json fw_*를 cov_inv=S@cov_inv@S로
+#   주입한 '가중' scorer로 풀을 형성한다 -> 정책이 '실제 출고하는 풀과 다른 풀'의 커버리지로 K를 골랐다.
+#   수정: "measure what you ship" - 곡선도 동일 가중 scorer로 측정. 가중치 부재/손상 시 무가중 폴백하고
+#   scorer 라벨('weighted'/'unweighted')을 정책/곡선에 정직 표기.
+#   주의(정직성): weights.json best_params는 전체데이터 산물을 '고정 하이퍼파라미터'로 주입하므로 미세
+#   하이퍼파라미터 누설(가중쪽 낙관)이 있으나, 이는 생산 predict가 쓰는 바로 그 가중치라 '출고 풀'을
+#   정확히 측정하는 게 목적이다. 참고: walk-forward A/B(validate_weighted_pool_walkforward)상 가중/무가중
+#   커버리지 차이는 비유의(노이즈, 전 K lift_lcb<1)라 선택 K는 사실상 불변(1.5M weak fallback).
+# ----------------------------------------------------------------------
+def _load_curve_weights(weights_path=os.path.join('configs', 'extremeness_weights.json')):
+    """weights.json best_params 로드. (best_params, label) 반환. 없으면 (None, 'unweighted')."""
+    p = weights_path if os.path.isabs(weights_path) else os.path.join(_project_root(), weights_path)
+    if os.path.exists(p):
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                wj = json.load(f)
+            if wj and 'best_params' in wj:
+                return wj['best_params'], 'weighted'
+        except Exception as e:
+            logger.warning(f"[K선택] 가중치 로드 실패({e}) - 무가중 측정으로 폴백")
+    return None, 'unweighted'
+
+
+def _make_curve_scorer(db_manager, best_params, win_train):
+    """생산 build_pool(_build_scorer + fit + cov_inv=S@cov_inv@S)과 동일한 (옵션)가중 scorer 생성.
+    best_params=None이면 무가중. 생산 코드와 수식/순서 일치(회귀 방지)."""
+    from src.core.extremeness_scorer import ExtremenessScorer
+    if not best_params:
+        scorer = ExtremenessScorer(db_manager)
+        scorer.fit(win_train)
+        return scorer
+    pw = {d: best_params.get(f"pw_{d}", 1.0) for d in ExtremenessScorer.PENALTY_DIMS}
+    scorer = ExtremenessScorer(db_manager, alpha=best_params.get('alpha', 0.5), penalty_weights=pw)
+    scorer._feature_scale = np.array(
+        [best_params.get(f"fw_{f}", 1.0) for f in ExtremenessScorer.CONTINUOUS_FEATURES],
+        dtype=np.float32)
+    scorer.fit(win_train)
+    S = np.diag(scorer._feature_scale).astype(np.float32)
+    scorer.cov_inv = (S @ scorer.cov_inv @ S).astype(np.float32)
+    return scorer
+
+
+# ----------------------------------------------------------------------
 # 내부 유틸: 당첨번호 로드
 # ----------------------------------------------------------------------
 def _load_winning_rows(db_manager) -> List:
@@ -190,6 +235,8 @@ def evaluate_threshold_curve(db_manager,
     n_total = 0
 
     combos = ExtremenessScorer.all_combinations()
+    # [2026-06-28 P2] 생산 build_pool과 동일한 (가중) scorer로 곡선 측정 (measure what you ship).
+    best_params, scorer_label = _load_curve_weights()
 
     for (start_idx, end_idx) in fold_specs:
         train_rows = rows[:start_idx]
@@ -202,8 +249,7 @@ def evaluate_threshold_curve(db_manager,
         fold_n = len(holdout_rows)
         n_total += fold_n
 
-        scorer = ExtremenessScorer(db_manager)
-        scorer.fit(win_train)
+        scorer = _make_curve_scorer(db_manager, best_params, win_train)
         scores = scorer.score(combos)
         s_holdout = scorer.score(win_holdout)
 
@@ -257,6 +303,8 @@ def evaluate_threshold_curve(db_manager,
         'grid': [int(k) for k in sorted(candidate_grid)],
         'curve': curve,
         'report_grid': report_rows,
+        # [2026-06-28 P2] 곡선을 어떤 scorer로 측정했는지 정직 표기('weighted'=생산 일치 / 'unweighted'=폴백).
+        'scorer': scorer_label,
     }
 
 
@@ -371,6 +419,9 @@ def select_target_k(curve_result: Dict,
         'window': int(curve_result.get('window', 0)),
         'grid': [int(k) for k in grid],
         'selected_metrics': selected_metrics,
+        # [2026-06-28 P2 정직성] 곡선/선택 metrics를 어떤 scorer로 측정했는지 명시.
+        #   'weighted' = 생산 build_pool과 동일 가중 scorer(= 출고하는 풀의 커버리지). 'unweighted' = 폴백.
+        'scorer': curve_result.get('scorer', 'unknown'),
     }
     return policy
 
