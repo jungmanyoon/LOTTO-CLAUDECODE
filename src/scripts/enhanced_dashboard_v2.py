@@ -1982,7 +1982,20 @@ HTML_TEMPLATE_V2 = """
                 });
                 const srcRaw = pred.source || '';
                 const srcKind = srcRaw.startsWith('ML') ? 's-ml' : /monte/i.test(srcRaw) ? 's-monte' : 'pool';
-                const srcLabel = escapeHtml((srcRaw.split('/')[0]) || 'AI');
+                // [HF 배포 2026-07-04] 기술적 source(예: ExtremePool-Diversity(K=1500K,cover=30/45))를
+                // 일반 사용자용 쉬운 라벨로 치환. 원본 전체는 아래 title(마우스 호버) 에 그대로 보존.
+                let srcLabel;
+                if (srcRaw.startsWith('ExtremePool')) {
+                    const _cm = srcRaw.match(/cover=(\d+)/);
+                    srcLabel = '극단 제거 풀' + (_cm ? ' (' + _cm[1] + '/45)' : '');
+                } else if (srcRaw.startsWith('ML')) {
+                    srcLabel = 'ML 예측';
+                } else if (/monte/i.test(srcRaw)) {
+                    srcLabel = '몬테카를로';
+                } else {
+                    srcLabel = (srcRaw.split('/')[0]) || 'AI';
+                }
+                srcLabel = escapeHtml(srcLabel);
                 let foot;
                 if (win) {
                     const m = pred.matches || 0;
@@ -2162,8 +2175,14 @@ HTML_TEMPLATE_V2 = """
                 c4 = '<div class="kpi"><div class="v">' + (data.total_predictions || preds.length) + '</div><div class="l">이번 회차 예측 세트</div>' +
                     '<div style="font-size:10px;color:var(--muted);margin-top:9px;">추첨 대기</div></div>';
             }
-            // 배치: 실제 메커니즘(극단성 풀 + 무작위 대비 적합도)을 상단에, 참고(필터 통과율)·이번 회차를 하단에
-            grid.innerHTML = c2 + c3 + c1 + c4;
+            // [HF 배포 2026-07-04] 데이터 없는 KPI 칸(무작위 대비 적합도/필터 통과율)은 숨긴다.
+            // HF Space엔 백테/inclusion DB가 없어 lift/inclPct가 null -> 빈 '—' 칸 대신 제외.
+            // 로컬은 데이터가 있어 4칸 그대로 표시(환경 무관, 순전히 데이터 유무 기반).
+            const _kpis = [c2];                       // 극단성 풀 크기(항상 있음)
+            if (lift != null) _kpis.push(c3);         // 무작위 대비 적합도(데이터 있을 때만)
+            if (inclPct != null) _kpis.push(c1);      // 필터 통과율(데이터 있을 때만)
+            _kpis.push(c4);                           // 이번 회차(항상 있음)
+            grid.innerHTML = _kpis.join('');
         }
 
         // ===== 통계 영역 =====
@@ -2218,7 +2237,9 @@ HTML_TEMPLATE_V2 = """
             bt = bt || {};
             const models = Object.values(bt.model_performance || {});
             if (!bt.total_predictions && !models.length) {
-                setState('backtestGrid', 'empty', '백테스트 데이터가 없습니다. main.py 실행 후 표시됩니다.');
+                // [HF 배포 2026-07-04] 데이터 없으면 안내문 대신 카드 자체를 숨긴다.
+                const _c = document.getElementById('backtestCard');
+                if (_c) _c.style.display = 'none';
                 return;
             }
             const avgMatches = models.map(m => m.avg_matches || 0);
@@ -2266,7 +2287,12 @@ HTML_TEMPLATE_V2 = """
             }
             if (!hasReal && stats && stats.match_distribution) dist = stats.match_distribution;
             const total = Object.values(dist).reduce((a, b) => a + b, 0);
-            if (!total) { setState('distChart', 'empty', '분포 데이터가 아직 없습니다.'); return; }
+            if (!total) {
+                // [HF 배포 2026-07-04] 분포 데이터(백테) 없으면 카드 숨김.
+                const _c = document.getElementById('distCard');
+                if (_c) _c.style.display = 'none';
+                return;
+            }
 
             const counts = [];
             for (let i = 0; i <= 6; i++) counts.push(dist[i] || 0);
@@ -2293,8 +2319,18 @@ HTML_TEMPLATE_V2 = """
                 fetchJson('/api/optimizer-status'),
                 fetchJson('/api/optimizer-history')
             ]);
-            displayOptimizerStatus(st.ok ? st.data : { running: false });
-            displayOptimizerHistory(hi.ok && Array.isArray(hi.data) ? hi.data : []);
+            const stData = st.ok ? st.data : { running: false };
+            const hiData = hi.ok && Array.isArray(hi.data) ? hi.data : [];
+            // [HF 배포 2026-07-04] 최적화가 한 번도 안 돈 환경(HF 배치)에선 자동튜닝 카드를 숨긴다.
+            // 근거: 이 백그라운드 최적화는 walk-forward no-op으로 확인됐고 상주(--24h) 전용이라
+            // HF에선 원래 안 돈다 -> 빈 0/0/N-A 카드 대신 숨겨 정직하게 처리.
+            if (!stData.running && !(stData.total_trials > 0) && hiData.length === 0) {
+                const _c = document.getElementById('optimizerCard');
+                if (_c) _c.style.display = 'none';
+                return;
+            }
+            displayOptimizerStatus(stData);
+            displayOptimizerHistory(hiData);
         }
 
         function displayOptimizerStatus(status) {
@@ -2328,7 +2364,12 @@ HTML_TEMPLATE_V2 = """
 
         function displayOptimizerHistory(history) {
             const t = document.getElementById('optimizerHistoryTable');
-            if (!history || !history.length) { t.innerHTML = '<div class="state" style="padding:18px;">최적화 이력이 없습니다.</div>'; return; }
+            if (!history || !history.length) {
+                // [HF 배포 2026-07-04] 이력 없으면 안내문 대신 비운다(이 백그라운드 최적화는
+                // walk-forward no-op으로 확인됐고 상주(--24h) 전용이라 HF 배치엔 원래 없음).
+                t.innerHTML = '';
+                return;
+            }
             let rows = '';
             history.forEach(it => {
                 rows += '<tr><td>' + escapeHtml(new Date(it.date).toLocaleString('ko-KR')) + '</td>' +
