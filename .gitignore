@@ -108,6 +108,8 @@ DYNAMIC_*.md
 data/
 models/
 cache/
+# 대시보드 UI 재설계 실험물(스크린샷+미채택 시안) - 로컬 참고용, 레포 제외 2026-07-04
+docs/ui_samples/
 
 # Windows reserved names - CRITICAL: DO NOT CREATE FILES WITH THESE NAMES
 nul
