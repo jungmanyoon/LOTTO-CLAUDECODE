@@ -1663,7 +1663,7 @@ HTML_TEMPLATE_V2 = """
 
         <!-- Row 2: 예측 카드 (주인공) -->
         <section class="card span-12" id="predictionsSection">
-            <div class="card-h"><span class="dot"></span>이번 회차 AI 예측<span class="sub" id="predictionsSummary"></span></div>
+            <div class="card-h"><span class="dot"></span><span id="predictionsTitle">이번 회차 AI 예측</span><span class="sub" id="predictionsSummary"></span></div>
             <div id="predictionsContent">
                 <div class="state"><div class="spinner"></div><p>예측을 불러오는 중...</p></div>
             </div>
@@ -1962,7 +1962,13 @@ HTML_TEMPLATE_V2 = """
             }
 
             const win = data.winning_numbers;
-            summary.innerHTML = '예측기간 <b>' + (data.date_count || 0) + '</b>일 · 총 <b>' + (data.total_predictions || preds.length) + '</b>세트';
+            // [재설계 2026-07-04] 섹션 제목을 회차 상태에 맞춰 동적으로: 추첨 후엔 '예측 성적'(성적이
+            //   주인공), 추첨 전엔 'AI 예측'(예측이 주인공). 아래 카드 정렬/성적요약과 맥락 일치.
+            const _title = document.getElementById('predictionsTitle');
+            if (_title) _title.textContent = win ? '이번 회차 예측 성적' : '이번 회차 AI 예측';
+            summary.innerHTML = win
+                ? ('총 <b>' + (data.total_predictions || preds.length) + '</b>세트 · 잘 맞은 순')
+                : ('예측기간 <b>' + (data.date_count || 0) + '</b>일 · 총 <b>' + (data.total_predictions || preds.length) + '</b>세트');
 
             // 날짜별 그룹 -> 최신 날짜 세트를 카드로 강조
             const byDate = {};
@@ -1970,9 +1976,14 @@ HTML_TEMPLATE_V2 = """
             const dateKeys = Object.keys(byDate).sort();
             const featured = byDate[dateKeys[dateKeys.length - 1]] || preds;
 
+            // [재설계 2026-07-04] 추첨 후(win)엔 '잘 맞은 순'으로 정렬해 성적 좋은 세트를 위로.
+            // 추첨 전엔 생성 순서 그대로(예측 대기).
+            const featuredCards = win
+                ? featured.slice().sort((a, b) => (b.matches || 0) - (a.matches || 0))
+                : featured;
             // 예측 카드
             let cards = '';
-            featured.slice(0, 12).forEach((pred, i) => {
+            featuredCards.slice(0, 12).forEach((pred, i) => {
                 const conf = Math.round((pred.confidence || 0) * 100);
                 let balls = '';
                 (pred.numbers || []).forEach(n => {
@@ -2067,10 +2078,16 @@ HTML_TEMPLATE_V2 = """
                 if (heroMini) {
                     // [2026-06-28 코드리뷰 P3] 분모(=해당 회차 누적 예측 세트수)를 라벨에 명시.
                     //   avg/최고/3+ 는 5세트가 아니라 'total'세트 누적 집계라 '5세트 성과'로 오인 소지 -> 세트수 표기.
+                    // [재설계 2026-07-04] 성적 요약 강화: 최고일치를 크게 앞세우고, 등수 적중(5등+)을
+                    //   초록으로 강조 추가. 로또의 실질 성과는 '등수 당첨'이라 이걸 눈에 띄게 배치.
+                    const _rankHits = [1, 2, 3, 4, 5]
+                        .filter(r => rankCounts[r] > 0)
+                        .map(r => r + '등 ' + rankCounts[r] + '건').join(' · ');
                     heroMini.innerHTML =
-                        '<div><div class="mv">' + avg + '</div><div class="ml">평균 일치 (' + total + '세트)</div></div>' +
-                        '<div><div class="mv">' + maxMatches + '</div><div class="ml">최고 일치</div></div>' +
-                        '<div><div class="mv">' + threePlus + '</div><div class="ml">3개+ 적중</div></div>';
+                        '<div><div class="mv" style="color:var(--accent)">' + maxMatches + '<small style="font-size:12px;color:var(--muted)">개</small></div><div class="ml">최고 일치</div></div>' +
+                        '<div><div class="mv" style="color:' + (_rankHits ? 'var(--good)' : 'var(--muted)') + '">' + (_rankHits || '미당첨') + '</div><div class="ml">등수 적중</div></div>' +
+                        '<div><div class="mv">' + threePlus + '</div><div class="ml">3개+ 적중 세트</div></div>' +
+                        '<div><div class="mv">' + avg + '</div><div class="ml">평균 일치 (' + total + '세트)</div></div>';
                 }
 
                 // 공식 통계 비교 (collapsible)
