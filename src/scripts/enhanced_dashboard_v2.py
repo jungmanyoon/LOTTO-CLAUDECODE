@@ -1675,6 +1675,12 @@ HTML_TEMPLATE_V2 = """
                 <div id="optimizerStatusGrid"><div class="state"><div class="spinner"></div></div></div>
             </div>
 
+            <!-- [지속학습 가시화 2026-07-04] 회차별 실측 추이 - "회차가 쌓일수록 좋아지는가" 확인용 -->
+            <div class="card span-12" id="trendCard">
+                <div class="card-h"><span class="dot"></span>회차별 실측 추이<span class="sub" id="trendSub"></span></div>
+                <div id="trendChart"><div class="state">데이터 대기 중</div></div>
+            </div>
+
             <div class="span-12" id="discWrap" style="display:flex; flex-direction:column; gap: var(--gap);">
                 <details class="disc" id="logDetails">
                     <summary>전체 예측 로그 (회차별 상세)</summary>
@@ -2157,14 +2163,45 @@ HTML_TEMPLATE_V2 = """
             loadOptimizerStatus();
             setState('backtestGrid', 'loading', '백테스트 로딩 중...');
 
-            const [s, b, w] = await Promise.all([
+            const [s, b, w, t] = await Promise.all([
                 fetchJson('/api/stats'),
                 fetchJson('/api/backtest-performance'),
-                fetchJson('/api/winning-statistics')
+                fetchJson('/api/winning-statistics'),
+                fetchJson('/api/performance-trend')
             ]);
             displayBacktestPerformance(b.ok ? b.data : (b.data || {}));
             displayBasicStats(s.ok ? s.data : {});
             displayDistribution(s.ok ? s.data : {}, b.ok ? b.data : null);
+            displayTrend(t.ok ? t.data : {});
+        }
+
+        // [지속학습 가시화 2026-07-04] 회차별 실측 best-match 추이 패널.
+        // weekly_performance 실측 기록(성능 주장 아님) + 무작위 기대(초기하 정확값) 병기.
+        function displayTrend(tr) {
+            tr = tr || {};
+            const wrap = document.getElementById('trendChart');
+            const rows = tr.per_round || [];
+            if (!tr.rounds_checked || !rows.length) {
+                setState('trendChart', 'empty', '대조 완료된 회차가 아직 없습니다. 새 회차 발표 후 자동 누적됩니다.');
+                return;
+            }
+            document.getElementById('trendSub').textContent =
+                '최근 ' + tr.rounds_checked + '회 실측 (막대=최고 일치 개수, *=등수 당첨)';
+            let bars = '';
+            rows.forEach(r => {
+                const h = Math.max((r.best_match / 6) * 100, 4);
+                const hit = r.best_rank >= 1 && r.best_rank <= 5;
+                bars += '<div class="bar-col"><div class="bar ' + (hit ? 'hi' : '') + '" style="height:' + h + '%">' +
+                    '<span class="bar-v">' + r.best_match + (hit ? '*' : '') + '</span></div>' +
+                    '<span class="bar-l">' + r.round + '</span></div>';
+            });
+            wrap.innerHTML = '<div class="bar-chart">' + bars + '</div>' +
+                '<div style="display:flex; gap:16px; margin-top:8px; font-size:12px; color:var(--text-2); flex-wrap:wrap;">' +
+                '<span>등수적중(5등+) <b style="font-family:var(--font-mono);color:var(--good);">' + tr.rank_hit_rounds + '/' + tr.rounds_checked +
+                '회 (' + (tr.rank_hit_rate * 100).toFixed(1) + '%)</b></span>' +
+                '<span>무작위 기대 <b style="font-family:var(--font-mono);color:var(--text);">' + (tr.random_expect * 100).toFixed(1) + '%</b></span>' +
+                '<span>평균 best-match <b style="font-family:var(--font-mono);color:var(--text);">' + tr.avg_best_match.toFixed(2) + '</b></span>' +
+                '<span style="color:var(--muted);">실측 기록 (당첨확률 예측 아님)</span></div>';
         }
 
         function displayBacktestPerformance(bt) {
@@ -2477,6 +2514,20 @@ def get_performance():
     performance = fresh_dashboard.get_recent_performance()
     return jsonify(performance)
 
+@app.route('/api/performance-trend')
+def get_performance_trend():
+    """[지속학습 가시화 2026-07-04] 회차별 실측 성적 추이 API.
+
+    weekly_performance의 대조 완료 회차별 best_match/best_rank를 시간순으로 반환해
+    '회차가 쌓일수록 좋아지는가'를 사용자가 직접 확인하게 한다(실측 기록, 성능 주장 아님).
+    """
+    try:
+        from src.core.prediction_tracker import PredictionTracker
+        trend = PredictionTracker().get_recent_trend(20)
+        return jsonify(trend)
+    except Exception as e:
+        return jsonify({'rounds_checked': 0, 'error': str(e)})
+
 @app.route('/api/backtest-performance')
 def get_backtest_performance():
     """백테스팅 성능 API"""
@@ -2646,8 +2697,13 @@ def generate_new_predictions():
             try:
                 from src.core.extremeness_pool_predictor import ExtremenessPoolPredictor
                 import random as _random
-                _target_K = int(os.environ.get('LOTTO_TARGET_POOL_K', '1500000'))
-                _epp = ExtremenessPoolPredictor(db_manager, target_K=_target_K)
+                # [지속학습 감사 2026-07-04 P2] 정책 json(SSOT) 상속: 과거엔 K를 env/하드코딩
+                # 1.5M으로 '명시 전달'해 자동 K 재탐색이 effective_target_K를 바꿔도 대시보드
+                # 예측은 옛 K 풀로 만들어지는 잠재 단절이 있었다. env 미지정 시 target_K=None
+                # -> predictor가 정책 json -> env -> 기본값 순으로 해석(main.py와 동일 경로).
+                _k_env = os.environ.get('LOTTO_TARGET_POOL_K')
+                _epp = ExtremenessPoolPredictor(
+                    db_manager, target_K=int(_k_env) if _k_env else None)
                 _epp.build_pool()  # 학습회차+K+가중치 동일 시 디스크 캐시 재사용
                 # [2026-06-05] '새 예측 생성' 버튼을 누를 때마다 다른 5세트가 나오도록 seed 를 매번
                 # 무작위로 바꾼다. (기존 seed=42 고정 -> 매번 동일 5세트 -> 누적 불가 문제 해결)
@@ -2656,7 +2712,7 @@ def generate_new_predictions():
                 _epp_preds = _epp.predict(num_sets=5, seed=_seed)
                 if _epp_preds:
                     final_predictions.extend(_epp_preds)
-                    logging.info(f"[API] 극단성 풀 경로로 {len(final_predictions)}개 예측 생성 (K={_target_K:,})")
+                    logging.info(f"[API] 극단성 풀 경로로 {len(final_predictions)}개 예측 생성 (K={_epp.target_K:,})")
             except Exception as e:
                 import traceback
                 logging.warning(f"[API] 극단성 풀 경로 실패 - QuickEngine으로 폴백: {e}")
@@ -2767,6 +2823,14 @@ def generate_new_predictions():
         prediction_tracker = PredictionTracker()
 
         # 예측 형식 변환 (main.py와 동일) - JSON 직렬화를 위해 numpy 타입을 Python 타입으로 변환
+        # [2026-07-02] ExtremenessPoolPredictor.predict()는 characteristics를 반환하지 않아
+        # 이 경로로 저장된 세트는 특성이 전부 빈 {}였다. main.py 사이클 저장과 동일하게
+        # 저장 직전에 특성을 계산해 채운다.
+        try:
+            from main import analyze_number_characteristics as _analyze_chars
+        except ImportError:
+            _analyze_chars = None
+
         predictions_to_save = []
         for idx, pred in enumerate(final_predictions, 1):
             # 숫자 리스트를 Python int로 변환 (numpy int32 등을 처리)
@@ -2776,11 +2840,18 @@ def generate_new_predictions():
             elif isinstance(numbers, list):  # 리스트인 경우 각 요소를 int로 변환
                 numbers = [int(num) for num in numbers]
 
+            characteristics = pred.get('characteristics', {}) if isinstance(pred, dict) else {}
+            if not characteristics and _analyze_chars is not None:
+                try:
+                    characteristics = _analyze_chars(numbers)
+                except Exception:
+                    characteristics = {}
+
             predictions_to_save.append({
                 'numbers': numbers,
                 'confidence': float(pred.get('confidence', 0.7)) if isinstance(pred, dict) else 0.7,
                 'source': pred.get('source', 'Dashboard') if isinstance(pred, dict) else 'Dashboard',
-                'characteristics': pred.get('characteristics', {}) if isinstance(pred, dict) else {}
+                'characteristics': characteristics
             })
 
         # 저장 (누적 저장)

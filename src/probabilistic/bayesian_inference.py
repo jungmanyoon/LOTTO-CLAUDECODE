@@ -146,14 +146,9 @@ class BayesianFilter:
             for consec_count, params in pattern_counts['consecutive'].items():
                 self.prior_beliefs[f'patterns.consecutive.{consec_count}'] = params
         
-        # 3. 상관관계 사전분포
-        correlation_matrix = self._calculate_correlation_matrix(numbers_list)
-        self.prior_beliefs['correlations'] = {
-            'distribution': 'normal',
-            'params': correlation_matrix,
-            'covariance': np.eye(45) * 0.1  # 초기 불확실성
-        }
-        
+        # [지속학습 감사 2026-07-04 P2] 상관관계 사전분포 제거: 소비자 0인 죽은 연산이었다
+        # (위 _calculate_correlation_matrix 제거 주석 참조).
+
         logging.info(f"경험적 사전분포 초기화 완료 (데이터: {len(historical_data)}개)")
     
     def _calculate_pattern_statistics(self, numbers_list: List[List[int]]) -> Dict:
@@ -220,37 +215,21 @@ class BayesianFilter:
             failures = total - successes
             pattern_params['consecutive'][i] = {
                 'distribution': 'beta',
-                'params': (successes + self.model_params['alpha'], 
+                'params': (successes + self.model_params['alpha'],
                           failures + self.model_params['beta'])
             }
-        
+
+        # [지속학습 감사 2026-07-04 P2] prior 표본수 기록 - 사후 업데이트에서 정밀도 가중
+        # 결합(sum_range)에 사용. 패턴 dict가 아니라 메타값이므로 소비자는 .get으로만 접근.
+        pattern_params['n_samples'] = total
+
         return pattern_params
-    
-    def _calculate_correlation_matrix(self, numbers_list: List[List[int]]) -> 'np.ndarray':
-        """번호 간 상관관계 행렬 계산
-        
-        Args:
-            numbers_list: 당첨번호 리스트
-            
-        Returns:
-            np.ndarray: 상관관계 행렬
-        """
-        # 공출현 행렬
-        co_occurrence = np.zeros((45, 45))
-        
-        for numbers in numbers_list:
-            for i, num1 in enumerate(numbers):
-                for j, num2 in enumerate(numbers):
-                    if i != j:
-                        co_occurrence[num1-1][num2-1] += 1
-        
-        # 정규화
-        total_draws = len(numbers_list)
-        if total_draws > 0:
-            co_occurrence /= total_draws
-        
-        return co_occurrence
-    
+
+    # [지속학습 감사 2026-07-04 P2] _calculate_correlation_matrix 제거: 45x45 공출현 행렬을
+    # 매 사이클 계산해 prior_beliefs['correlations']에 저장했으나, 사후 업데이트/우도 계산/
+    # 시각화 어디에서도 읽지 않는 죽은 연산이었다(레포 전체 소비자 0 - grep 확인).
+    # '계속하는 학습'처럼 보이지만 아무 데도 반영되지 않는 의례라 근본 제거.
+
     def update_beliefs(self, evidence: Dict[str, Any], prior_key: str) -> Dict[str, Any]:
         """베이지안 업데이트 수행
         
@@ -552,18 +531,46 @@ class BayesianFilter:
 
         patterns_posterior = {'odd_even': {}}
 
-        # 홀짝: 베타 켤레 업데이트 (균등 prior alpha/beta + 최근 관측 successes/failures)
+        # 홀짝: 베타 켤레 업데이트
+        # [지속학습 감사 2026-07-04 P2] 경험적 prior 결합: 과거엔 균등 prior(alpha0,beta0)+최근
+        # 10회 관측만 써서 '회차 누적으로 분포 추정이 정밀해진다'는 명제가 패턴 축에서 단절됐다
+        # (전체 역사 1220+회 정보 폐기, 항상 표본 10개 통계). -> 경험 prior의 베타 pseudo-count
+        # (전체 역사 성공/실패 + 평활)에 최근 관측을 켤레 업데이트하는 정석으로 교체.
+        # prior 부재/형식 불일치 시에만 기존 균등 폴백(하위호환).
+        _prior_oe = prior_patterns.get('odd_even', {}) if isinstance(prior_patterns.get('odd_even'), dict) else {}
         for odd_count, count in pattern_evidence['odd_even'].items():
             successes = count
             failures = total_draws - count
+            _pp = _prior_oe.get(odd_count, {})
+            _pparams = _pp.get('params') if isinstance(_pp, dict) else None
+            if isinstance(_pparams, (tuple, list)) and len(_pparams) == 2:
+                a_pri, b_pri = float(_pparams[0]), float(_pparams[1])
+            else:
+                a_pri, b_pri = alpha0, beta0
             patterns_posterior['odd_even'][odd_count] = {
                 'distribution': 'beta',
-                'params': (alpha0 + successes, beta0 + failures)
+                'params': (a_pri + successes, b_pri + failures)
             }
 
-        # 합계: 최근 관측(>=2)이면 정규분포 파라미터 갱신, 부족하면 prior의 sum_range 보존
+        # 합계: 정밀도(표본수) 가중 켤레 결합
+        # [지속학습 감사 2026-07-04 P2] 과거엔 최근 관측 >=2면 '최근 10회만'의 mean/std로 대체
+        # (1220회 prior 폐기 + 표본 10개 std는 노이즈). -> prior 표본수(n_samples)와 최근 관측수를
+        # 정밀도 가중으로 결합해 평균을 갱신하고, std는 대표본(prior) 추정을 유지한다.
         sum_obs = pattern_evidence['sum_observations']
-        if len(sum_obs) >= 2:
+        _n_pri = int(prior_patterns.get('n_samples', 0) or 0)
+        _prior_sr = prior_patterns.get('sum_range') if isinstance(prior_patterns.get('sum_range'), dict) else None
+        if len(sum_obs) >= 2 and _n_pri > 0 and _prior_sr:
+            _sp = _prior_sr.get('params', {})
+            _mu0 = float(_sp.get('mean', 138.3))
+            _sd0 = float(_sp.get('std', 30.8)) or 1.0
+            _n_rec = len(sum_obs)
+            _mu = (_n_pri * _mu0 + _n_rec * float(np.mean(sum_obs))) / (_n_pri + _n_rec)
+            patterns_posterior['sum_range'] = {
+                'distribution': 'normal',
+                'params': {'mean': _mu, 'std': _sd0}
+            }
+        elif len(sum_obs) >= 2:
+            # prior 부재 폴백(기존 동작 보존)
             patterns_posterior['sum_range'] = {
                 'distribution': 'normal',
                 'params': {

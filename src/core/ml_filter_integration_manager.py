@@ -287,6 +287,15 @@ class MLFilterIntegrationManager:
                 logging.warning("Ensemble 학습 데이터 부족")
                 return False
 
+            # [지속학습 감사 2026-07-04 P1] 학습 회차 도장을 저장 전에 설정 - 과거엔 미설정(None)
+            # 채로 내부 save_models가 프로덕션 디렉토리(models/filtered_ensemble)에 trained_round=null
+            # 을 영속화해, main.py 재사용 가드의 None 구멍과 결합 시 stale 모델 영구 재사용의
+            # 트리거가 됐다(cp5 수정과 동일 패턴: 인자 대신 속성으로 도장).
+            try:
+                self.filtered_ensemble.trained_round = self.db_manager.get_last_round()
+            except Exception as _tr_e:
+                logging.debug(f"학습 회차 도장 설정 실패(저장은 진행): {_tr_e}")
+
             results = self.filtered_ensemble.train_with_filtered_pool(
                 historical_data,
                 filtered_pool,

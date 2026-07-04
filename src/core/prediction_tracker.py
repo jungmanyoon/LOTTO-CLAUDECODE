@@ -123,7 +123,7 @@ class PredictionTracker:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
+
                 # replace=True이면 기존 예측 삭제
                 if replace:
                     cursor.execute("DELETE FROM predictions WHERE round = ?", (round_num,))
@@ -134,7 +134,33 @@ class PredictionTracker:
                     cursor.execute("SELECT MAX(set_number) FROM predictions WHERE round = ?", (round_num,))
                     result = cursor.fetchone()
                     start_set_number = (result[0] + 1) if result[0] else 1
-                
+
+                # 같은 회차에 이미 저장된 조합(6개 번호 동일)은 재저장하지 않는다.
+                # 같은 조합을 여러 세트로 사면 커버리지가 그만큼 낭비되므로
+                # (핵심 전략: 같은 예산으로 서로 다른 조합 커버 최대화) 신규 조합만 누적한다.
+                existing_combos = set()
+                if not replace:
+                    cursor.execute("SELECT numbers FROM predictions WHERE round = ?", (round_num,))
+                    for (numbers_text,) in cursor.fetchall():
+                        try:
+                            existing_combos.add(tuple(sorted(int(x) for x in numbers_text.split(','))))
+                        except ValueError:
+                            continue
+                unique_predictions = []
+                skipped_count = 0
+                for pred in predictions:
+                    combo_key = tuple(sorted(int(n) for n in pred['numbers']))
+                    if combo_key in existing_combos:
+                        skipped_count += 1
+                        continue
+                    existing_combos.add(combo_key)
+                    unique_predictions.append(pred)
+                if skipped_count:
+                    self.logger.info(
+                        f"{round_num}회차 중복 조합 {skipped_count}세트 저장 생략 "
+                        f"(신규 {len(unique_predictions)}세트만 저장)")
+                predictions = unique_predictions
+
                 # 예측 저장
                 for idx, pred in enumerate(predictions):
                     set_number = start_set_number + idx
@@ -170,10 +196,14 @@ class PredictionTracker:
                 
                 conn.commit()
                 
-                # JSON 백업 저장
-                self._save_json_backup(round_num, predictions, replace=replace)
-                
-                self.logger.info(f"{round_num}회차 예측 {len(predictions)}세트 저장 완료")
+                # JSON 백업 저장 (중복 제거된 신규분만)
+                if predictions or replace:
+                    self._save_json_backup(round_num, predictions, replace=replace)
+
+                if predictions:
+                    self.logger.info(f"{round_num}회차 예측 {len(predictions)}세트 저장 완료")
+                else:
+                    self.logger.info(f"{round_num}회차 신규 저장 없음 (요청분 전체가 기존 조합과 중복)")
                 return True
                 
         except Exception as e:
@@ -317,10 +347,36 @@ class PredictionTracker:
             self.logger.error(f"예측 조회 실패: {e}")
             return []
     
+    def get_unchecked_rounds(self) -> List[int]:
+        """
+        아직 당첨 대조를 하지 않은 회차 전체 조회 (오래된 회차부터)
+
+        기존 get_latest_unchecked는 최신 1개 회차만 반환해, 최신 회차가
+        미추첨(waiting)이면 그 이전 회차들(예: 1228, 1230)의 대조가 영구히
+        스킵되는 문제가 있었다. 소급 대조를 위해 전체 목록을 제공한다.
+
+        Returns:
+            미확인 회차 번호 목록 (오름차순)
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT DISTINCT p.round
+                    FROM predictions p
+                    LEFT JOIN weekly_performance wp ON p.round = wp.round
+                    WHERE wp.checked = 0 OR wp.checked IS NULL
+                    ORDER BY p.round ASC
+                """)
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            self.logger.error(f"미확인 회차 목록 조회 실패: {e}")
+            return []
+
     def get_latest_unchecked(self) -> Optional[Dict]:
         """
         아직 확인하지 않은 최신 예측 조회
-        
+
         Returns:
             미확인 예측 정보 또는 None
         """
@@ -390,8 +446,12 @@ class PredictionTracker:
                 cursor = conn.cursor()
                 
                 # 최근 성과 조회
+                # [지속학습 감사 2026-07-04 P1] 집계 쿼리의 ORDER BY/LIMIT은 (1행짜리) 집계 결과에
+                # 적용될 뿐 입력 행을 제한하지 않아, 분자(당첨 합계)는 '전체' 회차인데 분모
+                # (예측 세트 수)만 최근 N회로 제한돼 win_rate가 수 배 부풀려지던 SQL 버그 수정 -
+                # 분자도 동일한 최근 N회 서브쿼리로 제한(분자/분모 회차 집합 일치).
                 cursor.execute("""
-                    SELECT 
+                    SELECT
                         COUNT(DISTINCT round) as total_rounds,
                         SUM(rank_1_count) as total_rank_1,
                         SUM(rank_2_count) as total_rank_2,
@@ -401,15 +461,25 @@ class PredictionTracker:
                         SUM(total_prize) as total_prize,
                         AVG(accuracy_rate) as avg_accuracy
                     FROM weekly_performance
-                    WHERE checked = 1
-                    ORDER BY round DESC
-                    LIMIT ?
+                    WHERE checked = 1 AND round IN (
+                        SELECT round FROM weekly_performance WHERE checked = 1
+                        ORDER BY round DESC LIMIT ?
+                    )
                 """, (recent_rounds,))
                 
                 row = cursor.fetchone()
                 if row:
-                    total_wins = row[1] + row[2] + row[3] + row[4] + row[5]
-                    total_predictions = row[0] * 5  # 회차당 5세트
+                    total_wins = (row[1] or 0) + (row[2] or 0) + (row[3] or 0) + (row[4] or 0) + (row[5] or 0)
+                    # 실제 저장된 예측 세트 수 집계 (과거 '회차당 5세트' 하드코딩은
+                    # 누적 저장으로 회차당 세트 수가 제각각이라 분모가 왜곡됐음)
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM predictions
+                        WHERE round IN (
+                            SELECT round FROM weekly_performance WHERE checked = 1
+                            ORDER BY round DESC LIMIT ?
+                        )
+                    """, (recent_rounds,))
+                    total_predictions = cursor.fetchone()[0] or 0
                     
                     return {
                         'total_rounds': row[0],
@@ -440,3 +510,55 @@ class PredictionTracker:
         except Exception as e:
             self.logger.error(f"성과 요약 조회 실패: {e}")
             return {}
+
+    def get_recent_trend(self, recent_rounds: int = 20) -> Dict:
+        """회차별 실측 성적 추이 요약 (지속학습 가시화 2026-07-04).
+
+        weekly_performance의 대조 완료(checked=1) 회차를 최신순 N개 조회해
+        등수적중률(5등+ = 3개 일치 이상)과 초기하 정확값 기반 무작위 기대를 함께 반환한다.
+        NO FAKE DATA: 전부 실측 기록 + 폐쇄형 확률(조합론 정확값). 성능 주장 아님.
+        """
+        try:
+            from math import comb
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # [정직성] 세트 수는 prediction_count 컬럼(기본 5)이 아니라 predictions 테이블의
+                # '실제' 저장 세트 수를 쓴다 - 대시보드 버튼 누적 등으로 회차당 세트가 5를 크게
+                # 넘을 수 있고(실측 ~65/회차 사례), 세트가 많을수록 무작위 기대도 커져야
+                # 공정한 비교가 된다(과소 기대 = 가짜 우위 표시 방지).
+                cursor.execute("""
+                    SELECT w.round, w.best_match, w.best_rank,
+                           (SELECT COUNT(*) FROM predictions p WHERE p.round = w.round) AS sets
+                    FROM weekly_performance w
+                    WHERE w.checked = 1
+                    ORDER BY w.round DESC LIMIT ?
+                """, (recent_rounds,))
+                rows = cursor.fetchall()
+            if not rows:
+                return {'rounds_checked': 0}
+
+            # 무작위 기대: 단일 조합 3개+ 일치 확률(초기하 정확값) -> 회차별 세트수 k에 대해
+            # 1-(1-p3)^k 의 평균 (회차마다 저장 세트 수가 다를 수 있어 회차별 계산)
+            _c456 = comb(45, 6)
+            p3 = sum(comb(6, m) * comb(39, 6 - m) for m in (3, 4, 5, 6)) / _c456
+            expects = [1.0 - (1.0 - p3) ** max(int(r[3] or 5), 1) for r in rows]
+
+            rank_hits = sum(1 for r in rows if r[2] and 1 <= int(r[2]) <= 5)
+            n = len(rows)
+            return {
+                'rounds_checked': n,
+                'rank_hit_rounds': rank_hits,
+                'rank_hit_rate': rank_hits / n,
+                'random_expect': sum(expects) / n,
+                'avg_best_match': sum(int(r[1] or 0) for r in rows) / n,
+                # 최신순 조회를 회차 오름차순으로 뒤집어 '시간 흐름' 표시
+                'recent5': [(int(r[0]), int(r[1] or 0)) for r in reversed(rows[:5])],
+                'per_round': [
+                    {'round': int(r[0]), 'best_match': int(r[1] or 0),
+                     'best_rank': int(r[2] or 0), 'sets': int(r[3] or 5)}
+                    for r in reversed(rows)
+                ],
+            }
+        except Exception as e:
+            self.logger.error(f"추이 요약 조회 실패: {e}")
+            return {'rounds_checked': 0}

@@ -3226,6 +3226,10 @@ def main():
                         #  미상(None, 레거시 h5/미학습)이면 재학습한다. 재학습 실패 시 is_trained=False로
                         #  남아 predict_next_numbers가 []를 반환하므로 stale 예측이 나가지 않는다.
                         _lstm_round = getattr(lstm_predictor, 'trained_round', None)
+                        if lstm_predictor.is_trained and _lstm_round == latest_round:
+                            # [지속학습 가시화 2026-07-04 P3] 재사용도 명시 로그(앙상블과 대칭) -
+                            # 과거엔 무언 재사용이라 로그만으로 LSTM 신선도 감사가 불가능했다.
+                            logging.info(f"  - [최적화] 저장된 LSTM 모델 재사용 (학습회차 {_lstm_round}=최신 {latest_round}, 재학습 스킵)")
                         if (not lstm_predictor.is_trained) or (_lstm_round != latest_round):
                             if lstm_predictor.is_trained and _lstm_round != latest_round:
                                 logging.info(f"  - LSTM 캐시 회차({_lstm_round}) != 최신({latest_round}) -> 재학습")
@@ -3268,7 +3272,12 @@ def main():
                             if ensemble_predictor.is_trained and _cached_round == latest_round:
                                 _ens_reuse = True
                                 logging.info(f"  - [최적화] 저장된 앙상블 모델 재사용 (학습회차 {_cached_round}=최신 {latest_round}, 재학습/미세조정 스킵)")
-                            elif _cached_round is not None:
+                            elif ensemble_predictor.is_trained or _cached_round is not None:
+                                # [지속학습 감사 2026-07-04 P1] 도장=None 구멍 봉합: 과거엔 조건이
+                                # `_cached_round is not None`뿐이라 '학습됨 + 도장 None' 캐시가 이
+                                # 분기를 통과하지 못해 재학습 없이 그대로 쓰이고, 이후 fine-tune
+                                # 단계에서 최신 도장을 받아 stale 모델이 영구 재사용될 수 있었다
+                                # (LSTM 가드는 None이면 재학습 - 대칭화).
                                 logging.info(f"  - 앙상블 캐시 회차({_cached_round}) != 최신({latest_round}) -> 재학습")
                                 ensemble_predictor.is_trained = False
                         except Exception as _load_e:
@@ -3355,9 +3364,13 @@ def main():
                                         winning_numbers, num_predictions=args.predictions)
                                     if _rec_preds:
                                         ensemble_predictions = _rec_preds
+                                        # [지속학습 가시화 2026-07-04 P3] 복구 모델의 학습회차 명시 -
+                                        # stale 캐시 복구가 회차 표기 없이 나가던 것을 정직화.
+                                        _rec_round = getattr(_ens_recovery, 'trained_round', None)
                                         logging.info(
-                                            f"  - [복구] fresh 0개 -> 검증된 캐시 앙상블 모델로 "
-                                            f"{len(ensemble_predictions)}개 예측 복구")
+                                            f"  - [복구] fresh 0개 -> 캐시 앙상블 모델(학습회차 {_rec_round}, "
+                                            f"최신 {latest_round})로 {len(ensemble_predictions)}개 예측 복구"
+                                            + ("" if _rec_round == latest_round else " [주의: 이전 회차 모델]"))
                             except Exception as _rec_e:
                                 logging.debug(f"  - 앙상블 캐시 복구 시도 실패: {_rec_e}")
                         # [가시화 2026-06-03] 캐시 복구도 실패해 여전히 0개면 사일런트 실패(scaler 입력
@@ -3925,35 +3938,11 @@ def main():
             logging.info("="*60)
             
             check_result = result_checker.check_new_results()
-            
-            # 당첨번호가 필터를 통과했는지 검증
-            if check_result and check_result.get('new_results'):
-                for result in check_result['new_results']:
-                    round_num = result['round']
-                    winning_numbers = result['winning_numbers']
-                    
-                    logging.info(f"\n[필터 검증] {round_num}회차 당첨번호 필터 통과 여부 확인...")
-                    validation = filter_validator.validate_winning_numbers(round_num, winning_numbers)
-                    
-                    if not validation['passed_all_filters']:
-                        # [2026-06-14 honesty] 이 16필터 검증은 최종예측(극단성 풀)에 미사용인 레거시 계층이고,
-                        #  사용자 확정 전략상 '당첨번호 일부가 컷오프됨'은 버그가 아니라 의도된 동작(통과율=참고지표,
-                        #  출현율 낮은 극단 최대 제거 우선)이다. -> CRITICAL ALERT를 INFO 참고로 강등(거짓 경보 제거).
-                        logging.info(f"[참고/레거시] {round_num}회차 당첨번호가 옛 16필터 기준 일부 컷오프됨 "
-                                     f"(필터: {', '.join([f['name'] for f in validation['failed_filters']])}) "
-                                     f"- 최종 5세트(극단성 풀)와 무관, 의도된 동작")
-                        
-                        # 필터 조정 제안
-                        suggestions = filter_validator.get_filter_adjustment_suggestions()
-                        if suggestions:
-                            logging.warning("\n[IDEA] 필터 조정 제안:")
-                            for suggestion in suggestions:
-                                logging.warning(f"  - {suggestion['filter']}: {suggestion['action']} (우선순위: {suggestion['priority']})")
-                    else:
-                        logging.info(f"[OK] {round_num}회차 당첨번호가 모든 필터를 통과했습니다.")
-                
-                # 필터 성능 보고서 출력
-                logging.info(filter_validator.generate_validation_report())
+
+            # [지속학습 감사 2026-07-04 P2] 죽은 분기 제거: check_result.get('new_results') 블록
+            # (당첨번호 옛 16필터 통과 검증 + 조정 제안)은 result_checker.check_new_results()가
+            # 'new_results' 키를 반환한 적이 없어(전 반환 경로 grep 확인) 도달 불능 죽은 코드였다.
+            # 레거시 16필터 검증 자체가 최종예측(극단성 풀) 무관 참고 계층이므로 살리지 않고 제거.
             # check_result가 빈 dict이면 KeyError 발생 → .get()으로 방어 (N-W23)
             check_status = check_result.get('status', 'unknown')
             if check_status == 'checked':
@@ -3963,7 +3952,23 @@ def main():
                 logging.info(f"{check_result.get('round', '?')}회차 당첨번호가 아직 발표되지 않았습니다.")
             else:
                 logging.info("확인할 이전 예측이 없습니다.")
-                
+
+            # [지속학습 가시화 2026-07-04 P3] 회차별 실측 성적 추이 요약 - weekly_performance에
+            # 데이터가 쌓이는데 어디서도 추이를 보여주지 않아 "회차가 쌓일수록 좋아지는가"를
+            # 사용자가 확인할 수단이 없던 마지막 표시층 단절을 연결. (실측 기록 요약일 뿐
+            # 성능 주장 아님. 무작위 기대 = 초기하 정확값 기반.)
+            try:
+                _trend = prediction_tracker.get_recent_trend(20)
+                if _trend and _trend.get('rounds_checked', 0) >= 3:
+                    logging.info(
+                        f"[추이] 최근 {_trend['rounds_checked']}회 실측: "
+                        f"등수적중(5등+) {_trend['rank_hit_rounds']}회 ({_trend['rank_hit_rate']*100:.1f}%) "
+                        f"vs 무작위 기대 {_trend['random_expect']*100:.1f}% | "
+                        f"평균 best-match {_trend['avg_best_match']:.2f} | "
+                        f"최근 5회 best-match {_trend['recent5']}")
+            except Exception as _te:
+                logging.debug(f"[추이] 요약 생략({_te})")
+
         except Exception as e:
             logging.error(f"예측 결과 확인 중 오류: {e}")
         

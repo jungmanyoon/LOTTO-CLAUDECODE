@@ -152,9 +152,18 @@ class ResultChecker:
             
             # 주간 성과 업데이트
             best_rank = min([r for r in rank_distribution if rank_distribution[r] > 0], default=0)
-            self._update_weekly_performance(round_num, best_rank, rank_distribution, 
-                                           total_prize, avg_matches)
-            
+            best_match = max([m for m in match_distribution if match_distribution[m] > 0], default=0)
+            self._update_weekly_performance(round_num, best_rank, rank_distribution,
+                                           total_prize, avg_matches, best_match)
+
+            # [지속학습 감사 2026-07-04 P2] JSON 백업(week_*.json)에도 대조 결과 반영.
+            # 과거 _update_json_result는 호출처 0인 죽은 메서드라 백업 파일의 result.checked가
+            # 영구 false로 남아 '미대조'로 거짓 표시됐다 -> 대조 완료 지점에 배선(실패해도 대조는 유효).
+            try:
+                self._update_json_result(round_num, actual_numbers, bonus_number, results)
+            except Exception as _je:
+                self.logger.debug(f"JSON 백업 결과 업데이트 생략: {_je}")
+
             # 상세 보고서 생성
             detailed_report = self.generate_detailed_report(
                 round_num, actual_numbers, bonus_number, results, 
@@ -191,15 +200,22 @@ class ResultChecker:
             확인 결과
         """
         try:
-            # 미확인 예측 조회
-            unchecked = self.prediction_tracker.get_latest_unchecked()
-            if not unchecked:
+            # 미확인 회차 전체 조회 (최신 1개만 보던 기존 방식은 최신 회차가
+            # 미추첨이면 이전 회차 대조가 영구 스킵되는 결함이 있었음)
+            unchecked_rounds = self.prediction_tracker.get_unchecked_rounds()
+            if not unchecked_rounds:
                 self.logger.info("확인할 예측이 없습니다.")
                 return {'status': 'no_predictions'}
-            
-            round_num = unchecked['round']
-            # 모든 누적된 예측을 대조하도록 변경
-            return self.check_all_predictions_for_round(round_num)
+
+            last_result = {'status': 'no_predictions'}
+            for round_num in unchecked_rounds:
+                result = self.check_all_predictions_for_round(round_num)
+                # 당첨번호 미발표(waiting) 회차는 다음 실행 때 재시도
+                if result.get('status') != 'waiting':
+                    last_result = result
+                elif last_result.get('status') == 'no_predictions':
+                    last_result = result
+            return last_result
 
         except Exception as e:
             self.logger.error(f"결과 확인 실패: {e}")
@@ -285,22 +301,19 @@ class ResultChecker:
     
     def _update_weekly_performance(self, round_num: int, best_rank: int,
                                   rank_counts: Dict, total_prize: int,
-                                  accuracy_rate: float):
-        """주간 성과 업데이트"""
+                                  accuracy_rate: float, best_match: int = None):
+        """주간 성과 업데이트
+
+        best_match: 실제 최고 일치 개수. 과거에는 best_rank에서 역산해
+        3개 미만 일치(미당첨)면 무조건 0으로 기록되는 왜곡이 있었다.
+        """
         try:
             with sqlite3.connect(self.prediction_tracker.db_path) as conn:
                 cursor = conn.cursor()
-                
-                # 최고 일치 개수 계산
-                best_match = 0
-                if best_rank == 1:
-                    best_match = 6
-                elif best_rank == 2 or best_rank == 3:
-                    best_match = 5
-                elif best_rank == 4:
-                    best_match = 4
-                elif best_rank == 5:
-                    best_match = 3
+
+                if best_match is None:
+                    # 하위호환 폴백: best_rank 역산 (3개 미만 일치는 0)
+                    best_match = {1: 6, 2: 5, 3: 5, 4: 4, 5: 3}.get(best_rank, 0)
                 
                 cursor.execute("""
                     UPDATE weekly_performance

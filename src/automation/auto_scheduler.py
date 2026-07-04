@@ -356,6 +356,16 @@ class AutoScheduler:
             )
             
             if result.returncode == 0:
+                # [지속학습 감사 2026-07-04 P2] 부모 프로세스 캐시 무효화: 저장은 subprocess
+                # (--fetch-only, 자식)에서 일어나 자식의 invalidate_cache만 호출된다. 부모(상주)
+                # 프로세스의 클래스 레벨 인메모리 캐시(_winning_numbers_cache 등)가 남으면 이어지는
+                # 갱신 체인(패턴 재분석/16필터 기준 재계산 - 보조계층)이 새 회차 없는 stale 데이터로
+                # 돌 수 있어 부모 쪽도 명시 무효화한다(최종예측 경로는 무캐시 직조회라 원래 안전).
+                try:
+                    from src.core.specialized_databases import LottoNumbersDB
+                    LottoNumbersDB.invalidate_cache()
+                except Exception as _ic_e:
+                    logging.debug(f"[AutoScheduler] 부모 캐시 무효화 생략: {_ic_e}")
                 logging.info(f"[AutoScheduler] 회차 {round_num} 데이터 저장 완료")
                 return True
             else:
@@ -658,7 +668,7 @@ class AutoScheduler:
         호출된다. plain main.py(1사이클 후 종료)에서는 main.py 의 동기 stale 체크가 담당한다.
         """
         try:
-            logging.info("[AutoScheduler] 5\\5: 극단성 풀 K 자동 재탐색 시작...")
+            logging.info("[AutoScheduler] 5/5: 극단성 풀 K 자동 재탐색 시작...")
             from src.core import extremeness_threshold_selector as sel
             policy = sel.refresh_policy(self.db_manager)
             logging.info(
