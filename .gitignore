@@ -103,11 +103,21 @@ DYNAMIC_*.md
 .python-version
 
 # Runtime artifacts (런타임 산물 - 커밋 대상 아님, tracked 0 확인 후 활성화 2026-07-04)
-# data/(13GB: backup/_archive/predictions/filters DB), cache/(270MB 모델 캐시), models/(학습 모델)
+# data/(13GB: backup/_archive/filters/combinations DB), cache/(270MB 모델 캐시), models/(학습 모델)
 # 실수로 git add . 시 거대 산물이 커밋되는 것을 방지한다.
-data/
+# data/ 는 'data/*'(내용물)로 무시한다 - 'data/'(디렉토리 통째)로 하면 아래 '!' 예외로
+# 되살릴 수 없기 때문(git 규칙: 부모 디렉토리가 제외되면 자식 재포함 불가).
+data/*
 models/
 cache/
+# [무료 24/7 Phase 1 예외] GitHub Actions 주간 배치가 '상태 유지'에 쓰는 최소 파일만 추적:
+#  - lotto_numbers.db(228KB): 당첨번호 = 진짜 상태(다음 주 실행이 이어받음)
+#  - data/predictions/: 예측 결과(작음). 나머지 캐시/백업/8.5GB combinations.db는 계속 무시.
+!data/lotto_numbers.db
+!data/predictions/
+!data/predictions/**
+# 단 예측 폴더 안의 백업 부산물(.bak)은 커밋 제외 (예외를 다시 좁힘)
+data/predictions/**/*.bak*
 # 대시보드 UI 재설계 실험물(스크린샷+미채택 시안) - 로컬 참고용, 레포 제외 2026-07-04
 docs/ui_samples/
 

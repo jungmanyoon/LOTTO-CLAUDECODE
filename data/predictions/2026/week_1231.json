@@ -1,0 +1,676 @@
+{
+  "round": 1231,
+  "prediction_date": "2026-06-27T21:40:28.260642+09:00",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [
+        10,
+        11,
+        15,
+        27,
+        31,
+        38
+      ],
+      "confidence": 0.9482,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 2,
+      "numbers": [
+        3,
+        17,
+        18,
+        28,
+        33,
+        34
+      ],
+      "confidence": 0.9366,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 3,
+      "numbers": [
+        12,
+        13,
+        26,
+        29,
+        36,
+        45
+      ],
+      "confidence": 0.947,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 4,
+      "numbers": [
+        6,
+        19,
+        20,
+        25,
+        37,
+        39
+      ],
+      "confidence": 0.9475,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 5,
+      "numbers": [
+        5,
+        7,
+        21,
+        24,
+        35,
+        40
+      ],
+      "confidence": 0.926,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 16,
+      "numbers": [
+        7,
+        12,
+        18,
+        27,
+        31,
+        36
+      ],
+      "confidence": 0.9456,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 131,
+        "average": 21.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 17,
+      "numbers": [
+        13,
+        16,
+        30,
+        33,
+        37,
+        45
+      ],
+      "confidence": 0.9413,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 174,
+        "average": 29.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          0,
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "set": 18,
+      "numbers": [
+        3,
+        15,
+        19,
+        28,
+        34,
+        38
+      ],
+      "confidence": 0.9482,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 137,
+        "average": 22.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 19,
+      "numbers": [
+        5,
+        17,
+        20,
+        24,
+        39,
+        40
+      ],
+      "confidence": 0.9498,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 145,
+        "average": 24.2,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 20,
+      "numbers": [
+        6,
+        11,
+        14,
+        26,
+        29,
+        35
+      ],
+      "confidence": 0.9454,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 121,
+        "average": 20.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 26,
+      "numbers": [
+        3,
+        17,
+        18,
+        27,
+        34,
+        36
+      ],
+      "confidence": 0.9496,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 27,
+      "numbers": [
+        7,
+        13,
+        15,
+        28,
+        32,
+        38
+      ],
+      "confidence": 0.95,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 28,
+      "numbers": [
+        6,
+        20,
+        23,
+        31,
+        39,
+        40
+      ],
+      "confidence": 0.9472,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 29,
+      "numbers": [
+        10,
+        19,
+        26,
+        29,
+        44,
+        45
+      ],
+      "confidence": 0.9411,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 30,
+      "numbers": [
+        5,
+        16,
+        30,
+        33,
+        35,
+        37
+      ],
+      "confidence": 0.9418,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 16,
+      "numbers": [
+        6,
+        13,
+        15,
+        27,
+        34,
+        37
+      ],
+      "confidence": 0.949,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 132,
+        "average": 22.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 17,
+      "numbers": [
+        1,
+        7,
+        12,
+        16,
+        31,
+        38
+      ],
+      "confidence": 0.9419,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 105,
+        "average": 17.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          0,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 18,
+      "numbers": [
+        10,
+        17,
+        18,
+        29,
+        36,
+        39
+      ],
+      "confidence": 0.9468,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 149,
+        "average": 24.8,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          3,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 19,
+      "numbers": [
+        3,
+        19,
+        28,
+        33,
+        40,
+        42
+      ],
+      "confidence": 0.9327,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 165,
+        "average": 27.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 20,
+      "numbers": [
+        11,
+        21,
+        23,
+        32,
+        44,
+        45
+      ],
+      "confidence": 0.8816,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 176,
+        "average": 29.3,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          1,
+          2,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 21,
+      "numbers": [
+        7,
+        13,
+        15,
+        27,
+        30,
+        38
+      ],
+      "confidence": 0.949,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 130,
+        "average": 21.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 22,
+      "numbers": [
+        3,
+        17,
+        18,
+        24,
+        33,
+        35
+      ],
+      "confidence": 0.94,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 130,
+        "average": 21.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 23,
+      "numbers": [
+        12,
+        14,
+        29,
+        34,
+        37,
+        45
+      ],
+      "confidence": 0.943,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 171,
+        "average": 28.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 24,
+      "numbers": [
+        5,
+        10,
+        21,
+        28,
+        31,
+        39
+      ],
+      "confidence": 0.9462,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 134,
+        "average": 22.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 25,
+      "numbers": [
+        6,
+        19,
+        20,
+        23,
+        40,
+        42
+      ],
+      "confidence": 0.9279,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 150,
+        "average": 25.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "set": 26,
+      "numbers": [
+        3,
+        18,
+        19,
+        27,
+        33,
+        34
+      ],
+      "confidence": 0.9347,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 134,
+        "average": 22.3,
+        "consecutive_count": 2,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 27,
+      "numbers": [
+        13,
+        15,
+        16,
+        26,
+        31,
+        44
+      ],
+      "confidence": 0.9494,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 145,
+        "average": 24.2,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          3,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 28,
+      "numbers": [
+        1,
+        17,
+        20,
+        29,
+        38,
+        39
+      ],
+      "confidence": 0.9452,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 29,
+      "numbers": [
+        7,
+        12,
+        21,
+        24,
+        37,
+        45
+      ],
+      "confidence": 0.8861,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 146,
+        "average": 24.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 30,
+      "numbers": [
+        6,
+        14,
+        30,
+        35,
+        36,
+        43
+      ],
+      "confidence": 0.9143,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 164,
+        "average": 27.3,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          0,
+          3,
+          1
+        ]
+      }
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}

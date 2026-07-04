@@ -1,0 +1,226 @@
+{
+  "round": 1217,
+  "prediction_date": "2026-03-23T21:26:33.079080+09:00",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [
+        5,
+        8,
+        13,
+        20,
+        29,
+        31
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 106,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 17.67,
+        "range": 26,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 2,
+      "numbers": [
+        3,
+        5,
+        12,
+        29,
+        40,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 134,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.33,
+        "range": 42,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 3,
+      "numbers": [
+        1,
+        11,
+        12,
+        21,
+        30,
+        39
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 114,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 19.0,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 4,
+      "numbers": [
+        7,
+        12,
+        23,
+        31,
+        36,
+        38
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 5,
+      "numbers": [
+        11,
+        12,
+        29,
+        36,
+        41,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 32,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 6,
+      "numbers": [
+        3,
+        6,
+        15,
+        17,
+        27,
+        34
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 102,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 17.0,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 7,
+      "numbers": [
+        8,
+        10,
+        17,
+        19,
+        21,
+        35
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 110,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 18.33,
+        "range": 27,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 8,
+      "numbers": [
+        2,
+        9,
+        10,
+        27,
+        29,
+        39
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 116,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 19.33,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 9,
+      "numbers": [
+        5,
+        13,
+        16,
+        19,
+        34,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 132,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.0,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 10,
+      "numbers": [
+        8,
+        13,
+        22,
+        38,
+        41,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}

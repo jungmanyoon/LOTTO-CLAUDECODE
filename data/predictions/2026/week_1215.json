@@ -1,0 +1,1976 @@
+{
+  "round": 1215,
+  "prediction_date": "2026-03-07T23:34:13.325866+09:00",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [
+        3,
+        12,
+        13,
+        21,
+        25,
+        34
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 108,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 18.0,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 2,
+      "numbers": [
+        7,
+        12,
+        17,
+        23,
+        38,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 141,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 23.5,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 3,
+      "numbers": [
+        10,
+        25,
+        28,
+        37,
+        38,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 179,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 29.83,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 4,
+      "numbers": [
+        14,
+        23,
+        31,
+        33,
+        38,
+        40
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 179,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 29.83,
+        "range": 26,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 5,
+      "numbers": [
+        4,
+        7,
+        18,
+        36,
+        37,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 6,
+      "numbers": [
+        15,
+        20,
+        22,
+        25,
+        30,
+        32
+      ],
+      "confidence": 0.9791962973649602,
+      "source": "ML-Enhanced/fractal (L3)",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 7,
+      "numbers": [
+        3,
+        7,
+        16,
+        27,
+        34,
+        37
+      ],
+      "confidence": 0.9735277185501054,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 124,
+        "average": 20.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 8,
+      "numbers": [
+        12,
+        27,
+        31,
+        34,
+        37,
+        39
+      ],
+      "confidence": 0.94875,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 180,
+        "average": 30.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          1,
+          4,
+          0
+        ]
+      }
+    },
+    {
+      "set": 9,
+      "numbers": [
+        3,
+        12,
+        14,
+        27,
+        31,
+        45
+      ],
+      "confidence": 0.9073230277185477,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 132,
+        "average": 22.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 10,
+      "numbers": [
+        23,
+        25,
+        27,
+        29,
+        38,
+        41
+      ],
+      "confidence": 0.8459630742535272,
+      "source": "ML-Enhanced/fractal (L3)",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 183,
+        "average": 30.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          0,
+          4,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 11,
+      "numbers": [
+        6,
+        13,
+        20,
+        25,
+        29,
+        32
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 125,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 20.83,
+        "range": 26,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 12,
+      "numbers": [
+        16,
+        23,
+        26,
+        29,
+        39,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 178,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 29.67,
+        "range": 29,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 13,
+      "numbers": [
+        9,
+        15,
+        25,
+        31,
+        32,
+        38
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 150,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 25.0,
+        "range": 29,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 14,
+      "numbers": [
+        8,
+        13,
+        19,
+        27,
+        28,
+        32
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 127,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.17,
+        "range": 24,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 15,
+      "numbers": [
+        3,
+        13,
+        22,
+        25,
+        28,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 134,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.33,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 16,
+      "numbers": [
+        1,
+        7,
+        13,
+        18,
+        27,
+        38
+      ],
+      "confidence": 1.0,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 104,
+        "average": 17.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          1,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 17,
+      "numbers": [
+        3,
+        18,
+        27,
+        31,
+        34,
+        39
+      ],
+      "confidence": 0.9989828496042157,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 152,
+        "average": 25.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "set": 18,
+      "numbers": [
+        25,
+        26,
+        27,
+        31,
+        38,
+        39
+      ],
+      "confidence": 0.9792089949271549,
+      "source": "ML-Enhanced/fractal (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 186,
+        "average": 31.0,
+        "consecutive_count": 3,
+        "section_distribution": [
+          0,
+          0,
+          3,
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "set": 19,
+      "numbers": [
+        7,
+        10,
+        17,
+        27,
+        34,
+        37
+      ],
+      "confidence": 0.9686398416886504,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 132,
+        "average": 22.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 20,
+      "numbers": [
+        9,
+        14,
+        17,
+        18,
+        26,
+        29
+      ],
+      "confidence": 0.9396144468224847,
+      "source": "ML-Enhanced/fractal (L3)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 113,
+        "average": 18.8,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          3,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 21,
+      "numbers": [
+        18,
+        24,
+        26,
+        29,
+        37,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 179,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 29.83,
+        "range": 27,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 22,
+      "numbers": [
+        5,
+        19,
+        20,
+        28,
+        31,
+        38
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 141,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 23.5,
+        "range": 33,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 23,
+      "numbers": [
+        1,
+        16,
+        22,
+        33,
+        37,
+        42
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 151,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 25.17,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 24,
+      "numbers": [
+        1,
+        10,
+        16,
+        28,
+        33,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 131,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.83,
+        "range": 42,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 25,
+      "numbers": [
+        2,
+        4,
+        16,
+        21,
+        27,
+        33
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 103,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 17.17,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 26,
+      "numbers": [
+        8,
+        17,
+        19,
+        23,
+        33,
+        36
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 136,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.67,
+        "range": 28,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 27,
+      "numbers": [
+        13,
+        15,
+        18,
+        21,
+        38,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 149,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.83,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 28,
+      "numbers": [
+        17,
+        20,
+        21,
+        30,
+        39,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 171,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 28.5,
+        "range": 27,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 29,
+      "numbers": [
+        3,
+        5,
+        14,
+        31,
+        38,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 135,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 22.5,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 30,
+      "numbers": [
+        4,
+        5,
+        13,
+        28,
+        33,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 128,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 21.33,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 31,
+      "numbers": [
+        1,
+        9,
+        22,
+        35,
+        38,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 148,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 24.67,
+        "range": 42,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 32,
+      "numbers": [
+        8,
+        16,
+        17,
+        29,
+        31,
+        39
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 140,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 23.33,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 33,
+      "numbers": [
+        8,
+        16,
+        26,
+        29,
+        41,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 163,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.17,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 34,
+      "numbers": [
+        10,
+        20,
+        29,
+        33,
+        40,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 173,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 28.83,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 35,
+      "numbers": [
+        7,
+        12,
+        22,
+        23,
+        33,
+        37
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 134,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.33,
+        "range": 30,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 36,
+      "numbers": [
+        3,
+        18,
+        23,
+        29,
+        33,
+        40
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 146,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 24.33,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 37,
+      "numbers": [
+        17,
+        18,
+        24,
+        27,
+        33,
+        40
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 159,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 26.5,
+        "range": 23,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 38,
+      "numbers": [
+        2,
+        10,
+        21,
+        37,
+        39,
+        40
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 149,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.83,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 39,
+      "numbers": [
+        1,
+        7,
+        19,
+        22,
+        28,
+        42
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 40,
+      "numbers": [
+        15,
+        21,
+        24,
+        31,
+        38,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 170,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.33,
+        "range": 26,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 41,
+      "numbers": [
+        9,
+        11,
+        19,
+        21,
+        26,
+        30
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 116,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 19.33,
+        "range": 21,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 42,
+      "numbers": [
+        8,
+        11,
+        20,
+        29,
+        35,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 43,
+      "numbers": [
+        3,
+        9,
+        14,
+        27,
+        34,
+        42
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 129,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.5,
+        "range": 39,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 44,
+      "numbers": [
+        1,
+        17,
+        20,
+        28,
+        36,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 44,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 45,
+      "numbers": [
+        4,
+        8,
+        18,
+        23,
+        31,
+        37
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 121,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 20.17,
+        "range": 33,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 46,
+      "numbers": [
+        11,
+        12,
+        23,
+        28,
+        32,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 149,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.83,
+        "range": 32,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 47,
+      "numbers": [
+        4,
+        17,
+        18,
+        23,
+        31,
+        34
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 127,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.17,
+        "range": 30,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 48,
+      "numbers": [
+        6,
+        11,
+        16,
+        17,
+        28,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 123,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 20.5,
+        "range": 39,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 49,
+      "numbers": [
+        1,
+        11,
+        14,
+        21,
+        26,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 114,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 19.0,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 50,
+      "numbers": [
+        8,
+        14,
+        25,
+        36,
+        41,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.83,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 51,
+      "numbers": [
+        1,
+        18,
+        20,
+        27,
+        33,
+        45
+      ],
+      "confidence": 1.0,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 52,
+      "numbers": [
+        1,
+        12,
+        18,
+        34,
+        37,
+        45
+      ],
+      "confidence": 0.88636937799043,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 147,
+        "average": 24.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 53,
+      "numbers": [
+        12,
+        17,
+        19,
+        27,
+        38,
+        40
+      ],
+      "confidence": 0.8327870813397182,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 153,
+        "average": 25.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          3,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 54,
+      "numbers": [
+        6,
+        13,
+        18,
+        27,
+        39,
+        43
+      ],
+      "confidence": 0.7941602870813445,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 146,
+        "average": 24.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 55,
+      "numbers": [
+        11,
+        13,
+        26,
+        37,
+        40,
+        45
+      ],
+      "confidence": 0.7617346889952149,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 172,
+        "average": 28.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 56,
+      "numbers": [
+        3,
+        7,
+        12,
+        25,
+        38,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 129,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.5,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 57,
+      "numbers": [
+        12,
+        23,
+        31,
+        32,
+        34,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 177,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 29.5,
+        "range": 33,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 58,
+      "numbers": [
+        3,
+        6,
+        8,
+        25,
+        36,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 121,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 20.17,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 59,
+      "numbers": [
+        6,
+        9,
+        15,
+        21,
+        38,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 132,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.0,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 60,
+      "numbers": [
+        2,
+        11,
+        13,
+        15,
+        37,
+        42
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 120,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 20.0,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 61,
+      "numbers": [
+        3,
+        7,
+        11,
+        18,
+        26,
+        39
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 104,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 17.33,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 62,
+      "numbers": [
+        10,
+        12,
+        25,
+        29,
+        35,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 152,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 25.33,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 63,
+      "numbers": [
+        2,
+        5,
+        9,
+        18,
+        38,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 113,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 18.83,
+        "range": 39,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 64,
+      "numbers": [
+        15,
+        16,
+        25,
+        30,
+        38,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.83,
+        "range": 28,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 65,
+      "numbers": [
+        1,
+        2,
+        11,
+        29,
+        40,
+        42
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 125,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 20.83,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 66,
+      "numbers": [
+        1,
+        19,
+        27,
+        34,
+        40,
+        43
+      ],
+      "confidence": 1.0,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 164,
+        "average": 27.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 67,
+      "numbers": [
+        1,
+        3,
+        15,
+        24,
+        27,
+        34
+      ],
+      "confidence": 0.9282322404371611,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 104,
+        "average": 17.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 68,
+      "numbers": [
+        15,
+        17,
+        20,
+        27,
+        31,
+        34
+      ],
+      "confidence": 0.8978295081967225,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 69,
+      "numbers": [
+        7,
+        12,
+        14,
+        33,
+        43,
+        45
+      ],
+      "confidence": 0.8525459016393462,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 154,
+        "average": 25.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 70,
+      "numbers": [
+        7,
+        21,
+        27,
+        33,
+        40,
+        44
+      ],
+      "confidence": 0.8123461748633891,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 172,
+        "average": 28.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          0,
+          2,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 71,
+      "numbers": [
+        3,
+        13,
+        27,
+        34,
+        38,
+        43
+      ],
+      "confidence": 1.0,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 158,
+        "average": 26.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 72,
+      "numbers": [
+        7,
+        10,
+        27,
+        34,
+        37,
+        45
+      ],
+      "confidence": 0.9419592760180997,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 160,
+        "average": 26.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 73,
+      "numbers": [
+        4,
+        12,
+        17,
+        27,
+        33,
+        37
+      ],
+      "confidence": 0.932852941176472,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 130,
+        "average": 21.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 74,
+      "numbers": [
+        3,
+        11,
+        13,
+        27,
+        38,
+        40
+      ],
+      "confidence": 0.912038461538463,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 132,
+        "average": 22.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 75,
+      "numbers": [
+        1,
+        3,
+        18,
+        27,
+        34,
+        40
+      ],
+      "confidence": 0.89190045248869,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 123,
+        "average": 20.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 76,
+      "numbers": [
+        7,
+        16,
+        27,
+        34,
+        39,
+        45
+      ],
+      "confidence": 1.0,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 168,
+        "average": 28.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 77,
+      "numbers": [
+        3,
+        12,
+        27,
+        33,
+        37,
+        44
+      ],
+      "confidence": 0.9991077481840216,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 156,
+        "average": 26.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 78,
+      "numbers": [
+        7,
+        11,
+        13,
+        18,
+        34,
+        39
+      ],
+      "confidence": 0.8849430992736056,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 122,
+        "average": 20.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          3,
+          0,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 79,
+      "numbers": [
+        6,
+        13,
+        17,
+        21,
+        27,
+        40
+      ],
+      "confidence": 0.8793740920096847,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 124,
+        "average": 20.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          2,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "set": 80,
+      "numbers": [
+        14,
+        18,
+        21,
+        27,
+        31,
+        37
+      ],
+      "confidence": 0.7989910411622323,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 148,
+        "average": 24.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 81,
+      "numbers": [
+        11,
+        13,
+        18,
+        27,
+        40,
+        45
+      ],
+      "confidence": 1.0,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 154,
+        "average": 25.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          3,
+          1,
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "set": 82,
+      "numbers": [
+        11,
+        16,
+        18,
+        27,
+        33,
+        37
+      ],
+      "confidence": 0.8818983213429266,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 142,
+        "average": 23.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          3,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 83,
+      "numbers": [
+        6,
+        11,
+        18,
+        27,
+        33,
+        37
+      ],
+      "confidence": 0.8612314148681015,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 132,
+        "average": 22.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 84,
+      "numbers": [
+        1,
+        3,
+        7,
+        12,
+        37,
+        40
+      ],
+      "confidence": 0.8363947242206266,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 100,
+        "average": 16.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          3,
+          1,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 85,
+      "numbers": [
+        2,
+        19,
+        27,
+        34,
+        37,
+        45
+      ],
+      "confidence": 0.8336534772182232,
+      "source": "ML-Enhanced/monte_carlo (L3)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 164,
+        "average": 27.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}

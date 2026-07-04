@@ -1,0 +1,1976 @@
+{
+  "round": 1204,
+  "prediction_date": "2025-12-27T18:32:38.017469+09:00",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [
+        5,
+        11,
+        14,
+        17,
+        29,
+        34
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 110,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 18.33,
+        "range": 29,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 2,
+      "numbers": [
+        12,
+        17,
+        19,
+        26,
+        30,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 3,
+      "numbers": [
+        6,
+        9,
+        11,
+        18,
+        27,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 116,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 19.33,
+        "range": 39,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 4,
+      "numbers": [
+        2,
+        8,
+        9,
+        16,
+        31,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 109,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 18.17,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 5,
+      "numbers": [
+        10,
+        11,
+        17,
+        24,
+        35,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 138,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 23.0,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 6,
+      "numbers": [
+        4,
+        11,
+        12,
+        17,
+        36,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 121,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 20.17,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 7,
+      "numbers": [
+        1,
+        8,
+        10,
+        21,
+        31,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 115,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.17,
+        "range": 43,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 8,
+      "numbers": [
+        6,
+        13,
+        20,
+        28,
+        37,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 145,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.17,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 9,
+      "numbers": [
+        6,
+        18,
+        27,
+        33,
+        36,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 161,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 26.83,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 10,
+      "numbers": [
+        3,
+        8,
+        11,
+        24,
+        38,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 129,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.5,
+        "range": 42,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 11,
+      "numbers": [
+        12,
+        16,
+        21,
+        30,
+        35,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 155,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 25.83,
+        "range": 29,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 12,
+      "numbers": [
+        5,
+        11,
+        14,
+        17,
+        28,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 118,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 19.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 13,
+      "numbers": [
+        7,
+        13,
+        21,
+        24,
+        32,
+        40
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 137,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 22.83,
+        "range": 33,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 14,
+      "numbers": [
+        8,
+        9,
+        13,
+        17,
+        22,
+        40
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 109,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 18.17,
+        "range": 32,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 15,
+      "numbers": [
+        4,
+        7,
+        23,
+        35,
+        41,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 154,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 25.67,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 16,
+      "numbers": [
+        2,
+        4,
+        7,
+        14,
+        37,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 109,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 18.17,
+        "range": 43,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 17,
+      "numbers": [
+        8,
+        19,
+        21,
+        23,
+        29,
+        30
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 130,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 21.67,
+        "range": 22,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 18,
+      "numbers": [
+        1,
+        5,
+        17,
+        24,
+        36,
+        39
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 122,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 20.33,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 19,
+      "numbers": [
+        1,
+        2,
+        18,
+        25,
+        28,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 115,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.17,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 20,
+      "numbers": [
+        4,
+        7,
+        9,
+        13,
+        32,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 108,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 18.0,
+        "range": 39,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 21,
+      "numbers": [
+        3,
+        12,
+        21,
+        26,
+        33,
+        37
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 132,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.0,
+        "range": 34,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 22,
+      "numbers": [
+        7,
+        25,
+        28,
+        30,
+        41,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 174,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 29.0,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 23,
+      "numbers": [
+        9,
+        10,
+        23,
+        26,
+        29,
+        37
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 134,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.33,
+        "range": 28,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 24,
+      "numbers": [
+        5,
+        10,
+        17,
+        18,
+        30,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 123,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 20.5,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 25,
+      "numbers": [
+        8,
+        21,
+        29,
+        32,
+        40,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 175,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 29.17,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 26,
+      "numbers": [
+        3,
+        6,
+        14,
+        19,
+        23,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 106,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 17.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 27,
+      "numbers": [
+        5,
+        12,
+        17,
+        20,
+        29,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 126,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 21.0,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 28,
+      "numbers": [
+        2,
+        11,
+        15,
+        19,
+        38,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 128,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 21.33,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 29,
+      "numbers": [
+        5,
+        6,
+        11,
+        23,
+        41,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 130,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 21.67,
+        "range": 39,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 30,
+      "numbers": [
+        7,
+        21,
+        30,
+        34,
+        35,
+        44
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 171,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 28.5,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 31,
+      "numbers": [
+        5,
+        14,
+        18,
+        20,
+        27,
+        43
+      ],
+      "confidence": 0.55,
+      "source": "FilteredPool (fallback)",
+      "characteristics": {}
+    },
+    {
+      "set": 32,
+      "numbers": [
+        11,
+        23,
+        27,
+        37,
+        40,
+        42
+      ],
+      "confidence": 0.55,
+      "source": "FilteredPool (fallback)",
+      "characteristics": {}
+    },
+    {
+      "set": 33,
+      "numbers": [
+        8,
+        9,
+        11,
+        13,
+        34,
+        40
+      ],
+      "confidence": 0.55,
+      "source": "FilteredPool (fallback)",
+      "characteristics": {}
+    },
+    {
+      "set": 34,
+      "numbers": [
+        15,
+        18,
+        29,
+        33,
+        34,
+        37
+      ],
+      "confidence": 0.54,
+      "source": "FilteredPool (fallback)",
+      "characteristics": {}
+    },
+    {
+      "set": 35,
+      "numbers": [
+        4,
+        7,
+        11,
+        12,
+        13,
+        32
+      ],
+      "confidence": 0.5,
+      "source": "FilteredPool (fallback)",
+      "characteristics": {}
+    },
+    {
+      "set": 36,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 37,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 38,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 39,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 40,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 41,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 42,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 43,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 44,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 45,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 46,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 47,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 48,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 49,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 50,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 51,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 52,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 53,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 54,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 55,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 56,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 57,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 58,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 59,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 60,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 61,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 62,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 63,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 64,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 65,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 66,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 67,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 68,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 69,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 70,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 71,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 72,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 73,
+      "numbers": [
+        4,
+        17,
+        28,
+        31,
+        32,
+        35
+      ],
+      "confidence": 0.20629818783970755,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 147,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 24.5,
+        "range": 31,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 74,
+      "numbers": [
+        8,
+        25,
+        26,
+        31,
+        32,
+        43
+      ],
+      "confidence": 0.2044137063484026,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 165,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 27.5,
+        "range": 35,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 75,
+      "numbers": [
+        3,
+        15,
+        34,
+        39,
+        40,
+        41
+      ],
+      "confidence": 0.19306524596425323,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 172,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 28.67,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 76,
+      "numbers": [
+        2,
+        13,
+        20,
+        21,
+        31,
+        42
+      ],
+      "confidence": 0.14727260172367096,
+      "source": "lstm",
+      "characteristics": {
+        "sum": 129,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.5,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 77,
+      "numbers": [
+        1,
+        15,
+        17,
+        27,
+        34,
+        44
+      ],
+      "confidence": 1.0,
+      "source": "monte_carlo",
+      "characteristics": {
+        "sum": 138,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 23.0,
+        "range": 43,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 78,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 79,
+      "numbers": [
+        5,
+        14,
+        17,
+        25,
+        32,
+        39
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 132,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 22.0,
+        "range": 34,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 80,
+      "numbers": [
+        2,
+        11,
+        18,
+        25,
+        31,
+        35
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 122,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 20.33,
+        "range": 33,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 81,
+      "numbers": [
+        1,
+        15,
+        17,
+        27,
+        34,
+        44
+      ],
+      "confidence": 1.0,
+      "source": "monte_carlo",
+      "characteristics": {
+        "sum": 138,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 23.0,
+        "range": 43,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 82,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 83,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 84,
+      "numbers": [
+        11,
+        12,
+        20,
+        27,
+        33,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 146,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 24.33,
+        "range": 32,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 85,
+      "numbers": [
+        7,
+        15,
+        27,
+        36,
+        40,
+        41
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 166,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 27.67,
+        "range": 34,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 86,
+      "numbers": [
+        1,
+        15,
+        17,
+        27,
+        34,
+        44
+      ],
+      "confidence": 1.0,
+      "source": "monte_carlo",
+      "characteristics": {
+        "sum": 138,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 23.0,
+        "range": 43,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 87,
+      "numbers": [
+        7,
+        18,
+        19,
+        39,
+        41,
+        43
+      ],
+      "confidence": 0.2167140871862173,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 167,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 27.83,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 88,
+      "numbers": [
+        2,
+        13,
+        20,
+        21,
+        31,
+        42
+      ],
+      "confidence": 0.14727260172367096,
+      "source": "lstm",
+      "characteristics": {
+        "sum": 129,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 21.5,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 89,
+      "numbers": [
+        1,
+        8,
+        19,
+        22,
+        27,
+        38
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 115,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.17,
+        "range": 37,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 90,
+      "numbers": [
+        4,
+        6,
+        11,
+        21,
+        23,
+        38
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 103,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 17.17,
+        "range": 34,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 91,
+      "numbers": [
+        1,
+        9,
+        19,
+        31,
+        34,
+        39
+      ],
+      "confidence": 0.15570849180221558,
+      "source": "lstm",
+      "characteristics": {
+        "sum": 133,
+        "odd_count": 5,
+        "even_count": 1,
+        "avg": 22.17,
+        "range": 38,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 92,
+      "numbers": [
+        1,
+        4,
+        8,
+        9,
+        31,
+        37
+      ],
+      "confidence": 0.1507437825202942,
+      "source": "lstm",
+      "characteristics": {
+        "sum": 90,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 15.0,
+        "range": 36,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 93,
+      "numbers": [
+        1,
+        12,
+        16,
+        23,
+        26,
+        41
+      ],
+      "confidence": 0.2123224394500617,
+      "source": "ensemble",
+      "characteristics": {
+        "sum": 119,
+        "odd_count": 3,
+        "even_count": 3,
+        "avg": 19.83,
+        "range": 40,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 94,
+      "numbers": [
+        2,
+        22,
+        23,
+        37,
+        39,
+        43
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 166,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 27.67,
+        "range": 41,
+        "generation_type": "quick"
+      }
+    },
+    {
+      "set": 95,
+      "numbers": [
+        13,
+        16,
+        26,
+        27,
+        31,
+        45
+      ],
+      "confidence": 0.7999999999999999,
+      "source": "FilteredPool",
+      "characteristics": {
+        "sum": 158,
+        "odd_count": 4,
+        "even_count": 2,
+        "avg": 26.33,
+        "range": 32,
+        "generation_type": "quick"
+      }
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}

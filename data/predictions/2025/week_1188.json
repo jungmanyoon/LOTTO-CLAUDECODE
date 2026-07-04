@@ -1,0 +1,3526 @@
+{
+  "round": 1188,
+  "prediction_date": "2025-08-29T19:42:34.642389",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [
+        1,
+        4,
+        17,
+        20,
+        24,
+        30
+      ],
+      "confidence": 0.947436574860345,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 96,
+        "average": 16.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 2,
+      "numbers": [
+        8,
+        13,
+        15,
+        16,
+        18,
+        24
+      ],
+      "confidence": 0.8990670529342647,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 94,
+        "average": 15.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          4,
+          1,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 3,
+      "numbers": [
+        1,
+        18,
+        21,
+        26,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 145,
+        "average": 24.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 4,
+      "numbers": [
+        1,
+        12,
+        19,
+        31,
+        40,
+        45
+      ],
+      "confidence": 0.7567583643122681,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 148,
+        "average": 24.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 5,
+      "numbers": [
+        5,
+        7,
+        10,
+        13,
+        17,
+        20
+      ],
+      "confidence": 0.7476381700936167,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 72,
+        "average": 12.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          3,
+          1,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 6,
+      "numbers": [
+        13,
+        15,
+        16,
+        26,
+        28,
+        38
+      ],
+      "confidence": 0.9162952629895127,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 136,
+        "average": 22.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          3,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 7,
+      "numbers": [
+        3,
+        12,
+        27,
+        36,
+        39,
+        43
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 160,
+        "average": 26.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 8,
+      "numbers": [
+        3,
+        12,
+        15,
+        17,
+        34,
+        39
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 120,
+        "average": 20.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          3,
+          0,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 9,
+      "numbers": [
+        8,
+        12,
+        17,
+        25,
+        27,
+        33
+      ],
+      "confidence": 0.500577449798584,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 122,
+        "average": 20.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 10,
+      "numbers": [
+        8,
+        13,
+        15,
+        25,
+        32,
+        33
+      ],
+      "confidence": 0.491107314825058,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 126,
+        "average": 21.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 11,
+      "numbers": [
+        4,
+        14,
+        15,
+        21,
+        23,
+        24
+      ],
+      "confidence": 0.9772875824411698,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 101,
+        "average": 16.8,
+        "consecutive_count": 2,
+        "section_distribution": [
+          1,
+          2,
+          3,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 12,
+      "numbers": [
+        8,
+        11,
+        12,
+        14,
+        22,
+        25
+      ],
+      "confidence": 0.9289050798155509,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 92,
+        "average": 15.3,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          3,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 13,
+      "numbers": [
+        25,
+        27,
+        31,
+        35,
+        40,
+        44
+      ],
+      "confidence": 0.8663769927337716,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 202,
+        "average": 33.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          0,
+          2,
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "set": 14,
+      "numbers": [
+        11,
+        15,
+        20,
+        27,
+        34,
+        43
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 150,
+        "average": 25.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 15,
+      "numbers": [
+        3,
+        7,
+        20,
+        27,
+        31,
+        34
+      ],
+      "confidence": 0.7870028387867932,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 122,
+        "average": 20.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          0,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 16,
+      "numbers": [
+        3,
+        5,
+        7,
+        11,
+        34,
+        40
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 100,
+        "average": 16.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          3,
+          1,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 17,
+      "numbers": [
+        3,
+        7,
+        12,
+        18,
+        27,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 112,
+        "average": 18.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          1,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "set": 18,
+      "numbers": [
+        11,
+        13,
+        15,
+        18,
+        34,
+        43
+      ],
+      "confidence": 0.746150099224247,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 134,
+        "average": 22.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          4,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 19,
+      "numbers": [
+        2,
+        5,
+        14,
+        29,
+        32,
+        36
+      ],
+      "confidence": 0.47733446955680847,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 118,
+        "average": 19.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          1,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 20,
+      "numbers": [
+        2,
+        11,
+        21,
+        23,
+        37,
+        44
+      ],
+      "confidence": 0.47717154026031494,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 138,
+        "average": 23.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 21,
+      "numbers": [
+        13,
+        20,
+        23,
+        28,
+        33,
+        35
+      ],
+      "confidence": 0.9329299089799312,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 152,
+        "average": 25.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 22,
+      "numbers": [
+        5,
+        12,
+        17,
+        19,
+        24,
+        25
+      ],
+      "confidence": 0.8868782437590659,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 102,
+        "average": 17.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          3,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 23,
+      "numbers": [
+        16,
+        20,
+        25,
+        27,
+        32,
+        42
+      ],
+      "confidence": 0.8783711008443484,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 162,
+        "average": 27.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 24,
+      "numbers": [
+        5,
+        15,
+        27,
+        34,
+        40,
+        43
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 164,
+        "average": 27.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 25,
+      "numbers": [
+        3,
+        12,
+        15,
+        19,
+        38,
+        43
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 130,
+        "average": 21.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          3,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 26,
+      "numbers": [
+        10,
+        13,
+        18,
+        27,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 147,
+        "average": 24.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          3,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 27,
+      "numbers": [
+        18,
+        21,
+        27,
+        29,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 174,
+        "average": 29.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 28,
+      "numbers": [
+        1,
+        4,
+        27,
+        34,
+        41,
+        45
+      ],
+      "confidence": 0.7657572892040961,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 152,
+        "average": 25.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          0,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 29,
+      "numbers": [
+        1,
+        7,
+        12,
+        21,
+        37,
+        43
+      ],
+      "confidence": 0.4840686023235321,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 121,
+        "average": 20.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 30,
+      "numbers": [
+        8,
+        21,
+        23,
+        25,
+        35,
+        36
+      ],
+      "confidence": 0.4823361337184906,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 148,
+        "average": 24.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          0,
+          3,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 31,
+      "numbers": [
+        1,
+        3,
+        12,
+        33,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 132,
+        "average": 22.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 32,
+      "numbers": [
+        1,
+        7,
+        27,
+        30,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          0,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 33,
+      "numbers": [
+        1,
+        3,
+        12,
+        34,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 133,
+        "average": 22.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 34,
+      "numbers": [
+        11,
+        14,
+        15,
+        19,
+        32,
+        37
+      ],
+      "confidence": 0.4825732409954071,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 128,
+        "average": 21.3,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          4,
+          0,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 35,
+      "numbers": [
+        6,
+        17,
+        19,
+        28,
+        31,
+        43
+      ],
+      "confidence": 0.48195552825927734,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 36,
+      "numbers": [
+        12,
+        16,
+        20,
+        26,
+        31,
+        32
+      ],
+      "confidence": 0.8709365849172273,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "1:5",
+        "sum_total": 137,
+        "average": 22.8,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          2,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 37,
+      "numbers": [
+        7,
+        11,
+        19,
+        34,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 154,
+        "average": 25.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 38,
+      "numbers": [
+        11,
+        13,
+        18,
+        34,
+        38,
+        45
+      ],
+      "confidence": 0.7985278654048372,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 159,
+        "average": 26.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          3,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 39,
+      "numbers": [
+        1,
+        12,
+        31,
+        34,
+        39,
+        45
+      ],
+      "confidence": 0.7717555205047298,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 162,
+        "average": 27.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          0,
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "set": 40,
+      "numbers": [
+        18,
+        23,
+        24,
+        26,
+        31,
+        34
+      ],
+      "confidence": 0.7377584344102298,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 156,
+        "average": 26.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 41,
+      "numbers": [
+        18,
+        22,
+        27,
+        28,
+        35,
+        38
+      ],
+      "confidence": 0.9554737320141098,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 168,
+        "average": 28.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 42,
+      "numbers": [
+        23,
+        28,
+        34,
+        37,
+        39,
+        41
+      ],
+      "confidence": 0.9482407467131226,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 202,
+        "average": 33.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          0,
+          2,
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "set": 43,
+      "numbers": [
+        10,
+        19,
+        27,
+        34,
+        39,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 174,
+        "average": 29.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 44,
+      "numbers": [
+        3,
+        7,
+        17,
+        20,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 126,
+        "average": 21.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 45,
+      "numbers": [
+        26,
+        30,
+        32,
+        34,
+        37,
+        42
+      ],
+      "confidence": 0.7943695362917298,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "1:5",
+        "sum_total": 201,
+        "average": 33.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          0,
+          1,
+          4,
+          1
+        ]
+      }
+    },
+    {
+      "set": 46,
+      "numbers": [
+        3,
+        8,
+        11,
+        12,
+        17,
+        23
+      ],
+      "confidence": 0.9233720413924521,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 74,
+        "average": 12.3,
+        "consecutive_count": 1,
+        "section_distribution": [
+          2,
+          3,
+          1,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 47,
+      "numbers": [
+        3,
+        19,
+        34,
+        36,
+        39,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 176,
+        "average": 29.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          0,
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "set": 48,
+      "numbers": [
+        3,
+        12,
+        19,
+        36,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 158,
+        "average": 26.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 49,
+      "numbers": [
+        3,
+        10,
+        15,
+        18,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 125,
+        "average": 20.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          3,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 50,
+      "numbers": [
+        5,
+        10,
+        13,
+        15,
+        18,
+        21
+      ],
+      "confidence": 0.7359465131427768,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 82,
+        "average": 13.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          4,
+          1,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 51,
+      "numbers": [
+        25,
+        27,
+        29,
+        34,
+        38,
+        45
+      ],
+      "confidence": 0.8221203428204829,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 198,
+        "average": 33.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          0,
+          3,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 52,
+      "numbers": [
+        1,
+        7,
+        12,
+        21,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 120,
+        "average": 20.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 53,
+      "numbers": [
+        7,
+        11,
+        19,
+        34,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 154,
+        "average": 25.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 54,
+      "numbers": [
+        3,
+        12,
+        18,
+        24,
+        34,
+        45
+      ],
+      "confidence": 0.7225955992309332,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 136,
+        "average": 22.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 55,
+      "numbers": [
+        24,
+        28,
+        29,
+        37,
+        41,
+        42
+      ],
+      "confidence": 0.7166358250012904,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 201,
+        "average": 33.5,
+        "consecutive_count": 2,
+        "section_distribution": [
+          0,
+          0,
+          3,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 56,
+      "numbers": [
+        21,
+        25,
+        31,
+        32,
+        33,
+        37
+      ],
+      "confidence": 0.8969860771112648,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 179,
+        "average": 29.8,
+        "consecutive_count": 2,
+        "section_distribution": [
+          0,
+          0,
+          2,
+          4,
+          0
+        ]
+      }
+    },
+    {
+      "set": 57,
+      "numbers": [
+        21,
+        22,
+        24,
+        31,
+        39,
+        43
+      ],
+      "confidence": 0.8364831486237961,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 180,
+        "average": 30.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          0,
+          3,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 58,
+      "numbers": [
+        22,
+        30,
+        33,
+        35,
+        39,
+        41
+      ],
+      "confidence": 0.8039332520661954,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 200,
+        "average": 33.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          0,
+          1,
+          4,
+          1
+        ]
+      }
+    },
+    {
+      "set": 59,
+      "numbers": [
+        12,
+        15,
+        27,
+        34,
+        37,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 170,
+        "average": 28.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 60,
+      "numbers": [
+        3,
+        18,
+        31,
+        34,
+        43,
+        45
+      ],
+      "confidence": 0.7588459595959617,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 174,
+        "average": 29.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          0,
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "set": 61,
+      "numbers": [
+        7,
+        11,
+        20,
+        34,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 160,
+        "average": 26.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 62,
+      "numbers": [
+        1,
+        7,
+        10,
+        12,
+        39,
+        45
+      ],
+      "confidence": 0.7545305727085596,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 114,
+        "average": 19.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 63,
+      "numbers": [
+        7,
+        21,
+        33,
+        36,
+        38,
+        45
+      ],
+      "confidence": 0.7449251725390477,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 180,
+        "average": 30.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          0,
+          1,
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "set": 64,
+      "numbers": [
+        2,
+        13,
+        14,
+        15,
+        25,
+        43
+      ],
+      "confidence": 0.48828789591789246,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 112,
+        "average": 18.7,
+        "consecutive_count": 2,
+        "section_distribution": [
+          1,
+          3,
+          1,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "set": 65,
+      "numbers": [
+        4,
+        8,
+        17,
+        31,
+        42,
+        45
+      ],
+      "confidence": 0.4751538932323456,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 147,
+        "average": 24.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          0,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 66,
+      "numbers": [
+        8,
+        12,
+        15,
+        16,
+        25,
+        28
+      ],
+      "confidence": 0.9447195927420153,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 104,
+        "average": 17.3,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          3,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 67,
+      "numbers": [
+        2,
+        12,
+        17,
+        20,
+        22,
+        26
+      ],
+      "confidence": 0.8527494941629385,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "1:5",
+        "sum_total": 99,
+        "average": 16.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          3,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 68,
+      "numbers": [
+        7,
+        12,
+        16,
+        27,
+        34,
+        45
+      ],
+      "confidence": 0.7894927536231876,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 141,
+        "average": 23.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 69,
+      "numbers": [
+        1,
+        7,
+        12,
+        15,
+        38,
+        45
+      ],
+      "confidence": 0.7608164251207744,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 118,
+        "average": 19.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 70,
+      "numbers": [
+        2,
+        8,
+        18,
+        25,
+        27,
+        31
+      ],
+      "confidence": 0.4937019646167755,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 111,
+        "average": 18.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 71,
+      "numbers": [
+        6,
+        7,
+        15,
+        16,
+        18,
+        35
+      ],
+      "confidence": 0.8027340652479891,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 97,
+        "average": 16.2,
+        "consecutive_count": 2,
+        "section_distribution": [
+          2,
+          3,
+          0,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 72,
+      "numbers": [
+        3,
+        7,
+        19,
+        34,
+        42,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 150,
+        "average": 25.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          0,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 73,
+      "numbers": [
+        1,
+        3,
+        20,
+        34,
+        37,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 140,
+        "average": 23.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          0,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 74,
+      "numbers": [
+        4,
+        11,
+        18,
+        34,
+        39,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 151,
+        "average": 25.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 75,
+      "numbers": [
+        3,
+        8,
+        9,
+        19,
+        27,
+        41
+      ],
+      "confidence": 0.47646450996398926,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 107,
+        "average": 17.8,
+        "consecutive_count": 1,
+        "section_distribution": [
+          3,
+          1,
+          1,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "set": 76,
+      "numbers": [
+        7,
+        14,
+        17,
+        25,
+        29,
+        35
+      ],
+      "confidence": 0.9771127599007542,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 127,
+        "average": 21.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 77,
+      "numbers": [
+        5,
+        10,
+        15,
+        17,
+        21,
+        22
+      ],
+      "confidence": 0.9201866758794887,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 90,
+        "average": 15.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          3,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 78,
+      "numbers": [
+        7,
+        17,
+        21,
+        24,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 148,
+        "average": 24.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 79,
+      "numbers": [
+        3,
+        7,
+        11,
+        36,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 140,
+        "average": 23.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 80,
+      "numbers": [
+        7,
+        11,
+        20,
+        24,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 150,
+        "average": 25.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "set": 81,
+      "numbers": [
+        3,
+        5,
+        21,
+        27,
+        29,
+        30
+      ],
+      "confidence": 0.936087454441616,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 115,
+        "average": 19.2,
+        "consecutive_count": 1,
+        "section_distribution": [
+          2,
+          0,
+          3,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 82,
+      "numbers": [
+        3,
+        12,
+        20,
+        34,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 157,
+        "average": 26.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 83,
+      "numbers": [
+        4,
+        12,
+        19,
+        33,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 156,
+        "average": 26.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 84,
+      "numbers": [
+        15,
+        16,
+        18,
+        30,
+        33,
+        34
+      ],
+      "confidence": 0.7731651494158251,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 146,
+        "average": 24.3,
+        "consecutive_count": 2,
+        "section_distribution": [
+          0,
+          3,
+          0,
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "set": 85,
+      "numbers": [
+        3,
+        15,
+        20,
+        24,
+        43,
+        45
+      ],
+      "confidence": 0.7420900486057819,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 150,
+        "average": 25.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "set": 86,
+      "numbers": [
+        7,
+        18,
+        21,
+        38,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 172,
+        "average": 28.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 87,
+      "numbers": [
+        12,
+        15,
+        33,
+        35,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 178,
+        "average": 29.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          0,
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "set": 88,
+      "numbers": [
+        7,
+        11,
+        15,
+        30,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 142,
+        "average": 23.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 89,
+      "numbers": [
+        2,
+        18,
+        22,
+        23,
+        32,
+        41
+      ],
+      "confidence": 0.487714558839798,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 138,
+        "average": 23.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 90,
+      "numbers": [
+        13,
+        19,
+        27,
+        34,
+        35,
+        37
+      ],
+      "confidence": 0.47735142707824707,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 165,
+        "average": 27.5,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "set": 91,
+      "numbers": [
+        1,
+        11,
+        14,
+        34,
+        39,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 92,
+      "numbers": [
+        3,
+        7,
+        12,
+        14,
+        19,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 100,
+        "average": 16.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          3,
+          0,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "set": 93,
+      "numbers": [
+        11,
+        14,
+        27,
+        33,
+        36,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 166,
+        "average": 27.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 94,
+      "numbers": [
+        15,
+        21,
+        28,
+        32,
+        36,
+        41
+      ],
+      "confidence": 0.7325366035634181,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 173,
+        "average": 28.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          2,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 95,
+      "numbers": [
+        13,
+        22,
+        28,
+        29,
+        34,
+        39
+      ],
+      "confidence": 0.7135661678296783,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 165,
+        "average": 27.5,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 96,
+      "numbers": [
+        3,
+        12,
+        15,
+        20,
+        33,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 128,
+        "average": 21.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 97,
+      "numbers": [
+        4,
+        7,
+        18,
+        34,
+        39,
+        45
+      ],
+      "confidence": 0.7974112126450962,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 147,
+        "average": 24.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 98,
+      "numbers": [
+        1,
+        11,
+        18,
+        30,
+        33,
+        45
+      ],
+      "confidence": 0.7773845393924416,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 138,
+        "average": 23.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 99,
+      "numbers": [
+        6,
+        13,
+        15,
+        17,
+        26,
+        28
+      ],
+      "confidence": 0.7436794302035298,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 105,
+        "average": 17.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          3,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 100,
+      "numbers": [
+        5,
+        6,
+        21,
+        23,
+        25,
+        27
+      ],
+      "confidence": 0.5180156900230802,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 107,
+        "average": 17.8,
+        "consecutive_count": 1,
+        "section_distribution": [
+          2,
+          0,
+          4,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 101,
+      "numbers": [
+        1,
+        18,
+        21,
+        34,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 157,
+        "average": 26.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 102,
+      "numbers": [
+        1,
+        3,
+        11,
+        18,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 116,
+        "average": 19.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 103,
+      "numbers": [
+        7,
+        12,
+        27,
+        40,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 174,
+        "average": 29.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "set": 104,
+      "numbers": [
+        4,
+        11,
+        14,
+        16,
+        18,
+        31
+      ],
+      "confidence": 0.7582687072441499,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 94,
+        "average": 15.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          4,
+          0,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 105,
+      "numbers": [
+        5,
+        8,
+        12,
+        20,
+        24,
+        38
+      ],
+      "confidence": 0.4869457483291626,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "1:5",
+        "sum_total": 107,
+        "average": 17.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 106,
+      "numbers": [
+        12,
+        21,
+        24,
+        27,
+        33,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 162,
+        "average": 27.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          3,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 107,
+      "numbers": [
+        3,
+        20,
+        24,
+        33,
+        43,
+        45
+      ],
+      "confidence": 0.760367085489036,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 168,
+        "average": 28.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          0,
+          2,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 108,
+      "numbers": [
+        8,
+        12,
+        16,
+        20,
+        21,
+        22
+      ],
+      "confidence": 0.7237469890622172,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "1:5",
+        "sum_total": 99,
+        "average": 16.5,
+        "consecutive_count": 2,
+        "section_distribution": [
+          1,
+          2,
+          3,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 109,
+      "numbers": [
+        11,
+        15,
+        18,
+        19,
+        23,
+        26
+      ],
+      "confidence": 0.7232311000936126,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 112,
+        "average": 18.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          4,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 110,
+      "numbers": [
+        1,
+        7,
+        10,
+        18,
+        43,
+        45
+      ],
+      "confidence": 0.7077373737373739,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 124,
+        "average": 20.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          0,
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "set": 111,
+      "numbers": [
+        9,
+        14,
+        20,
+        24,
+        25,
+        28
+      ],
+      "confidence": 0.8603758684442743,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 120,
+        "average": 20.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          4,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 112,
+      "numbers": [
+        15,
+        21,
+        27,
+        35,
+        37,
+        39
+      ],
+      "confidence": 0.8404438819394005,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "6:0",
+        "sum_total": 174,
+        "average": 29.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          2,
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "set": 113,
+      "numbers": [
+        7,
+        12,
+        15,
+        16,
+        25,
+        32
+      ],
+      "confidence": 0.8014017471536881,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 107,
+        "average": 17.8,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          3,
+          1,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 114,
+      "numbers": [
+        7,
+        18,
+        20,
+        27,
+        33,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 150,
+        "average": 25.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 115,
+      "numbers": [
+        4,
+        12,
+        19,
+        21,
+        33,
+        45
+      ],
+      "confidence": 0.7677853492333898,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 134,
+        "average": 22.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 116,
+      "numbers": [
+        7,
+        15,
+        18,
+        21,
+        38,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 117,
+      "numbers": [
+        1,
+        15,
+        34,
+        36,
+        39,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 170,
+        "average": 28.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          0,
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "set": 118,
+      "numbers": [
+        10,
+        15,
+        18,
+        33,
+        39,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 160,
+        "average": 26.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          3,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 119,
+      "numbers": [
+        3,
+        14,
+        18,
+        25,
+        26,
+        32
+      ],
+      "confidence": 0.48413002490997314,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 118,
+        "average": 19.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          2,
+          2,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 120,
+      "numbers": [
+        10,
+        20,
+        24,
+        31,
+        43,
+        45
+      ],
+      "confidence": 0.4823218584060669,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 173,
+        "average": 28.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          2,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 121,
+      "numbers": [
+        18,
+        19,
+        20,
+        28,
+        34,
+        41
+      ],
+      "confidence": 0.9690365862144973,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 160,
+        "average": 26.7,
+        "consecutive_count": 2,
+        "section_distribution": [
+          0,
+          2,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 122,
+      "numbers": [
+        12,
+        18,
+        21,
+        26,
+        30,
+        35
+      ],
+      "confidence": 0.9511228479212052,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 142,
+        "average": 23.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 123,
+      "numbers": [
+        2,
+        11,
+        14,
+        15,
+        19,
+        25
+      ],
+      "confidence": 0.8758845412228712,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 86,
+        "average": 14.3,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          4,
+          1,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 124,
+      "numbers": [
+        3,
+        18,
+        34,
+        37,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 180,
+        "average": 30.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          0,
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "set": 125,
+      "numbers": [
+        13,
+        18,
+        27,
+        30,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 167,
+        "average": 27.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 126,
+      "numbers": [
+        3,
+        7,
+        27,
+        34,
+        40,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 156,
+        "average": 26.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          0,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 127,
+      "numbers": [
+        1,
+        21,
+        27,
+        30,
+        34,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 158,
+        "average": 26.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          0,
+          2,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 128,
+      "numbers": [
+        3,
+        12,
+        20,
+        34,
+        43,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 157,
+        "average": 26.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 129,
+      "numbers": [
+        5,
+        9,
+        16,
+        19,
+        25,
+        27
+      ],
+      "confidence": 0.4790246784687042,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "5:1",
+        "sum_total": 101,
+        "average": 16.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "set": 130,
+      "numbers": [
+        7,
+        13,
+        15,
+        18,
+        24,
+        44
+      ],
+      "confidence": 0.4767265021800995,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 121,
+        "average": 20.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          3,
+          1,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "set": 131,
+      "numbers": [
+        12,
+        15,
+        20,
+        27,
+        39,
+        45
+      ],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 158,
+        "average": 26.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          2,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 132,
+      "numbers": [
+        11,
+        24,
+        27,
+        34,
+        37,
+        45
+      ],
+      "confidence": 0.7925070610178543,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 178,
+        "average": 29.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          1,
+          2,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 133,
+      "numbers": [
+        1,
+        11,
+        27,
+        36,
+        38,
+        45
+      ],
+      "confidence": 0.7540783373301374,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 158,
+        "average": 26.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 134,
+      "numbers": [
+        8,
+        19,
+        24,
+        25,
+        31,
+        37
+      ],
+      "confidence": 0.4965806007385254,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 144,
+        "average": 24.0,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 135,
+      "numbers": [
+        2,
+        8,
+        10,
+        21,
+        24,
+        37
+      ],
+      "confidence": 0.48619723320007324,
+      "source": "ML/lstm",
+      "characteristics": {
+        "odd_even_ratio": "2:4",
+        "sum_total": 102,
+        "average": 17.0,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          1,
+          2,
+          1,
+          0
+        ]
+      }
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}

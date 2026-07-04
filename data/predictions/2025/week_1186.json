@@ -1,0 +1,81 @@
+{
+  "round": 1186,
+  "prediction_date": "2025-08-23T20:12:20",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [21, 22, 24, 25, 42, 43],
+      "confidence": 0.918,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 177,
+        "average": 29.5,
+        "section_distribution": [0, 0, 4, 0, 2],
+        "consecutive_count": 3
+      }
+    },
+    {
+      "set": 2,
+      "numbers": [23, 25, 26, 28, 29, 30],
+      "confidence": 0.854,
+      "source": "ML/fractal",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 161,
+        "average": 26.8,
+        "section_distribution": [0, 0, 5, 1, 0],
+        "consecutive_count": 3
+      }
+    },
+    {
+      "set": 3,
+      "numbers": [2, 7, 26, 34, 39, 45],
+      "confidence": 0.8,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 153,
+        "average": 25.5,
+        "section_distribution": [2, 0, 1, 2, 1],
+        "consecutive_count": 0
+      }
+    },
+    {
+      "set": 4,
+      "numbers": [2, 6, 11, 33, 43, 45],
+      "confidence": 0.76,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 140,
+        "average": 23.3,
+        "section_distribution": [2, 1, 0, 1, 2],
+        "consecutive_count": 0
+      }
+    },
+    {
+      "set": 5,
+      "numbers": [7, 12, 31, 40, 43, 45],
+      "confidence": 0.722,
+      "source": "ML/monte_carlo",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 178,
+        "average": 29.7,
+        "section_distribution": [1, 1, 0, 1, 3],
+        "consecutive_count": 0
+      }
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}

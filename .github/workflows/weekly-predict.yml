@@ -1,0 +1,66 @@
+name: 주간 로또 예측 (자동)
+
+# [무료 24/7 운영 - Phase 1: 2026-07-04]
+# 토요일 밤(추첨 후) GitHub Actions가 잠깐 켜져서:
+#  1) 새 당첨번호 수집  2) 학습  3) 백테스팅  4) 예측 5세트 생성
+#  5) 결과(당첨번호 DB + 예측)를 repo에 commit -> 다음 주 실행이 이어받음
+# 무료(private repo 월 2,000분 중 회당 ~25분 x 주1회 = 월 ~100분)·카드 불필요.
+
+on:
+  schedule:
+    # 토요일 13:00 UTC = 토요일 22:00 KST (로또 추첨 20:35 KST 이후, 데이터 반영 여유)
+    - cron: '0 13 * * 6'
+  workflow_dispatch:  # 수동 실행 버튼 (Actions 탭에서 언제든 눌러 테스트)
+
+# 동시 실행 방지: 이전 run이 안 끝났으면 겹치지 않게
+concurrency:
+  group: weekly-predict
+  cancel-in-progress: false
+
+permissions:
+  contents: write  # 결과(예측·DB)를 repo에 commit/push 하기 위해 필요
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 6시간 한도 대비 넉넉히(실측 사이클 ~14분 + 설치)
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설치 (+ pip 캐시)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 예측 사이클 1회 실행 (수집 -> 학습 -> 백테 -> 예측)
+        env:
+          # 헤드리스/비대화 환경 안정화
+          TF_CPP_MIN_LOG_LEVEL: '3'
+          MPLBACKEND: 'Agg'
+          # 무거운 8.14M 채점은 러너 2코어에 맞춰 병렬 축소(과부하 방지)
+          LOTTO_MAX_WORKERS: '2'
+        run: |
+          python main.py --once
+        continue-on-error: false
+
+      - name: 생성된 예측/DB 결과 커밋
+        if: always()  # 예측이 실패해도 부분 결과가 있으면 남김
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 상태 유지에 필요한 것만: 당첨번호 DB + 예측 결과(작음). 나머지 캐시는 .gitignore.
+          git add -f data/lotto_numbers.db data/predictions/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "커밋할 변경 없음(새 회차 없음 또는 실패)"
+          else
+            git commit -m "auto(actions): 주간 예측 갱신 [skip ci]"
+            git push
+          fi
