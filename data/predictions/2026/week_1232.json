@@ -332,6 +332,110 @@
           0
         ]
       }
+    },
+    {
+      "set": 16,
+      "numbers": [
+        6,
+        17,
+        20,
+        24,
+        35,
+        37
+      ],
+      "confidence": 0.9491,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 139,
+        "average": 23.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 17,
+      "numbers": [
+        11,
+        12,
+        18,
+        30,
+        31,
+        45
+      ],
+      "confidence": 0.9489,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 147,
+        "average": 24.5,
+        "consecutive_count": 2,
+        "section_distribution": [
+          0,
+          3,
+          0,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 18,
+      "numbers": [
+        5,
+        21,
+        26,
+        33,
+        40,
+        41
+      ],
+      "confidence": 0.94,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 166,
+        "average": 27.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          0,
+          2,
+          1,
+          2
+        ]
+      }
+    },
+    {
+      "set": 19,
+      "numbers": [
+        7,
+        10,
+        16,
+        29,
+        32,
+        39
+      ],
+      "confidence": 0.9498,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 133,
+        "average": 22.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          2,
+          0
+        ]
+      }
     }
   ],
   "result": {
