@@ -1,0 +1,60 @@
+name: 예측 대량 생성 (재미용)
+
+# [재미용 대량 예측 2026-07-04] 30분마다 극단성 풀 예측 5세트를 생성해 repo에 누적.
+# 추첨 후 '일주일치 수천 세트 중 최고 몇 개 맞았나'를 보는 재미용(성능 파악용 아님 - 같은
+# 회차 반복이라 통계 표본 1개). 커밋에 [skip ci] -> HF 재빌드/다른 워크플로우 트리거 안 함
+# (폭증 방지). 화면 반영은 주간 작업(토)이 끝에 HF를 재빌드할 때 일괄로 이뤄진다.
+# GitHub Actions public repo 무료 무제한.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # 30분마다
+  workflow_dispatch:
+
+concurrency:
+  group: bulk-predict
+  cancel-in-progress: false   # 겹치면 대기(중복 실행 방지)
+
+permissions:
+  contents: write
+
+jobs:
+  bulk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Python 3.11 (+ pip 캐시)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 경량 의존성 설치 (극단풀 예측=numpy 기반, TF/ML 불필요)
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy pandas pyyaml requests beautifulsoup4 tqdm
+
+      - name: 예측 5세트 생성
+        env:
+          TF_CPP_MIN_LOG_LEVEL: '3'
+          LOTTO_MAX_WORKERS: '2'
+        run: python src/scripts/bulk_predict_once.py
+
+      - name: 누적 결과 커밋 ([skip ci] = HF 재빌드 안 유발)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f data/predictions/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "신규 조합 없음(전부 중복) - 커밋 스킵"
+            exit 0
+          fi
+          git commit -m "bulk: 재미용 예측 누적 [skip ci]"
+          # 다른 잡의 커밋과 경합 대비: 최신을 rebase로 얹고 push(실패 시 다음 주기 재시도)
+          git pull --rebase --autostash 2>/dev/null || true
+          git push || echo "push 실패(경합) - 다음 30분 주기에 재시도"

@@ -64,5 +64,18 @@ jobs:
             echo "커밋할 변경 없음(새 회차 없음 또는 실패)"
           else
             git commit -m "auto(actions): 주간 예측 갱신 [skip ci]"
+            git pull --rebase --autostash 2>/dev/null || true
             git push
           fi
+
+      - name: HF Space 재빌드 (주간 결과 + 그동안 누적된 bulk 예측 일괄 반영)
+        if: always()
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # 주간/bulk 커밋은 [skip ci]라 hf-sync가 안 돈다. 주간 작업이 끝날 때 한 번
+          # 직접 재빌드해서 '이번 회차 결과 + 일주일치 누적 예측'을 화면에 일괄 반영한다.
+          if [ -z "$HF_TOKEN" ]; then echo "HF_TOKEN 미설정 - 재빌드 스킵"; exit 0; fi
+          pip install -q "huggingface_hub>=0.20"
+          python -c "from huggingface_hub import HfApi; HfApi(token='${HF_TOKEN}').restart_space('jungman-yoon/lotto-dashboard', factory_reboot=True)" \
+            || echo "HF 재빌드 트리거 실패(무시 - 다음 기회/수동)"
