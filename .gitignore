@@ -102,9 +102,12 @@ DYNAMIC_*.md
 # pyenv
 .python-version
 
-# Data files (optional - comment out if you want to include)
-# data/
-# models/
+# Runtime artifacts (런타임 산물 - 커밋 대상 아님, tracked 0 확인 후 활성화 2026-07-04)
+# data/(13GB: backup/_archive/predictions/filters DB), cache/(270MB 모델 캐시), models/(학습 모델)
+# 실수로 git add . 시 거대 산물이 커밋되는 것을 방지한다.
+data/
+models/
+cache/
 
 # Windows reserved names - CRITICAL: DO NOT CREATE FILES WITH THESE NAMES
 nul
