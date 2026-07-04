@@ -4037,6 +4037,8 @@ def main():
                 # 재사용해 ML 모델 재실행 없이 '정식 예측(ML 보조신호 포함)'을 100% 재현한다.
                 # 근거: ML 신호는 회차 고정=결정적이라 이 주간 1회 계산이 그 회차 내내 유효하다.
                 try:
+                    import json  # [2026-07-04 fix] main.py 상단에 json 미import -> NameError로 저장이
+                                 # 조용히 스킵되던 것 방지(로컬 import). 그래서 ml_signal.json이 안 생겼음.
                     _sig = ExtremenessPoolPredictor._ml_number_signal(_ml_preds_bundle)
                     if _sig is not None:
                         _sig_round = db_manager.get_last_round() + 1
