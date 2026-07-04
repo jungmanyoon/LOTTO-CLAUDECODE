@@ -1,0 +1,42 @@
+{
+  "target_K": 1500000,
+  "continuous_features": [
+    "sum",
+    "std",
+    "max_gap",
+    "range",
+    "odd_count",
+    "low_count",
+    "ac_value",
+    "prime_count",
+    "distinct_last_digits"
+  ],
+  "penalty_dims": [
+    "max_consecutive",
+    "odd_count",
+    "max_same_last_digit",
+    "max_section_occupancy"
+  ],
+  "best_params": {
+    "alpha": 0.21551483882575243,
+    "fw_sum": 2.0926613166767467,
+    "fw_std": 2.5094011544969663,
+    "fw_max_gap": 1.7980529621437742,
+    "fw_range": 2.076308854335964,
+    "fw_odd_count": 1.3027943520124814,
+    "fw_low_count": 2.446302137196979,
+    "fw_ac_value": 1.3995966873530978,
+    "fw_prime_count": 2.626618215156694,
+    "fw_distinct_last_digits": 2.2633858370929816,
+    "pw_max_consecutive": 1.932724707421061,
+    "pw_odd_count": 1.9809173688192239,
+    "pw_max_same_last_digit": 1.7690365627729339,
+    "pw_max_section_occupancy": 1.7581534399393501
+  },
+  "metrics": {
+    "auc_separation": 0.5100937361111111,
+    "lift_mean": 1.5204101863932094,
+    "lift_lcb": 1.5204101873932094,
+    "best_value": 0.58971257079867
+  }
+}

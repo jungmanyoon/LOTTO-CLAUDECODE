@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "round": 1230,
+  "selected_at": "2026-06-28T10:57:56",
+  "policy": "walk_forward_wilson_lcb_min_k",
+  "raw_target_K": 1500000,
+  "effective_target_K": 1500000,
+  "previous_target_K": 1500000,
+  "evidence": "weak",
+  "hysteresis": "kept_previous_ci_overlap",
+  "holdout_n": 750,
+  "folds": 5,
+  "window": 150,
+  "grid": [
+    200000,
+    300000,
+    400000,
+    500000,
+    700000,
+    900000,
+    1000000,
+    1250000,
+    1500000,
+    1750000,
+    2000000,
+    2500000,
+    3000000,
+    4000000,
+    5000000,
+    6000000
+  ],
+  "selected_metrics": {
+    "coverage": 0.20133333333333334,
+    "pool_ratio": 0.18416073055324333,
+    "lift": 1.0932479075669455,
+    "lift_lcb": 0.9458540851708477,
+    "observed_hits": 151,
+    "expected_random_hits": 138.1205479149325
+  },
+  "scorer": "weighted"
+}

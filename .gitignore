@@ -120,6 +120,11 @@ cache/
 data/predictions/**/*.bak*
 # 대시보드 UI 재설계 실험물(스크린샷+미채택 시안) - 로컬 참고용, 레포 제외 2026-07-04
 docs/ui_samples/
+# [배포 필요 2026-07-04] 극단성 풀 정책/가중치 JSON은 위 '*.json' 전역무시에서 예외.
+# effective_target_K(풀 크기) + 마할라 가중치 = 최종 예측 품질의 핵심 파라미터라
+# HF Space/GitHub Actions가 반드시 받아야 한다(없으면 기본값 폴백 + 대시보드 풀 API 에러).
+!configs/extremeness_pool_policy.json
+!configs/extremeness_weights.json
 
 # Windows reserved names - CRITICAL: DO NOT CREATE FILES WITH THESE NAMES
 nul
