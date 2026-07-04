@@ -217,6 +217,15 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         remote_addr = request.remote_addr
 
+        # [HF 배포 2026-07-04] 공개 배포 모드 인증 우회.
+        # HF Space는 SPACE_ID 환경변수를 자동 설정하므로 이를 감지(또는 명시적
+        # LOTTO_DASHBOARD_PUBLIC=1)하면 인증 없이 허용한다. 근거: 공개 로또 대시보드라
+        # 민감정보가 없고, 예측 생성은 무해하며, @limiter rate limit(예: 30/시간)이 남용을 막는다.
+        # HF에선 토큰 발급 API가 '로컬 전용'이라 토큰을 얻을 수조차 없어(구조적 막힘) 이 우회가
+        # 없으면 외부 사용자가 예측 생성을 전혀 못 한다. 로컬 실행은 아래 is_localhost로 그대로 통과.
+        if os.environ.get('SPACE_ID') or os.environ.get('LOTTO_DASHBOARD_PUBLIC') == '1':
+            return f(*args, **kwargs)
+
         # 로컬호스트는 인증 없이 허용
         if authenticator.is_localhost(remote_addr):
             return f(*args, **kwargs)
