@@ -17,10 +17,17 @@
 주의: 가중치(extremeness_weights.json)는 전체데이터 최적화라 미래누수 위험 -> 여기선 균등가중
   (순수 극단성 점수)으로 검증. 가중 효과는 별도(메모리상 AUC~0.505로 미미).
 
+[2026-07-04 통계 정직화] cutoff별 future 구간(r>t 전체)은 서로 '중첩'된다(예: cutoff 800의
+  future가 1100의 future를 완전 포함) -> fold간 비독립이라 종합 평균/최소는 참고용이며 독립
+  표본 요약이 아니다. 각 fold lift에 Wilson 95% 하한(lift_lcb)을 병기하고, 판정은 자의적
+  임계(min>1.05) 대신 CI 기반(전 fold lift_lcb>1)으로 한다. 비중첩 엄밀 설계는
+  validate_endtoend_partialmatch_walkforward.py(window 분리)가 담당.
+
 사용법: python src/scripts/validate_pool_walkforward.py --K 1500000
 """
 import os
 import sys
+import math
 import time
 import json
 import argparse
@@ -33,6 +40,17 @@ os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
 import logging
 logging.getLogger().setLevel(logging.ERROR)
 import numpy as np
+
+
+def _wilson_lower(x, n, z=1.96):
+    """이항 비율 Wilson 95% 하한. [2026-07-04] lift 불확실성 병기용 (n=0 방어)."""
+    if n == 0:
+        return 0.0
+    p = x / n
+    denom = 1.0 + z * z / n
+    center = p + z * z / (2 * n)
+    rad = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return max(0.0, (center - rad) / denom)
 
 
 def main():
@@ -82,6 +100,10 @@ def main():
         in_pool = future_scores <= cutoff_score
         coverage = float(in_pool.mean())
         lift = coverage / baseline
+        # [2026-07-04] 불확실성 병기: coverage Wilson 95% 하한 -> lift 하한.
+        # future 수십~수백 회면 lift SE ~0.2대라 fold간 lift 차이 대부분이 노이즈 범위임을 정직 표시.
+        cov_lcb = _wilson_lower(int(in_pool.sum()), int(len(future)))
+        lift_lcb = cov_lcb / baseline
 
         # 과거(train) 자기 coverage도 참고(과적합 정도): train 당첨이 풀에 얼마나
         train_scores = scorer.score(train)
@@ -93,23 +115,28 @@ def main():
             'future_coverage': round(coverage * 100, 2),
             'train_coverage': round(train_cov * 100, 2),
             'lift': round(lift, 3),
+            'lift_lcb': round(lift_lcb, 3),  # [2026-07-04] Wilson 95% 하한 기반 lift 하한
             'overfit_gap': round((train_cov - coverage) * 100, 2),  # train-future 차이(클수록 과적합)
         })
         print(f"  cutoff {t:>4} | 미래 {len(future):>3}회 | 풀 {pool_size:,} (제거 {(1-pool_size/TOTAL_COMBINATIONS)*100:.1f}%) "
               f"| 미래커버 {coverage*100:>5.2f}% | 과거커버 {train_cov*100:>5.2f}% | "
-              f"lift {lift:.3f} | 과적합갭 {(train_cov-coverage)*100:+.2f}%p | {time.time()-ts:.0f}s")
+              f"lift {lift:.3f} (95%하한 {lift_lcb:.3f}) | 과적합갭 {(train_cov-coverage)*100:+.2f}%p | {time.time()-ts:.0f}s")
 
     # 종합
     if results:
         lifts = np.array([r['lift'] for r in results])
+        lcbs = np.array([r['lift_lcb'] for r in results])
         covs = np.array([r['future_coverage'] for r in results])
         gaps = np.array([r['overfit_gap'] for r in results])
         print("-" * 96)
         print(f"  [종합] lift 평균 {lifts.mean():.3f} (범위 {lifts.min():.3f}~{lifts.max():.3f}, std {lifts.std():.3f})")
         print(f"         미래커버 평균 {covs.mean():.2f}% (무작위 {baseline*100:.2f}%)")
         print(f"         과적합갭 평균 {gaps.mean():+.2f}%p (작을수록 견고, 큰 양수면 과거과적합)")
-        verdict = ("극단성 풀이 미래에도 일관되게 유효(견고)" if lifts.min() > 1.05
-                   else "lift>1이나 변동/약함 - 풀축소 대비 미래보존 이득 제한적" if lifts.mean() > 1.0
+        print("  [주의] cutoff별 future 구간은 중첩(r>t 전체) -> fold간 비독립이라 위 평균/최소는 참고용")
+        # [2026-07-04] 자의적 임계(min>1.05) 대신 CI 기반 판정: 전 fold Wilson 95% 하한 lift>1 이어야 견고.
+        verdict = ("극단성 풀이 미래에도 일관되게 유효(견고: 전 fold lift 95% 하한>1)" if lcbs.min() > 1.0
+                   else "lift>1이나 95% CI가 1을 포함(무작위와 비유의) - 풀축소 대비 미래보존 이득 제한적"
+                   if lifts.mean() > 1.0
                    else "미래 보존 이득 없음(무작위와 동일) - 점수 신호 미약")
         print(f"  [판정] {verdict}")
 

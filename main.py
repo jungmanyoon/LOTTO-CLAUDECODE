@@ -4082,7 +4082,12 @@ def main():
         #  백테스트로 검증된 커버리지 최선 포트폴리오임을 명시.)
         _pbt = globals().get('_POOL_BACKTEST_SUMMARY')
         if _pbt:
-            logging.info(f"[검증] 위 5세트 '방식'의 최근 {_pbt['n']}회 blind 백테스트 성적:")
+            # [코드리뷰 2026-07-04 P2] 라벨 정직화: blind 백테스트는 미래누설 방지상 ML 가중을
+            # 제외하고 측정한다(fold에 현재 ML 번들 주입=누설). 표시된 5세트는 ML 가중(beta=0.4)
+            # 포함이므로 '방식'이 완전 동일하지 않음을 명시(계산은 옳고 라벨만 과대했던 갭 해소).
+            logging.info(
+                f"[검증] 위 5세트의 기반 '극단풀+다양성 선택' 방식의 최근 {_pbt['n']}회 "
+                f"blind 백테스트 성적 (blind 특성상 ML 가중 제외 측정, 표시 5세트는 ML 가중 포함):")
             logging.info(
                 f"   - 등수적중률 {_pbt['rank_hit_rate']*100:.1f}% vs 무작위 {_pbt['rand_all_hit']*100:.1f}% "
                 f"= 무작위 대비 {_pbt['lift_rounds_vs_all']:+d}회 우위 (평균 best-match {_pbt['mean_bm']:.2f})")

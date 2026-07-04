@@ -46,7 +46,17 @@ class ExtremenessPoolPredictor:
         #    라 기본에서 내림. 투명성만 원하면 env LOTTO_SCORING_METHOD=tail_group_max.
         #  근거: 보존율(=당첨번호 보존) 점추정 마할라 21.2% > tail 18.8%(McNemar 비유의 p>0.24).
         #  KPI=등수적중률이면 점추정 우위인 마할라로 '선택'하고, '설명'만 tail로 얻는 게 최선.
-        self.scoring_method = scoring_method or os.environ.get('LOTTO_SCORING_METHOD', 'hybrid')
+        _sm = scoring_method or os.environ.get('LOTTO_SCORING_METHOD', 'hybrid')
+        # [코드리뷰 2026-07-04 P1] 화이트리스트 검증: 미지원 값(예: 'tail_sum'/'copula' 등
+        # TailProbabilityScorer의 mode명이라 넣을 법한 값)이 오면, 캐시 키는 tail 계열로 새면서
+        # 실제 계산은 weights.json 기반 마할라노비스로 silent 진행되고 캐시 버전(wver)에
+        # weights.json mtime이 빠져 가중치 갱신 시 무효화가 누락되던 결함 -> 경고 후 hybrid 폴백.
+        if _sm not in ('hybrid', 'mahalanobis', 'tail_group_max'):
+            self.logger.warning(
+                f"[극단풀] 미지원 scoring_method '{_sm}' - 'hybrid'로 대체 "
+                f"(지원: hybrid/mahalanobis/tail_group_max)")
+            _sm = 'hybrid'
+        self.scoring_method = _sm
         # target_K 결정 (하위호환): 명시 인자가 오면 그 값을 그대로 쓴다(기존 호출처 불변).
         # 명시 인자가 없으면(None) 정책 json(SSOT) -> 환경변수 -> 기본 1.5M 순으로 해석한다.
         if target_K is not None:
@@ -163,6 +173,13 @@ class ExtremenessPoolPredictor:
         # 캐시 버전(wver): 마할라(선택)는 weights.json mtime, tail(선택)은 스코어러 로직 파일 mtime.
         # [2026-06-13] 과거 tail은 wver=0 고정이라 알고리즘을 고쳐도 같은 회차/K면 옛 풀이 silent
         # 재사용됐다 -> 로직 파일 mtime을 버전에 포함해 코드 수정 즉시 캐시 무효화(마할라와 대칭).
+        # [코드리뷰 2026-07-04 P1] 풀 형성 로직 일부(가중 변환 S@cov_inv@S, best_params->alpha/fw/pw
+        # 매핑)는 '이 파일 자체'에 있으므로 자기 mtime도 캐시 버전에 포함한다. 과거엔 이 파일만
+        # 수정하면 세 mtime(weights/scorer/tail)이 모두 불변이라 동일 (method,train_until,K) 키로
+        # 옛 풀이 silent 재사용됐다 - 특히 blind 검증 fold는 train_until이 고정 과거라 새 회차
+        # 유입으로도 영구히 무효화되지 않는 검증 실행 간 오염 경로였다.
+        _pred_py = os.path.abspath(__file__)
+        _pmt = int(os.path.getmtime(_pred_py)) if os.path.exists(_pred_py) else 0
         if sel_method == 'mahalanobis':
             # [2026-06-13 코드변경 무효화 보강] 가중치(weights.json) mtime '과' 스코어러 로직 파일
             # (extremeness_scorer.py) mtime의 최대값을 버전으로 쓴다. 과거엔 weights.json mtime만 반영해
@@ -171,10 +188,11 @@ class ExtremenessPoolPredictor:
             _scorer_py = os.path.join(self._project_root(), 'src', 'core', 'extremeness_scorer.py')
             _wmt = int(os.path.getmtime(wpath)) if os.path.exists(wpath) else 0
             _smt = int(os.path.getmtime(_scorer_py)) if os.path.exists(_scorer_py) else 0
-            wver = max(_wmt, _smt)
+            wver = max(_wmt, _smt, _pmt)
         else:
             _scorer_py = os.path.join(self._project_root(), 'src', 'core', 'tail_probability_scorer.py')
-            wver = int(os.path.getmtime(_scorer_py)) if os.path.exists(_scorer_py) else 0
+            _tmt = int(os.path.getmtime(_scorer_py)) if os.path.exists(_scorer_py) else 0
+            wver = max(_tmt, _pmt)
         # 캐시 키에 '선택 방식' 포함 -> tail/mahalanobis 캐시 분리 공존(hybrid는 마할라와 공유).
         cache_path = os.path.join(self._project_root(), self.cache_dir,
                                   f"extremeness_pool_{sel_method}_{train_until}_{self.target_K}_w{wver}.npz")
@@ -192,7 +210,12 @@ class ExtremenessPoolPredictor:
                         diag = json.loads(str(data['diagnostics']))
                         _logfn(diag)
                         # [코드리뷰 2026-06-27 P3] hybrid 화이트박스 설명도 캐시 히트에서 재생(표시 일관성).
-                        self._replay_hybrid_tail_explanations(diag)
+                        # [코드리뷰 2026-07-04 P2] 단 hybrid 모드일 때만 재생 - hybrid/mahalanobis는
+                        # 캐시를 공유(의도적)하므로, mahalanobis 롤백 모드에서 hybrid로 빌드된 캐시를
+                        # 히트하면 '[극단풀-하이브리드]' 라벨 로그가 실행 모드와 불일치하게 출력되던
+                        # 정직성 갭을 모드 가드로 차단(표시 전용, 예측 불변).
+                        if self.scoring_method == 'hybrid':
+                            self._replay_hybrid_tail_explanations(diag)
                     except Exception as de:
                         self.logger.warning(f"[극단풀] 진단 요약 파싱 실패({de}) - 기본 표시")
                         _logfn(None)
