@@ -273,6 +273,39 @@ def reset_singletons():
         pass
 
 
+# ====================================================================
+# [운영 예측 DB 격리] 테스트가 운영 data/predictions/(predictions.db, week_*.json)를
+# 오염시키지 않도록 차단
+# --------------------------------------------------------------------
+# 근거(2026-07-02 감사): test_dashboard.py의 rate-limit 테스트가 mock 없이 실제
+# /api/generate-predictions 핸들러를 호출해 운영 predictions.db와 week_*.json에
+# 실제 예측 5세트를 저장했다. 선행 테스트의 전역 random.seed(42)와 결합해
+# '완전히 동일한 5세트'가 pytest 실행마다 누적(1230회 50세트 중 20세트,
+# 1231회 30세트 중 25세트)되어, 사용자가 같은 조합을 중복 구매할 뻔한 실전
+# 사고로 이어졌다. 기본 경로(db_path=None) 생성을 테스트 임시 폴더로 강제해
+# 어떤 테스트도 운영 예측 저장소에 쓸 수 없게 한다.
+# 명시적으로 db_path를 넘기는 테스트는 영향받지 않는다.
+# ====================================================================
+@pytest.fixture(scope="function", autouse=True)
+def isolate_prediction_tracker(tmp_path, monkeypatch):
+    """PredictionTracker 기본 저장 경로를 테스트 임시 폴더로 격리"""
+    try:
+        from src.core.prediction_tracker import PredictionTracker
+    except ImportError:
+        yield
+        return
+
+    original_init = PredictionTracker.__init__
+
+    def _isolated_init(self, db_path=None):
+        if db_path is None:
+            db_path = tmp_path / "predictions_isolated" / "predictions.db"
+        original_init(self, db_path=db_path)
+
+    monkeypatch.setattr(PredictionTracker, "__init__", _isolated_init)
+    yield
+
+
 @pytest.fixture(scope="function")
 def temp_cache_dir(tmp_path):
     """테스트용 임시 캐시 디렉토리"""

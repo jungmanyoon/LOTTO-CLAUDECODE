@@ -167,12 +167,14 @@ class TestStorageSizeComparison:
     def test_size_savings(self):
         """크기 절약량 확인"""
         # 1000개 조합 테스트
+        # 주의: random.seed()는 전역 상태를 고정해 이후 실행되는 다른 테스트
+        # (예: 대시보드 예측 seed)까지 결정론이 전파되므로 지역 인스턴스를 쓴다.
         test_combos = []
         import random
-        random.seed(42)
+        rng = random.Random(42)
 
         for _ in range(1000):
-            nums = sorted(random.sample(range(1, 46), 6))
+            nums = sorted(rng.sample(range(1, 46), 6))
             test_combos.append(','.join(map(str, nums)))
 
         text_size = sum(len(c.encode('utf-8')) for c in test_combos)
@@ -414,12 +416,12 @@ class TestDatabaseOperations:
         ''')
         cursor.execute('CREATE INDEX idx_blob ON test_blob(combination_blob)')
 
-        # 대량 삽입
+        # 대량 삽입 (전역 random.seed 금지 - 다른 테스트로 결정론 전파 방지)
         import random
-        random.seed(42)
+        rng = random.Random(42)
 
         for i in range(1000):
-            nums = sorted(random.sample(range(1, 46), 6))
+            nums = sorted(rng.sample(range(1, 46), 6))
             combo = ','.join(map(str, nums))
             blob = CombinationStorageUnifier.encode_to_blob(combo)
             try:

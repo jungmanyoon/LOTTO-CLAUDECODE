@@ -550,19 +550,19 @@ class TestQueryPerformance:
             )
         ''')
 
-        # 1000개 행 삽입
+        # 1000개 행 삽입 (전역 random.seed 금지 - 다른 테스트로 결정론 전파 방지)
         test_data = []
         import random
-        random.seed(42)
+        rng = random.Random(42)
 
         for i in range(1000):
-            min_prob = random.uniform(0.1, 10.0)
-            max_prob = random.uniform(min_prob, 50.0)
+            min_prob = rng.uniform(0.1, 10.0)
+            max_prob = rng.uniform(min_prob, 50.0)
             has_low = 1 if min_prob < 1.0 else 0
 
             test_data.append((
                 i + 1,
-                json.dumps({j: random.uniform(0, 50) for j in range(7)}),
+                json.dumps({j: rng.uniform(0, 50) for j in range(7)}),
                 min_prob,
                 max_prob,
                 7,

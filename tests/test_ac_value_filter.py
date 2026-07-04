@@ -194,12 +194,12 @@ class TestACValueFilterIntegration:
     def test_large_batch(self, mock_db_manager):
         """대량 배치 처리 테스트"""
         import random
-        random.seed(42)
+        rng = random.Random(42)  # 전역 random.seed 금지 - 다른 테스트로 결정론 전파 방지
 
         # 1000개의 랜덤 조합 생성
         combinations = []
         for _ in range(1000):
-            nums = sorted(random.sample(range(1, 46), 6))
+            nums = sorted(rng.sample(range(1, 46), 6))
             combinations.append(",".join(map(str, nums)))
 
         ac_filter = ACValueFilter(mock_db_manager, {'min_ac': 7, 'max_ac': 10})

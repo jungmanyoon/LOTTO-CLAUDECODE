@@ -408,12 +408,27 @@ class TestGeneratePredictions:
 
     def test_generate_predictions_rate_limit(self, client):
         """예측 생성 Rate Limit 테스트"""
-        # 이 테스트는 실제 rate limit 동작을 확인
-        # 테스트 환경에서는 rate limit이 다르게 동작할 수 있음
-        with patch('src.scripts.enhanced_dashboard_v2.get_dashboard') as mock_dash:
+        # 이 테스트는 rate limit 데코레이터 동작만 확인한다.
+        # [2026-07-02] 과거에는 mock 없이 실제 핸들러가 끝까지 실행되어 운영
+        # predictions.db / week_*.json에 실제 예측 5세트를 저장했다(중복 세트
+        # 누적 사고의 주범). 예측 생성/저장 경로 전체를 mock으로 차단한다.
+        with patch('src.scripts.enhanced_dashboard_v2.get_dashboard') as mock_dash, \
+             patch('src.core.extremeness_pool_predictor.ExtremenessPoolPredictor') as mock_epp, \
+             patch('src.core.quick_prediction_engine.QuickPredictionEngine') as mock_quick, \
+             patch('src.core.prediction_tracker.PredictionTracker.save_predictions',
+                   return_value=True):
             mock_instance = Mock()
             mock_instance.get_all_rounds.return_value = [1200]
             mock_dash.return_value = mock_instance
+            mock_epp.return_value.build_pool.return_value = None
+            mock_epp.return_value.predict.return_value = [
+                {'numbers': [1, 12, 23, 34, 40, 45], 'confidence': 0.9, 'source': 'MockPool'},
+                {'numbers': [2, 13, 24, 35, 41, 44], 'confidence': 0.9, 'source': 'MockPool'},
+                {'numbers': [3, 14, 25, 36, 42, 43], 'confidence': 0.9, 'source': 'MockPool'},
+                {'numbers': [4, 15, 26, 37, 39, 44], 'confidence': 0.9, 'source': 'MockPool'},
+                {'numbers': [5, 16, 27, 38, 40, 43], 'confidence': 0.9, 'source': 'MockPool'},
+            ]
+            mock_quick.return_value.generate_quick_predictions.return_value = []
 
             # 첫 번째 요청
             response = client.post('/api/generate-predictions')
