@@ -4033,6 +4033,21 @@ def main():
                 _epp.build_pool()  # 학습회차+K 동일 시 디스크 캐시 재사용(0.2s)
                 final_predictions = _epp.predict(num_sets=5, ml_predictions=_ml_preds_bundle)
                 logging.info(f"[최종 예측] 극단성 풀 경로 사용 (K={_epp.target_K:,})")
+                # [2026-07-04] bulk 대량 예측용 ML 신호(45벡터) 저장. bulk_predict_once.py가 이걸
+                # 재사용해 ML 모델 재실행 없이 '정식 예측(ML 보조신호 포함)'을 100% 재현한다.
+                # 근거: ML 신호는 회차 고정=결정적이라 이 주간 1회 계산이 그 회차 내내 유효하다.
+                try:
+                    _sig = ExtremenessPoolPredictor._ml_number_signal(_ml_preds_bundle)
+                    if _sig is not None:
+                        _sig_round = db_manager.get_last_round() + 1
+                        _sig_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                 'data', 'ml_signal.json')
+                        with open(_sig_path, 'w', encoding='utf-8') as _sf:
+                            json.dump({'round': int(_sig_round),
+                                       'signal': [float(x) for x in _sig]}, _sf)
+                        logging.info(f"[최종 예측] bulk용 ML 신호 저장 (round={_sig_round}, 45번호 선호도)")
+                except Exception as _se:
+                    logging.debug(f"[최종 예측] bulk용 ML 신호 저장 생략: {_se}")
             except Exception as _e:
                 logging.error(f"[최종 예측] 극단성 풀 경로 실패 - 구 경로로 폴백: {_e}")
                 final_predictions = None

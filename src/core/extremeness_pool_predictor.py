@@ -669,7 +669,7 @@ class ExtremenessPoolPredictor:
         return out
 
     def predict(self, num_sets: int = 5, ml_predictions=None,
-                ml_beta: float = 0.4, seed: int = 42) -> List[Dict]:
+                ml_beta: float = 0.4, seed: int = 42, ml_signal=None) -> List[Dict]:
         """최종 num_sets개 예측 생성. 반환: [{'numbers','confidence','source'}, ...]"""
         from src.core.diversity_selector import FrequencyAnalyzer, DiversitySelector
 
@@ -678,7 +678,10 @@ class ExtremenessPoolPredictor:
 
         # 번호 가중치 (빈도/최근성 + ML 신호)
         fa = FrequencyAnalyzer(self.db)
-        ml_sig = self._ml_number_signal(ml_predictions)
+        # [2026-07-04] ml_signal(45벡터) 직접 주입 지원: bulk 예측이 주간에 계산·저장한 ML 신호를
+        # 재사용해 ML 모델 재실행 없이 정식 예측을 100% 재현한다(ML 신호는 회차 고정=결정적).
+        # 미지정이면 기존대로 ml_predictions에서 추출(정식 경로 완전 불변).
+        ml_sig = ml_signal if ml_signal is not None else self._ml_number_signal(ml_predictions)
         weights = fa.compute_weights(until_round=self._train_until, spread=self.spread,
                                      ml_signal=ml_sig, ml_beta=ml_beta if ml_sig is not None else 0.0)
 

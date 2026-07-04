@@ -58,7 +58,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # 상태 유지에 필요한 것만: 당첨번호 DB + 예측 결과(작음). 나머지 캐시는 .gitignore.
-          git add -f data/lotto_numbers.db data/predictions/ \
+          git add -f data/lotto_numbers.db data/predictions/ data/ml_signal.json \
                      configs/extremeness_pool_policy.json configs/extremeness_weights.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "커밋할 변경 없음(새 회차 없음 또는 실패)"

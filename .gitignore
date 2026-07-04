@@ -114,6 +114,7 @@ cache/
 #  - lotto_numbers.db(228KB): 당첨번호 = 진짜 상태(다음 주 실행이 이어받음)
 #  - data/predictions/: 예측 결과(작음). 나머지 캐시/백업/8.5GB combinations.db는 계속 무시.
 !data/lotto_numbers.db
+!data/ml_signal.json
 !data/predictions/
 !data/predictions/**
 # 단 예측 폴더 안의 백업 부산물(.bak)은 커밋 제외 (예외를 다시 좁힘)

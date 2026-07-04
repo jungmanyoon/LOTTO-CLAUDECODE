@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-[재미용 대량 예측 2026-07-04] 극단성 풀에서 5세트를 1회 생성해 저장.
+[정식 예측 대량 생성 2026-07-04] 다음 회차 예측 5세트를 '정식 예측 기능 그대로' 1회 생성/저장.
 
-GitHub Actions bulk-predict.yml 이 30분마다 호출 -> 다음 회차 예측을 대량 누적한다.
-추첨 후 '일주일치 수천 세트 중 최고 몇 개 맞았나'를 보는 재미용이다.
+용도(사용자 확정): 사람들이 이 많은 예측 중에서 골라 실제 로또를 구매한다. 따라서 '아무 번호'가
+아니라 프로그램의 정식 예측 경로(극단성 풀 8.14M 채점 -> 1.5M -> 다양성 5장 선택 + ML 보조신호)를
+그대로 사용한다. GitHub Actions bulk-predict.yml 이 정해진 간격으로 호출 -> 정식 예측을 대량 누적.
 
-[정직성] 이것은 '성능 파악용'이 아니다. 10~30분마다 만들어도 전부 '같은 회차' 예측이라
-통계 표본이 1개다(시험 문제 하나를 여러 번 푸는 것과 동일). 또 세트를 많이 만들수록
-당첨 확률이 오르는 건 '많이 사면 확률↑'(예산)이지 전략 성능이 아니다. 진짜 성능은
-'여러 회차 누적'(대시보드 추이 패널) 또는 walk-forward 백테스트로 봐야 한다.
+[정식 100% 재현 - 경량 방식] 주간 작업(main.py)이 저장한 ML 보조신호(data/ml_signal.json, 45번호
+선호도 벡터)를 로드해 predict(ml_signal=...)로 주입한다. ML 신호는 회차 고정=결정적이라, 매번
+LSTM/앙상블을 재실행하지 않고도 주간 정식 예측과 동일한 방식(ML 포함)으로 5세트를 만든다.
+(신호 파일이 없거나 회차 불일치면 극단풀+다양성만 = 대시보드 '새 예측 생성' 버튼과 동일.)
 
-경량: 극단성 풀 예측만 수행(numpy 기반). ML/TF/백테스트/최적화 없음. 중복 조합은
-PredictionTracker.save_predictions 의 중복 가드로 저장 스킵(신규 조합만 누적).
+경량: 극단성 풀 채점 + 다양성 선택 + 저장된 ML 신호 주입(numpy 기반, TF/모델 재학습 없음).
+중복 조합은 PredictionTracker.save_predictions 의 중복 가드로 스킵(서로 다른 조합만 누적).
 """
 import os
 import sys
@@ -38,9 +39,28 @@ def main():
     epp = ExtremenessPoolPredictor(db)
     epp.build_pool()  # 캐시(회차+K+가중치 동일) 있으면 즉시, 없으면 8.14M 채점(clean 약 1-2분)
 
+    # [2026-07-04] 정식 예측 100% 재현: 주간 작업이 저장한 ML 보조신호(45벡터)를 로드해 주입한다.
+    # ML 신호는 회차 고정=결정적이라, 주간 1회 계산분을 그 회차 내내 재사용해 ML 모델 재실행 없이
+    # 정식(ML 포함) 예측을 그대로 만든다. 신호가 없거나 회차 불일치면 극단풀+다양성만(즉석 예측과 동일).
+    ml_signal = None
+    try:
+        import json
+        import numpy as np
+        sig_path = os.path.join(ROOT, 'data', 'ml_signal.json')
+        if os.path.exists(sig_path):
+            with open(sig_path, 'r', encoding='utf-8') as f:
+                _sd = json.load(f)
+            if int(_sd.get('round', -1)) == next_round and _sd.get('signal'):
+                ml_signal = np.array(_sd['signal'], dtype=np.float64)
+                print(f"[bulk] 정식 ML 신호 로드(round={next_round}) - 정식 예측 재현")
+            else:
+                print(f"[bulk] ML 신호 회차 불일치(저장 {_sd.get('round')} != 예측 {next_round}) - 극단풀만")
+    except Exception as _me:
+        print(f"[bulk] ML 신호 로드 생략({_me}) - 극단풀+다양성만")
+
     # 매 실행 다른 seed -> 풀 안에서 다른 다양성 조합 5세트 (풀은 동일, 비용 없음)
     seed = int(time.time() * 1000) % 2_000_000
-    preds = epp.predict(num_sets=5, seed=seed)
+    preds = epp.predict(num_sets=5, seed=seed, ml_signal=ml_signal)
     if not preds:
         print("[bulk] 예측 생성 실패(빈 결과) - 저장 생략")
         return
