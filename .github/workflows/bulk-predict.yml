@@ -37,7 +37,7 @@ jobs:
       - name: 경량 의존성 설치 (극단풀 예측=numpy 기반, TF/ML 불필요)
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy pandas pyyaml requests beautifulsoup4 tqdm
+          pip install numpy scipy pandas pyyaml requests beautifulsoup4 tqdm pytz psutil
 
       - name: 예측 5세트 생성
         env:
