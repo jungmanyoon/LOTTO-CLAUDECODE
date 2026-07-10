@@ -7,10 +7,16 @@ name: HF Space 자동 재빌드 (GitHub 변경 반영)
 # 옛 코드가 재사용된다 -> factory_reboot=True 로 clone을 다시 하게 해야 최신 반영됨.
 #
 # 필요: GitHub repo Secret 'HF_TOKEN' (HF Write 토큰). 미설정 시 이 잡은 조용히 스킵(무해).
+#
+# [2026-07-10 추가] 6시간마다 자동 재빌드(schedule)도 켠다. bulk 예측 커밋은 [skip ci]라
+# push 재빌드를 안 부르므로, 옛 구조에선 토요일 주간 작업 때만 재빌드 -> 최대 7일간 화면이
+# 안 바뀌는 문제가 있었다. 이제 6시간마다 그동안 GitHub에 쌓인 예측을 화면에 반영한다.
 
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '0 */6 * * *'   # 6시간마다 (하루 4회) - 누적 예측을 대시보드에 주기 반영
   workflow_dispatch:
 
 concurrency:
