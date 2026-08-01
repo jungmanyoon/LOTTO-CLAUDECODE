@@ -5732,6 +5732,34 @@
       "confidence": 0.9266,
       "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
       "characteristics": {}
+    },
+    {
+      "set": 406,
+      "numbers": [
+        4,
+        11,
+        16,
+        29,
+        32,
+        39
+      ],
+      "confidence": 0.9495,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 407,
+      "numbers": [
+        7,
+        8,
+        20,
+        23,
+        30,
+        35
+      ],
+      "confidence": 0.9453,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
     }
   ],
   "result": {
