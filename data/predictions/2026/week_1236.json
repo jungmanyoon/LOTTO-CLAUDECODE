@@ -132,6 +132,62 @@
           0
         ]
       }
+    },
+    {
+      "set": 6,
+      "numbers": [
+        12,
+        13,
+        26,
+        27,
+        37,
+        45
+      ],
+      "confidence": 0.9452,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 7,
+      "numbers": [
+        3,
+        15,
+        19,
+        28,
+        34,
+        35
+      ],
+      "confidence": 0.9488,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 8,
+      "numbers": [
+        7,
+        14,
+        17,
+        30,
+        33,
+        36
+      ],
+      "confidence": 0.9483,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 9,
+      "numbers": [
+        1,
+        5,
+        18,
+        22,
+        24,
+        31
+      ],
+      "confidence": 0.9379,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
     }
   ],
   "result": {
