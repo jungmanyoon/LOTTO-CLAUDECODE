@@ -1,0 +1,146 @@
+{
+  "round": 1236,
+  "prediction_date": "2026-08-01T23:11:05.234827+09:00",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [
+        13,
+        14,
+        19,
+        28,
+        34,
+        45
+      ],
+      "confidence": 0.9295,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 153,
+        "average": 25.5,
+        "consecutive_count": 1,
+        "section_distribution": [
+          0,
+          3,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 2,
+      "numbers": [
+        1,
+        17,
+        18,
+        31,
+        33,
+        36
+      ],
+      "confidence": 0.9486,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 136,
+        "average": 22.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          2,
+          0,
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "set": 3,
+      "numbers": [
+        7,
+        10,
+        12,
+        26,
+        27,
+        43
+      ],
+      "confidence": 0.9487,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 125,
+        "average": 20.8,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          2,
+          2,
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "set": 4,
+      "numbers": [
+        3,
+        16,
+        20,
+        25,
+        35,
+        37
+      ],
+      "confidence": 0.948,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 136,
+        "average": 22.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "set": 5,
+      "numbers": [
+        4,
+        11,
+        21,
+        23,
+        38,
+        39
+      ],
+      "confidence": 0.948,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 136,
+        "average": 22.7,
+        "consecutive_count": 1,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          2,
+          0
+        ]
+      }
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}
