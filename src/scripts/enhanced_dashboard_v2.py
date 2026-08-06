@@ -622,6 +622,39 @@ class EnhancedLottoDashboard:
             self.logger.error(f"정직 성적표 집계 실패: {e}")
             return empty
 
+    def _verdict(self, per_round: List[Dict]) -> Dict:
+        """"이 차이가 실력인가 운인가"를 판정하고, 아직 이르면 몇 회차가 더 필요한지 추정한다.
+
+        회차를 독립 단위로 본다(같은 회차의 조합들은 같은 당첨번호를 대상으로 하므로 독립이 아니다).
+        화면에는 신뢰구간 같은 용어 대신 "아직 알 수 없음 / 확인됨"으로 풀어 쓴다.
+        """
+        k = len(per_round)
+        out = {'status': 'too_few', 'rounds': k, 'need_rounds': None,
+               'low': None, 'high': None}
+        if k < 3:
+            return out
+        diffs = [x['our_per100'] / 100.0 - x['real_per100'] / 100.0 for x in per_round]
+        mean = sum(diffs) / k
+        var = sum((d - mean) ** 2 for d in diffs) / (k - 1)
+        sd = var ** 0.5
+        if sd <= 0:
+            return out
+        base = sum(x['real_per100'] for x in per_round) / k / 100.0
+        lo = mean - self._t95(k - 1) * (sd / (k ** 0.5))
+        hi = mean + self._t95(k - 1) * (sd / (k ** 0.5))
+        if base > 0:
+            out['low'] = round((base + lo) / base, 2)
+            out['high'] = round((base + hi) / base, 2)
+        out['status'] = 'confirmed' if lo > 0 else ('worse' if hi < 0 else 'unknown')
+
+        # 아직 판정이 안 났다면, 현재 흐름이 그대로 이어질 때 몇 회차에서 판정이 나는지 추정
+        if out['status'] == 'unknown' and mean > 0:
+            for kk in range(k + 1, 201):
+                if mean - self._t95(kk - 1) * (sd / (kk ** 0.5)) > 0:
+                    out['need_rounds'] = kk - k
+                    break
+        return out
+
     def get_real_buyer_comparison(self, recent_limit: int = 10) -> Dict:
         """실제로 로또를 산 사람들의 실적 vs 우리 예측 실적 비교.
 
@@ -718,6 +751,7 @@ class EnhancedLottoDashboard:
                     'ratio': round(ours_all / real_all, 2) if real_all > 0 else None,
                     'better_rounds': better,
                 },
+                'verdict': self._verdict(per_round),
             }
         except Exception as e:
             self.logger.error(f"실구매자 비교 집계 실패: {e}")
@@ -1932,17 +1966,13 @@ HTML_TEMPLATE_V2 = """
             <!-- [정직 성적표 2026-08-06] 실제 발행분 x 실제 당첨번호 대조 결과.
                  이 숫자들은 DB에 이미 있었는데 화면 어디에도 안 보여서(성적 요약은 미추첨 회차에서
                  렌더 안 됨, 누적치는 접힌 서랍 안) 사용자가 실적을 알 수 없었다. 항상 보이게 승격. -->
-            <div class="card span-12" id="scoreCard">
-                <div class="card-h"><span class="dot"></span>성적표 (실제 대조)<span class="sub" id="scoreSub"></span></div>
-                <div id="scoreBody"><div class="state">데이터 대기 중</div></div>
-            </div>
-
-            <!-- [실제 구매자 비교 2026-08-06] 동행복권 공식 통계(총 판매 게임 수 + 등수별 당첨자 수)로
+            <!-- [성적표 2026-08-06] 동행복권 공식 통계(총 판매 게임 수 + 등수별 당첨자 수)로
                  "실제로 산 사람들은 100장당 몇 개 맞았나"를 계산해 우리 예측과 같은 단위로 비교한다.
-                 이론 확률보다 직관적이고, 실제 구매자 적중률은 이론값과 거의 일치해 기준선으로 타당하다. -->
-            <div class="card span-12" id="vsRealCard">
-                <div class="card-h"><span class="dot"></span>실제로 산 사람들과 비교<span class="sub" id="vsRealSub"></span></div>
-                <div id="vsRealBody"><div class="state">데이터 대기 중</div></div>
+                 이론 확률(무작위 기대)보다 직관적이고, 실제 구매자 적중률은 이론값과 거의 일치해
+                 기준선으로 타당하다. 배수가 여러 개 뜨면 헷갈리므로 카드를 하나로 통합했다. -->
+            <div class="card span-12" id="scoreCard">
+                <div class="card-h"><span class="dot"></span>성적표<span class="sub" id="scoreSub"></span></div>
+                <div id="scoreBody"><div class="state">데이터 대기 중</div></div>
             </div>
 
             <!-- [지속학습 가시화 2026-07-04] 회차별 실측 추이 - "회차가 쌓일수록 좋아지는가" 확인용 -->
@@ -2494,187 +2524,138 @@ HTML_TEMPLATE_V2 = """
             loadOptimizerStatus();
             setState('backtestGrid', 'loading', '백테스트 로딩 중...');
 
-            const [s, b, w, t, sc, vr] = await Promise.all([
+            const [s, b, w, t, vr] = await Promise.all([
                 fetchJson('/api/stats'),
                 fetchJson('/api/backtest-performance'),
                 fetchJson('/api/winning-statistics'),
                 fetchJson('/api/performance-trend'),
-                fetchJson('/api/honest-scorecard'),
                 fetchJson('/api/vs-real-buyers')
             ]);
             displayBacktestPerformance(b.ok ? b.data : (b.data || {}));
             displayBasicStats(s.ok ? s.data : {});
             displayDistribution(s.ok ? s.data : {}, b.ok ? b.data : null);
             displayTrend(t.ok ? t.data : {});
-            displayScorecard(sc.ok ? sc.data : {});
-            displayVsReal(vr.ok ? vr.data : {});
+            // 성적표는 '실제 구매자 대비' 하나로 통합됐다(무작위 기대 대비와 사실상 같은 값이라
+            // 배수가 여러 개 뜨면 헷갈린다는 사용자 피드백 반영).
+            displayScorecard(vr.ok ? vr.data : {});
         }
 
-        // [실제 구매자 비교 2026-08-06]
-        // 동행복권은 회차마다 '총 판매 게임 수'와 '등수별 당첨자 수'를 공개한다.
-        // 그래서 "전국 사람들이 100장 사면 평균 몇 개 맞나"를 정확히 알 수 있고,
-        // 우리 예측도 같은 단위(100장당 3개 이상 몇 건)로 환산하면 사과 대 사과 비교가 된다.
-        function displayVsReal(vr) {
+        // [성적표 통합 2026-08-06]
+        // 기존에는 '무작위 기대 대비 배수'(성적표 카드)와 '실제 구매자 대비 배수'(비교 카드)가
+        // 따로 있어 비슷한 배수가 여러 개 떠 헷갈렸다. 실측상 그 둘은 사실상 같은 값이다
+        // (실제 구매자 100장당 2.38개 vs 이론 무작위 2.38개). 그래서 어려운 '무작위 기대'라는
+        // 말을 없애고 '실제로 산 사람들' 하나로 통일하고, 카드도 하나로 합쳤다.
+        // 단위도 '배' 대신 '100장에 몇 개'를 앞세운다(사용자 피드백: "말이 너무 어렵다").
+        function displayScorecard(vr) {
             vr = vr || {};
-            const wrap = document.getElementById('vsRealBody');
+            const wrap = document.getElementById('scoreBody');
             if (!vr.available || !vr.rounds || !vr.rounds.length) {
-                setState('vsRealBody', 'empty', '비교할 회차가 아직 없습니다. 새 회차 대조 후 자동 집계됩니다.');
+                setState('scoreBody', 'empty', '아직 결과를 맞춰본 회차가 없습니다. 새 회차 발표 후 자동으로 채워집니다.');
                 return;
             }
             const s = vr.summary || {};
+            const v = vr.verdict || {};
             const last = vr.rounds[0];
-            document.getElementById('vsRealSub').textContent = '누적 ' + (s.rounds || 0) + '개 회차 비교';
+            document.getElementById('scoreSub').textContent =
+                (s.rounds || 0) + '개 회차 · 우리 예측 ' + (s.our_tickets || 0).toLocaleString() + '장';
 
-            const cmp = (a, b) => (a > b ? 'var(--good)' : (a < b ? 'var(--text-2)' : 'var(--text)'));
-
-            // 한 줄 요약 (제일 크게)
-            let html = '<div style="padding:14px 16px; border-radius:10px; background:var(--accent-weak); ' +
-                'margin-bottom:16px; line-height:1.85; font-size:14px;">' +
-                '<div style="font-size:12px; color:var(--muted); margin-bottom:6px;">' + last.round + '회 · 100장 샀다고 치면</div>' +
-                '<div>전국에서 실제로 산 사람들 &nbsp;<b style="font-family:var(--font-mono); font-size:17px;">' +
-                last.real_per100 + '개</b> <span style="color:var(--muted); font-size:12px;">맞음</span></div>' +
-                '<div>우리 예측 &nbsp;<b style="font-family:var(--font-mono); font-size:17px; color:' +
-                cmp(last.our_per100, last.real_per100) + ';">' + last.our_per100 + '개</b> ' +
-                '<span style="color:var(--muted); font-size:12px;">맞음 (' +
-                (last.ratio == null ? '-' : last.ratio + '배') + ')</span></div>' +
+            // 두 줄 비교 블록 (이번 회차 / 전체 공통 모양)
+            function block(title, note, realV, ourV, ratio) {
+                const win = ourV > realV;
+                let verdictLine;
+                if (ratio == null) {
+                    verdictLine = '비교 불가';
+                } else if (win) {
+                    verdictLine = '우리가 ' + ratio + '배 더 맞았습니다';
+                } else if (ourV === realV) {
+                    verdictLine = '똑같았습니다';
+                } else {
+                    verdictLine = '우리가 더 적게 맞았습니다 (' + ratio + '배)';
+                }
+                return '' +
+                '<div style="border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:12px;">' +
+                  '<div style="font-size:12px; color:var(--muted); margin-bottom:10px;">' + title +
+                    (note ? ' <span style="opacity:.8;">' + note + '</span>' : '') + '</div>' +
+                  '<div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px;">' +
+                    '<span style="font-size:13.5px;">실제로 산 사람들</span>' +
+                    '<span><b style="font-family:var(--font-mono); font-size:19px;">' + realV + '</b>' +
+                      '<span style="font-size:12px; color:var(--muted);">개 / 100장</span></span>' +
+                  '</div>' +
+                  '<div style="display:flex; align-items:baseline; justify-content:space-between;">' +
+                    '<span style="font-size:13.5px;">우리 예측</span>' +
+                    '<span><b style="font-family:var(--font-mono); font-size:19px; color:' +
+                      (win ? 'var(--good)' : 'var(--text)') + ';">' + ourV + '</b>' +
+                      '<span style="font-size:12px; color:var(--muted);">개 / 100장</span></span>' +
+                  '</div>' +
+                  '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); ' +
+                    'font-size:13px; color:' + (win ? 'var(--good)' : 'var(--text-2)') + ';">' +
+                    verdictLine +
+                  '</div>' +
                 '</div>';
+            }
 
-            // 무슨 뜻인지 쉬운 설명
-            html += '<div style="font-size:12.5px; color:var(--text-2); line-height:1.8; margin-bottom:14px;">' +
-                '<b style="color:var(--text);">이게 무슨 뜻이냐면</b><br>' +
-                last.round + '회에 전국에서 <b>' + last.real_games.toLocaleString() + '장</b>이 팔렸고, ' +
-                '그중 3개 이상 맞은 게 <b>' + last.real_wins.toLocaleString() + '건</b>이었습니다. ' +
-                '100장으로 환산하면 <b>' + last.real_per100 + '개</b>입니다.<br>' +
-                '우리는 같은 회차에 <b>' + last.our_tickets.toLocaleString() + '장</b>을 냈고 ' +
-                '3개 이상이 <b>' + last.our_hits + '건</b>이었습니다. 100장으로 환산하면 <b>' + last.our_per100 + '개</b>입니다.' +
-                '</div>';
+            let html = '';
+            html += block('이번 회차 (' + last.round + '회)', '우리 ' + last.our_tickets.toLocaleString() + '장',
+                          last.real_per100, last.our_per100, last.ratio);
+            html += block('전체 합계', (s.rounds || 0) + '개 회차 · 우리 ' + (s.our_tickets || 0).toLocaleString() + '장',
+                          s.real_per100, s.our_per100, s.ratio);
 
-            // 누적
-            html += '<div style="font-size:13px; line-height:1.9; padding-top:12px; border-top:1px solid var(--border);">' +
-                '<b style="color:var(--text);">누적 ' + (s.rounds || 0) + '개 회차</b><br>' +
-                '실제로 산 사람들 &nbsp;<b style="font-family:var(--font-mono);">' + s.real_per100 + '개</b>' +
-                ' <span style="color:var(--muted); font-size:12px;">(' + (s.real_games || 0).toLocaleString() + '장 기준)</span><br>' +
-                '우리 예측 &nbsp;<b style="font-family:var(--font-mono); color:' + cmp(s.our_per100, s.real_per100) + ';">' +
-                s.our_per100 + '개</b> <span style="color:var(--muted); font-size:12px;">(' +
-                (s.our_tickets || 0).toLocaleString() + '장 기준) = ' + (s.ratio == null ? '-' : s.ratio + '배') + '</span><br>' +
-                '<span style="color:var(--muted); font-size:12px;">우리가 더 나았던 회차: ' +
-                (s.better_rounds || 0) + ' / ' + (s.rounds || 0) + '회</span>' +
-                '</div>';
+            // 판정: 통계 용어(신뢰구간 등) 대신 풀어서 쓴다
+            let verdictHtml;
+            if (v.status === 'confirmed') {
+                verdictHtml = '<b style="color:var(--good);">실력으로 확인됐습니다.</b> ' +
+                    '회차가 충분히 쌓여, 이 차이가 운 때문일 가능성은 낮습니다.';
+            } else if (v.status === 'worse') {
+                verdictHtml = '<b>실제로 산 사람들보다 낮습니다.</b> 개선이 필요합니다.';
+            } else {
+                verdictHtml = '<b>아직은 실력인지 운인지 알 수 없습니다.</b> ' +
+                    '지금은 ' + (v.rounds || 0) + '개 회차뿐이라, 운만으로도 이 정도 차이는 납니다.' +
+                    (v.need_rounds
+                        ? ' 지금 흐름이 이어진다면 <b>' + v.need_rounds + '회차</b>만 더 쌓여도 판단할 수 있습니다.'
+                        : ' 회차가 더 쌓여야 합니다.');
+            }
+            html += '<div style="padding:12px 14px; border-radius:10px; background:rgba(127,127,127,.10); ' +
+                'font-size:13px; line-height:1.75; margin-bottom:14px;">' + verdictHtml + '</div>';
 
             // 회차별 표
             let rows = '';
             vr.rounds.forEach(r => {
+                const win = r.our_per100 > r.real_per100;
                 rows += '<tr>' +
-                    '<td>' + r.round + '</td>' +
-                    '<td style="text-align:right; font-family:var(--font-mono);">' + r.real_per100 + '</td>' +
-                    '<td style="text-align:right; font-family:var(--font-mono); color:' +
-                    cmp(r.our_per100, r.real_per100) + ';">' + r.our_per100 +
-                    '<span style="color:var(--muted); font-size:10.5px; font-family:var(--font-sans);"> (' +
-                    r.our_tickets + '장)</span></td>' +
-                    '<td style="text-align:right; font-family:var(--font-mono); color:' +
-                    cmp(r.our_per100, r.real_per100) + ';">' +
-                    (r.ratio == null ? '-' : r.ratio) + '</td></tr>';
+                    '<td style="white-space:nowrap;">' + r.round + '</td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap;">' + r.real_per100 + '</td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap; color:' +
+                      (win ? 'var(--good)' : 'var(--text)') + ';">' + r.our_per100 + '</td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap; color:var(--muted);">' +
+                      r.our_tickets.toLocaleString() + '</td></tr>';
             });
-            // 이 표는 짧은 숫자만 있어 모바일에서도 4열이 들어간다.
-            // (rwd로 카드화하면 회차당 4줄이 되어 오히려 스크롤이 길어진다 - 일부러 적용하지 않음)
-            html += '<div class="table-scroll" style="margin-top:12px; max-height:none;">' +
-                '<table class="data-table compact"><thead><tr>' +
-                '<th>회차</th><th style="text-align:right;">실제 구매자</th>' +
-                '<th style="text-align:right;">우리 예측</th><th style="text-align:right;">배수</th>' +
-                '</tr></thead><tbody>' + rows + '</tbody></table></div>';
-
-            html += '<div style="margin-top:12px; font-size:12px; color:var(--muted); line-height:1.75;">' +
-                '실제 구매자들의 성적은 이론상 무작위 확률(100장당 2.38개)과 거의 같습니다. ' +
-                '수백만 명이 제각기 다른 번호를 사기 때문입니다. ' +
-                '따라서 이 비교는 곧 "무작위로 사는 것보다 나은가"를 뜻합니다.<br>' +
-                '<b>단, 한 회차 값은 운의 영향이 매우 큽니다.</b> 우리 쪽 장수(수백 장)가 ' +
-                '전국 판매량(1억 장 이상)보다 훨씬 적어 들쭉날쭉합니다. 회차가 쌓여야 판단할 수 있습니다.' +
-                '</div>';
-
-            wrap.innerHTML = html;
-        }
-
-        // [정직 성적표 2026-08-06] 발행분을 실제 당첨번호와 대조한 결과 + 무작위 기대치.
-        // 과장 금지: 단일 회차 값은 변동이 크고, 누적 신뢰구간이 1.00배를 포함하면
-        // "무작위와 구분되지 않는다"고 그대로 쓴다.
-        function displayScorecard(sc) {
-            sc = sc || {};
-            const wrap = document.getElementById('scoreBody');
-            if (!sc.available || !sc.rounds || !sc.rounds.length) {
-                setState('scoreBody', 'empty', '대조 완료된 회차가 아직 없습니다. 새 회차 발표 후 자동 집계됩니다.');
-                return;
-            }
-            const c = sc.cumulative || {};
-            const last = sc.rounds[0];
-            document.getElementById('scoreSub').textContent =
-                '누적 ' + (c.rounds || 0) + '개 회차 · ' + (c.checked || 0).toLocaleString() + '장 대조';
-
-            const ratioColor = (r) => (r == null ? 'var(--muted)' : (r >= 1 ? 'var(--good)' : 'var(--text)'));
-
-            let html = '<div class="hero-mini" style="margin-bottom:14px;">' +
-                '<div><div class="mv">' + last.checked.toLocaleString() + '</div>' +
-                '<div class="ml">' + last.round + '회 발행 장수</div></div>' +
-                '<div><div class="mv" style="color:var(--good)">' + last.hits3 + '</div>' +
-                '<div class="ml">3개 이상 일치</div></div>' +
-                '<div><div class="mv" style="color:var(--muted)">' + last.expected3 + '</div>' +
-                '<div class="ml">무작위 기대 건수</div></div>' +
-                '<div><div class="mv" style="color:' + ratioColor(last.ratio) + '">' +
-                (last.ratio == null ? '-' : last.ratio + '배') + '</div>' +
-                '<div class="ml">기대 대비 (참고용)</div></div>' +
-                '</div>';
-
-            html += '<div style="font-size:13px; line-height:1.9; color:var(--text-2);">' +
-                '<div><b style="color:var(--text);">누적 성적</b> · ' + (c.rounds || 0) + '개 회차 · ' +
-                (c.checked || 0).toLocaleString() + '장 대조 완료</div>' +
-                '<div>3개 이상 일치 <b style="font-family:var(--font-mono);color:var(--good);">' +
-                (c.hits3 || 0) + '건</b> / 무작위 기대 <b style="font-family:var(--font-mono);">' +
-                (c.expected3 || 0) + '건</b> = <b style="font-family:var(--font-mono);color:' +
-                ratioColor(c.ratio3) + ';">' + (c.ratio3 == null ? '-' : c.ratio3 + '배') + '</b>' +
-                ' <span style="color:var(--muted);">(1장당 무작위 확률 1/' + (c.one_in || '-') + ')</span></div>' +
-                '<div>4개 이상 일치 <b style="font-family:var(--font-mono);">' + (c.hits4 || 0) +
-                '건</b> / 기대 <b style="font-family:var(--font-mono);">' + (c.expected4 || 0) + '건</b></div>';
-
-            if (c.ci_low != null && c.ci_high != null) {
-                const overlapsOne = (c.ci_low <= 1.0 && c.ci_high >= 1.0);
-                html += '<div>95% 신뢰구간 <b style="font-family:var(--font-mono);">' +
-                    c.ci_low + ' ~ ' + c.ci_high + '배</b> <span style="color:var(--muted);">(회차 단위 보정)</span></div>' +
-                    '<div style="margin-top:6px; padding:10px 12px; border-radius:8px; background:rgba(127,127,127,.10);">' +
-                    (overlapsOne
-                        ? '신뢰구간이 1.00배를 포함합니다. <b>현재 데이터로는 무작위와 통계적으로 구분되지 않습니다.</b> 회차가 쌓이면 구간이 좁아집니다.'
-                        : '신뢰구간이 1.00배를 넘어섭니다. 다만 표본이 늘면 달라질 수 있습니다.') +
-                    '</div>';
-            }
-            html += '</div>';
-
-            // 회차별 표
-            // [2026-08-06] 모바일(412px)에서 6열은 칸이 눌려 '무 작 위 / 기 대'처럼 글자가 세로로
-            // 깨졌다. 열을 4개로 줄이고 모든 칸에 nowrap을 걸어 한 줄에 들어가게 한다.
-            let rows = '';
-            sc.rounds.forEach(r => {
-                rows += '<tr><td style="white-space:nowrap;">' + r.round + '</td>' +
-                    '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap;">' +
-                    r.checked.toLocaleString() + '</td>' +
-                    '<td style="text-align:right; white-space:nowrap; font-family:var(--font-mono);">' +
-                    '<b style="color:' + (r.hits3 > 0 ? 'var(--good)' : 'var(--muted)') + '">' + r.hits3 + '</b>' +
-                    '<span style="color:var(--muted);"> / ' + r.expected3 + '</span></td>' +
-                    '<td style="text-align:right; white-space:nowrap; font-family:var(--font-mono); color:' +
-                    ratioColor(r.ratio) + '">' + (r.ratio == null ? '-' : r.ratio) + '</td></tr>';
-            });
-            html += '<div class="table-scroll" style="margin-top:12px;">' +
+            html += '<div class="table-scroll" style="max-height:none;">' +
                 '<table class="data-table compact"><thead><tr>' +
                 '<th style="white-space:nowrap;">회차</th>' +
-                '<th style="text-align:right; white-space:nowrap;">발행</th>' +
-                '<th style="text-align:right; white-space:nowrap;">3개+ / 기대</th>' +
-                '<th style="text-align:right; white-space:nowrap;">배수</th>' +
+                '<th style="text-align:right; white-space:nowrap;">산 사람들</th>' +
+                '<th style="text-align:right; white-space:nowrap;">우리</th>' +
+                '<th style="text-align:right; white-space:nowrap;">우리 장수</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
                 '<div style="margin-top:6px; font-size:11.5px; color:var(--muted);">' +
-                '"3개+ / 기대" = 실제로 3개 이상 맞은 건수 / 무작위로 같은 장수를 샀을 때 기대 건수</div>';
+                '숫자는 모두 "100장 샀을 때 3개 이상 맞은 개수"입니다.</div>';
 
-            html += '<div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.7;">' +
-                '집계 기준: <b>1232회(2026-07-04) 서버 자동 발행 시작 이후</b>. 그 이전 기록은 ' +
-                '지금과 다른 방식(로컬 수동 실행, 예측 경로 혼재)으로 만들어져 성적에서 제외했습니다.<br>' +
+            // 자세한 설명은 접어둔다 (기본 화면은 간결하게)
+            html += '<details style="margin-top:14px;"><summary style="cursor:pointer; font-size:12.5px; color:var(--text-2);">' +
+                '이 숫자가 어떻게 나왔나</summary>' +
+                '<div style="font-size:12.5px; color:var(--text-2); line-height:1.8; padding-top:10px;">' +
+                '<b>실제로 산 사람들</b>: ' + last.round + '회에 전국에서 <b>' + last.real_games.toLocaleString() + '장</b>이 ' +
+                '팔렸고, 그중 3개 이상 맞은 게 <b>' + last.real_wins.toLocaleString() + '건</b>이었습니다(동행복권 공식 발표). ' +
+                '100장으로 환산하면 <b>' + last.real_per100 + '개</b>입니다.<br>' +
+                '<b>우리 예측</b>: 같은 회차에 <b>' + last.our_tickets.toLocaleString() + '장</b>을 냈고 ' +
+                '3개 이상이 <b>' + last.our_hits + '건</b>이었습니다. 100장으로 환산하면 <b>' + last.our_per100 + '개</b>입니다.<br><br>' +
+                '수백만 명이 제각기 다른 번호를 사기 때문에, 실제 구매자들의 성적은 ' +
+                '아무 번호나 찍었을 때와 거의 같습니다. 그래서 이 비교는 곧 ' +
+                '"아무 번호나 사는 것보다 나은가"를 뜻합니다.<br><br>' +
+                '집계는 <b>1232회(2026-07-04) 서버 자동 발행 시작</b> 이후만 합니다. ' +
+                '그 이전 기록은 지금과 다른 방식으로 만들어져 제외했습니다.<br>' +
                 '이 시스템은 역사적으로 거의 나오지 않은 극단 패턴을 제외한 풀에서 조합을 고릅니다. ' +
-                '위 숫자는 그 결과의 실측 기록이며, 앞으로의 당첨을 보장하거나 예측하지 않습니다.</div>';
+                '위 숫자는 실제 기록이며, 앞으로의 당첨을 보장하거나 예측하지 않습니다.' +
+                '</div></details>';
 
             wrap.innerHTML = html;
         }
@@ -3023,7 +3004,9 @@ def get_stats():
 def get_honest_scorecard():
     """정직 성적표 API: 실제 발행분 x 실제 당첨번호 대조 결과 + 무작위 기대치.
 
-    추가 측정 없이 이미 저장된 prediction_results 를 집계만 한다.
+    NOTE (2026-08-06): 화면 성적표는 /api/vs-real-buyers 하나로 통합됐다(같은 값을 두 기준으로
+    보여주니 헷갈린다는 피드백). 이 엔드포인트는 4개 이상 일치 건수·신뢰구간 등 화면에 없는
+    수치를 그대로 확인할 수 있어 점검용으로 남긴다. 화면 렌더는 이 API를 호출하지 않는다.
     """
     fresh_dashboard = EnhancedLottoDashboard()
     return jsonify(fresh_dashboard.get_honest_scorecard())
