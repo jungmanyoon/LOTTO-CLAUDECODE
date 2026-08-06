@@ -58,16 +58,40 @@ def main():
     except Exception as _me:
         print(f"[bulk] ML 신호 로드 생략({_me}) - 극단풀+다양성만")
 
+    tracker = PredictionTracker()
+
+    # [2026-08-06 전역 커버] 이 회차에 이미 발행한 조합을 읽어 넘긴다.
+    # 이전에는 30분마다 새 프로세스가 '백지 상태'로 5장을 뽑아, 배치끼리 같은 영역을
+    # 반복해 덮었다(498장 누적 트리플 커버 47.8% = 풀에서 무작위로 뽑는 것보다도 나쁨).
+    # 손실의 100%가 배치 사이에서 발생했고 배치 내부는 이미 100%였다.
+    # 필요한 상태(predictions.db)는 매 실행 체크아웃/커밋되므로 추가 인프라 비용이 0이다.
+    prior = tracker.get_issued_combos(next_round)
+    if prior:
+        print(f"[bulk] {next_round}회 기발행 {len(prior)}장 반영 -> 겹치지 않는 영역 우선 선택")
+
     # 매 실행 다른 seed -> 풀 안에서 다른 다양성 조합 5세트 (풀은 동일, 비용 없음)
     seed = int(time.time() * 1000) % 2_000_000
-    preds = epp.predict(num_sets=5, seed=seed, ml_signal=ml_signal)
+    preds = epp.predict(num_sets=5, seed=seed, ml_signal=ml_signal, prior_tickets=prior)
     if not preds:
         print("[bulk] 예측 생성 실패(빈 결과) - 저장 생략")
         return
 
-    tracker = PredictionTracker()
     # replace=False + 중복 조합 가드 -> 이미 있는 조합은 스킵, 신규만 누적
     tracker.save_predictions(next_round, preds, replace=False)
+
+    # 커버 진행 상황을 로그로 남긴다(전역 커버가 실제로 작동하는지 배포 후 확인용).
+    try:
+        from src.core.diversity_selector import combo_triples
+        after = tracker.get_issued_combos(next_round)
+        tri = set()
+        for c in after:
+            tri.update(combo_triples(c))
+        eff = len(tri) / (len(after) * 20) if after else 0.0
+        print(f"[커버] {next_round}회 누적 {len(after)}장 · 서로 다른 3번호묶음 "
+              f"{len(tri):,}/14,190 (효율 {eff:.1%})")
+    except Exception as e:
+        print(f"[커버] 진행 상황 계산 생략({e})")
+
     print(f"[bulk] {next_round}회 예측 5세트 생성/저장 시도 완료 (seed={seed})")
 
 

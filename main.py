@@ -4031,8 +4031,19 @@ def main():
                 # target_K 미지정 -> 정책 json(SSOT) effective_target_K 사용(하위호환).
                 _epp = ExtremenessPoolPredictor(db_manager)
                 _epp.build_pool()  # 학습회차+K 동일 시 디스크 캐시 재사용(0.2s)
-                final_predictions = _epp.predict(num_sets=5, ml_predictions=_ml_preds_bundle)
-                logging.info(f"[최종 예측] 극단성 풀 경로 사용 (K={_epp.target_K:,})")
+                # [2026-08-06 전역 커버] 이 회차에 bulk가 이미 발행한 조합이 있으면 넘겨서
+                # 같은 영역을 다시 덮지 않게 한다. 주간 정식이 그 회차의 첫 발행이면 비어 있어
+                # 기존 동작과 동일하다.
+                _prior = []
+                try:
+                    from src.core.prediction_tracker import PredictionTracker as _PT
+                    _prior = _PT().get_issued_combos(db_manager.get_last_round() + 1)
+                except Exception as _pe:
+                    logging.warning(f"[최종 예측] 기발행 조합 조회 생략({_pe}) - 전역 커버 없이 진행")
+                final_predictions = _epp.predict(num_sets=5, ml_predictions=_ml_preds_bundle,
+                                                 prior_tickets=_prior)
+                logging.info(f"[최종 예측] 극단성 풀 경로 사용 (K={_epp.target_K:,}"
+                             f"{f', 기발행 {len(_prior)}장 회피' if _prior else ''})")
                 # [2026-07-04] bulk 대량 예측용 ML 신호(45벡터) 저장. bulk_predict_once.py가 이걸
                 # 재사용해 ML 모델 재실행 없이 '정식 예측(ML 보조신호 포함)'을 100% 재현한다.
                 # 근거: ML 신호는 회차 고정=결정적이라 이 주간 1회 계산이 그 회차 내내 유효하다.

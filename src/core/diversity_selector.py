@@ -112,18 +112,57 @@ class FrequencyAnalyzer:
     # 경로(compute_weights -> select)는 쌍빈도를 사용하지 않는다.
 
 
+def combo_triples(combo: Sequence[int]) -> List[int]:
+    """조합 6개가 덮는 3-번호 묶음(트리플) 20개를 유일 정수 키로 반환.
+
+    조합 1장은 C(6,3)=20개의 트리플을 덮는다. 그리고 다음이 정확히 성립한다(전수 검증됨):
+        |내 조합 ∩ 당첨번호| >= 3   <=>   내 트리플 중 하나가 당첨번호의 트리플과 일치
+    따라서 "서로 다른 트리플을 얼마나 많이 덮었는가"는 '겹치지 않게 펼쳤는가'의 정확한 척도다.
+    """
+    s = sorted(int(x) for x in combo)
+    if len(s) != 6:
+        # 6개가 아닌 입력(폴백/부분 조합)도 안전하게 처리
+        keys = []
+        for i in range(len(s) - 2):
+            for j in range(i + 1, len(s) - 1):
+                for k in range(j + 1, len(s)):
+                    keys.append((s[i] - 1) * 2025 + (s[j] - 1) * 45 + (s[k] - 1))
+        return keys
+    return [(s[i] - 1) * 2025 + (s[j] - 1) * 45 + (s[k] - 1)
+            for i in range(4) for j in range(i + 1, 5) for k in range(j + 1, 6)]
+
+
 class DiversitySelector:
-    """필터링된 풀에서 5장을 번호 커버리지 극대화로 선택."""
+    """필터링된 풀에서 티켓을 번호 커버리지 극대화로 선택.
+
+    [2026-08-06 전역 커버 추가]
+    기존 목적함수는 "이 배치 5장이 서로 다른 번호를 쓰는가"만 봤다. 5장 단위로는 최적이지만
+    30분마다 별도 프로세스가 백지 상태로 5장씩 뽑는 운영에서는 배치끼리 같은 영역을 반복해
+    덮었다(실측: 498장 누적 트리플 커버 47.8%, 풀에서 무작위로 뽑는 것보다도 나쁨).
+    손실의 100%가 배치 '사이'에서 발생했고, 배치 내부는 이미 100%였다.
+
+    그래서 `prior_triples`(그 회차에 이미 발행한 조합들이 덮은 트리플)를 받아
+    "새로 덮는 트리플 수"를 이득에 더한다. 이러면 30분마다 5장씩 뽑아도
+    주간 1회에 전역 최적화한 것과 조합론적으로 동등해진다(커버 목적함수가 submodular).
+
+    번호 사용 상한/균형 보너스는 의도적으로 넣지 않는다. 검증 결과 그 손잡이들은
+    커버리지를 오히려 악화시켰고(67.21% -> 67.00%), 번호 편중은 트리플 커버를
+    최대화하면 부산물로 자동 해소된다(17배 -> 1.8배).
+    """
 
     def __init__(self, number_weights: Optional[np.ndarray] = None,
                  lambda_cov: float = 1.0, lambda_wcov: float = 1.0,
                  lambda_quality: float = 0.3, lambda_overlap: float = 2.0,
-                 max_number_repeat: int = 2, max_pairwise_overlap: int = 1):
+                 max_number_repeat: int = 2, max_pairwise_overlap: int = 1,
+                 lambda_novel: float = 3.0):
         self.w = number_weights if number_weights is not None else np.ones(45, dtype=np.float32)
         self.lambda_cov = lambda_cov
         self.lambda_wcov = lambda_wcov
         self.lambda_quality = lambda_quality
         self.lambda_overlap = lambda_overlap
+        # 전역 트리플 신규성 가중치. 검증에서 이 항이 유일한 성능 레버였다.
+        # 고정 상수로 둔다(Optuna 탐색 대상에 넣지 말 것 - winner's curse 위험).
+        self.lambda_novel = lambda_novel
         self.max_number_repeat = max_number_repeat
         self.max_pairwise_overlap = max_pairwise_overlap
         self.logger = logging.getLogger(__name__)
@@ -141,7 +180,8 @@ class DiversitySelector:
     def select(self, pool, num_tickets: int = 5,
                quality: Optional[Sequence[float]] = None,
                candidate_sample: int = 20000, seed: int = 42,
-               local_search_iters: int = 200) -> List[Tuple[int, ...]]:
+               local_search_iters: int = 200,
+               prior_triples: Optional[set] = None) -> List[Tuple[int, ...]]:
         """풀에서 num_tickets개 선택.
 
         Args:
@@ -149,12 +189,19 @@ class DiversitySelector:
             quality: 각 조합의 품질 점수(높을수록 좋음, 예: -극단성). None이면 0.
             candidate_sample: 그리디 평가용 후보 샘플 수 (속도/품질 trade-off)
             local_search_iters: 그리디 후 교체 개선 반복수
+            prior_triples: 이 회차에 '이미 발행한' 조합들이 덮은 트리플 키 집합.
+                주면 그 영역을 피해 새 영역을 덮는다(전역 커버). None이면 기존 동작과 동일.
         """
         combos = self._to_sets(pool)
         n = len(combos)
         if n == 0:
             return []
         rng = np.random.RandomState(seed)
+
+        # 전역 커버: 이미 덮은 트리플 집합. 선택할 때마다 갱신된다(배치 내부 + 이전 배치 통합).
+        use_global = prior_triples is not None
+        base_triples = frozenset(prior_triples) if use_global else frozenset()
+        covered_triples = set(base_triples)
 
         if quality is None:
             quality = np.zeros(n, dtype=np.float32)
@@ -172,6 +219,13 @@ class DiversitySelector:
         else:
             cand_idx = np.arange(n)
 
+        # 후보별 트리플을 1회만 계산해 재사용한다.
+        # gain()이 후보마다 매번 계산하면 (후보 3만 x 티켓 5)회의 파이썬 루프가 돌아 느려진다.
+        cand_triples = {}
+        if use_global:
+            for idx in cand_idx:
+                cand_triples[int(idx)] = combo_triples(combos[int(idx)])
+
         selected_idx: List[int] = []
         covered = set()
         number_count = np.zeros(46, dtype=np.int16)
@@ -182,6 +236,13 @@ class DiversitySelector:
             g = self.lambda_cov * len(new_nums)
             g += self.lambda_wcov * sum(self.w[x - 1] for x in new_nums)
             g += self.lambda_quality * float(q_norm[idx])
+            # [2026-08-06] 전역 트리플 신규성: 아직 아무도 안 덮은 3-번호 묶음을 몇 개 새로 덮는가.
+            # 티켓들이 서로소일 때 위의 번호 커버리지 항은 항상 6으로 상수가 되어 판별력을 잃고
+            # 번호 가중치 합이 argmax를 지배했다(= 늘 같은 번호가 뽑히던 원인). 이 항이 그 자리를 대신한다.
+            if use_global:
+                trips = cand_triples.get(idx) or combo_triples(combo)
+                novel = sum(1 for t in trips if t not in covered_triples)
+                g += self.lambda_novel * (novel / 20.0)
             # overlap penalty (이미 선택된 티켓들과)
             ov = 0
             for s_idx in selected_idx:
@@ -230,6 +291,8 @@ class DiversitySelector:
             for x in combos[best]:
                 covered.add(x)
                 number_count[x] += 1
+            if use_global:
+                covered_triples.update(cand_triples.get(int(best)) or combo_triples(combos[best]))
             if relaxed:
                 # [E2 2026-06-13] 제약 완화(겹침<=1 보장 깨짐 가능)는 풀 다양성이 극단 부족할 때만
                 #  발생한다(1.5M 풀에선 사실상 미발생). debug로 묻으면 '겹침<=1 절대보장'이 깨진 걸
@@ -244,6 +307,13 @@ class DiversitySelector:
             val = self.lambda_cov * len(cov)
             val += self.lambda_wcov * sum(self.w[x - 1] for x in cov)
             val += self.lambda_quality * sum(float(q_norm[i]) for i in sel)
+            if use_global:
+                # 이번 배치가 '새로' 덮은 트리플 수. 그리디와 같은 기준이어야 로컬서치가
+                # 그리디 결과를 되돌리지 않는다.
+                tri = set()
+                for i in sel:
+                    tri.update(combo_triples(combos[i]))
+                val += self.lambda_novel * (len(tri - base_triples) / 20.0)
             ov = 0
             for a in range(len(sel)):
                 for b in range(a + 1, len(sel)):

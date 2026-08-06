@@ -188,11 +188,19 @@ class PredictionTracker:
                         characteristics_json
                     ))
                 
-                # weekly_performance 초기 레코드 생성
+                # weekly_performance 레코드 생성/갱신
+                # [2026-08-06 수정] 기존엔 INSERT OR IGNORE라 '첫 저장 시점의 값'(대개 5)에
+                # 영구 고정됐다. bulk가 회차당 400~500장을 누적하는데도 기록은 5로 남아,
+                # DB/로그만 보면 발행 규모를 알 수 없었다. 실제 누적 장수로 동기화한다.
+                cursor.execute("SELECT COUNT(*) FROM predictions WHERE round = ?", (round_num,))
+                actual_count = cursor.fetchone()[0]
                 cursor.execute("""
-                    INSERT OR IGNORE INTO weekly_performance (round, prediction_count)
+                    INSERT INTO weekly_performance (round, prediction_count)
                     VALUES (?, ?)
-                """, (round_num, len(predictions)))
+                    ON CONFLICT(round) DO UPDATE SET
+                        prediction_count = excluded.prediction_count,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (round_num, actual_count))
                 
                 conn.commit()
                 
@@ -347,6 +355,31 @@ class PredictionTracker:
             self.logger.error(f"예측 조회 실패: {e}")
             return []
     
+    def get_issued_combos(self, round_num: int) -> List[Tuple[int, ...]]:
+        """특정 회차에 이미 발행한 조합만 경량 조회 (전역 커버용).
+
+        get_predictions()는 characteristics JSON까지 파싱해 dict를 만들어 500장 기준으로
+        무겁다. 전역 커버는 '어떤 조합을 이미 냈는가'만 알면 되므로 번호만 읽는다.
+
+        Returns:
+            정렬된 6-튜플 리스트. 조회 실패 시 빈 리스트(예측 생성을 막지 않는다).
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                rows = conn.execute(
+                    "SELECT numbers FROM predictions WHERE round = ?", (round_num,)
+                ).fetchall()
+            combos = []
+            for (text,) in rows:
+                try:
+                    combos.append(tuple(sorted(int(x) for x in text.split(','))))
+                except (ValueError, AttributeError):
+                    continue
+            return combos
+        except Exception as e:
+            self.logger.warning(f"기발행 조합 조회 실패({e}) - 전역 커버 없이 진행")
+            return []
+
     def get_unchecked_rounds(self) -> List[int]:
         """
         아직 당첨 대조를 하지 않은 회차 전체 조회 (오래된 회차부터)

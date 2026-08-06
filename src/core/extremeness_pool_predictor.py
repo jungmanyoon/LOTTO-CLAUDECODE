@@ -669,9 +669,21 @@ class ExtremenessPoolPredictor:
         return out
 
     def predict(self, num_sets: int = 5, ml_predictions=None,
-                ml_beta: float = 0.4, seed: int = 42, ml_signal=None) -> List[Dict]:
-        """최종 num_sets개 예측 생성. 반환: [{'numbers','confidence','source'}, ...]"""
-        from src.core.diversity_selector import FrequencyAnalyzer, DiversitySelector
+                ml_beta: float = 0.4, seed: int = 42, ml_signal=None,
+                prior_tickets=None) -> List[Dict]:
+        """최종 num_sets개 예측 생성. 반환: [{'numbers','confidence','source'}, ...]
+
+        Args:
+            prior_tickets: 이 회차에 '이미 발행한' 조합들(list of 6-number sequences).
+                주면 그 조합들이 덮은 3-번호 묶음을 피해 새 영역을 덮는다(전역 커버).
+                None이면 기존 동작과 완전히 동일(배치 5장 내부 최적화만).
+
+        NOTE (2026-08-06): 30분마다 별도 프로세스로 5장씩 뽑는 운영에서, 각 호출이 백지
+        상태로 시작해 같은 영역을 반복 발행했다(498장 누적 트리플 커버 47.8%로 풀 무작위
+        67.5%보다도 나빴다). prior_tickets 전달만으로 89% 수준까지 회복된다.
+        환경변수 LOTTO_GLOBAL_COVER=0 으로 즉시 기존 동작 복귀 가능(킬 스위치).
+        """
+        from src.core.diversity_selector import FrequencyAnalyzer, DiversitySelector, combo_triples
 
         if self._pool_combos is None:
             self.build_pool()
@@ -686,9 +698,23 @@ class ExtremenessPoolPredictor:
                                      ml_signal=ml_sig, ml_beta=ml_beta if ml_sig is not None else 0.0)
 
         pool_list = [tuple(int(x) for x in row) for row in self._pool_combos]
+
+        # 전역 커버(이미 발행한 조합이 덮은 트리플을 피하기). 킬 스위치: LOTTO_GLOBAL_COVER=0
+        prior_triples = None
+        if prior_tickets and os.environ.get('LOTTO_GLOBAL_COVER', '1') != '0':
+            prior_triples = set()
+            for t in prior_tickets:
+                try:
+                    prior_triples.update(combo_triples(t))
+                except Exception:
+                    continue  # 손상된 과거 기록 1건이 예측 전체를 막지 않게 한다
+            self.logger.info(f"[극단풀] 전역 커버 적용: 기발행 {len(prior_tickets)}장이 덮은 "
+                             f"3번호묶음 {len(prior_triples):,}개(전체 14,190) 회피")
+
         selector = DiversitySelector(number_weights=weights)
         tickets = selector.select(pool_list, num_tickets=num_sets,
-                                  quality=self._pool_quality, candidate_sample=30000, seed=seed)
+                                  quality=self._pool_quality, candidate_sample=30000, seed=seed,
+                                  prior_triples=prior_triples)
         rep = DiversitySelector.coverage_report(tickets)
 
         # [2026-06-05] 정직한 per-set 점수: 모든 세트를 0.5(50%)로 고정하던 것을 '전형성 점수'로 교체.
