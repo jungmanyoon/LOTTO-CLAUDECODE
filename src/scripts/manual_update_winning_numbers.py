@@ -74,7 +74,11 @@ def main():
                             logging.info(f"  {round_num}회차: {', '.join(map(str, winning_nums[:6]))}" +
                                        (f" + 보너스 {bonus}" if bonus else ""))
             else:
-                logging.warning("업데이트 실패 - 데이터 수집에 문제가 있습니다.")
+                # [2026-08-06] fetch_lotto_data가 아무것도 반환하지 않던 시절에는
+                # 수집에 성공해도 항상 이 경고가 떴다(거짓 경고). 이제 True/False가
+                # 정확히 오므로, False의 두 가지 의미를 구분해 안내한다.
+                logging.warning("새 회차가 아직 게시되지 않았거나(추첨 직후) 수집에 실패했습니다. "
+                                "위 로그의 '최신 회차 확인' 결과를 확인하세요.")
         else:
             logging.info("이미 최신 데이터입니다.")
 

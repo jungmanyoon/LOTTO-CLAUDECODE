@@ -8,7 +8,12 @@ name: 예측 대량 생성 (선택 구매용)
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # 30분마다
+    # [2026-08-06 정직화] 표기는 '30분마다'였지만 실제로는 한 번도 그렇게 돈 적이 없다.
+    # 실측(442런/32일): 하루 13.8회(요구 48회의 28.7%)만 실행되고 최소 간격이 47.9분,
+    # 중앙값 92.6분이었다. GitHub는 schedule이 밀리면 대기 중인 예약을 드롭한다.
+    # 요구량을 줄여도 실제 실행 횟수는 사실상 같으므로, 실현 가능한 값으로 정직하게 적는다.
+    # (':00' 정각은 전 세계에서 가장 혼잡한 슬롯이라 피한다)
+    - cron: '17 * * * *'   # 매시 :17 (실측 기준 이 정도가 실제로 소화되는 빈도)
   workflow_dispatch:
 
 concurrency:
@@ -54,7 +59,7 @@ jobs:
             echo "신규 조합 없음(전부 중복) - 커밋 스킵"
             exit 0
           fi
-          git commit -m "bulk: 재미용 예측 누적 [skip ci]"
+          git commit -m "bulk: 예측 누적 [skip ci]"
           # 다른 잡의 커밋과 경합 대비: 최신을 rebase로 얹고 push(실패 시 다음 주기 재시도)
           git pull --rebase --autostash 2>/dev/null || true
           git push || echo "push 실패(경합) - 다음 30분 주기에 재시도"

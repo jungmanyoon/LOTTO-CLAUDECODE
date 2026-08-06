@@ -18,24 +18,35 @@ class DataCollector:
         self.base_url = 'https://www.dhlottery.co.kr/gameResult.do?method=byWin'  # 레거시 (폴백용)
 
     def fetch_lotto_data(self, max_retries=3):
-        """로또 당첨 번호와 날짜를 웹사이트에서 크롤링하여 데이터베이스에 저장"""
+        """로또 당첨 번호와 날짜를 웹사이트에서 크롤링하여 데이터베이스에 저장
+
+        Returns:
+            bool: 새 회차를 실제로 저장했으면 True, 이미 최신이거나 수집 실패면 False.
+
+        NOTE (2026-08-06 수정): 이전에는 최신 회차 조회 실패 시 아무 값도 반환하지 않고
+        조용히 빠져나갔다(bare return). 그 결과 호출자는 실패를 알 수 없었고,
+        주간 워크플로우는 낡은 회차+1로 예측을 만들어 커밋한 뒤 'success'로 끝났다.
+        (manual_update_winning_numbers.py:56은 반환값을 기대하는데 항상 None을 받아
+         수집에 성공해도 '업데이트 실패' 거짓 경고를 냈다 - 함께 해소된다.)
+        """
         try:
             logging.info("\n[1단계] 최신 회차 정보 확인 중...")
             latest_round = self.get_latest_round()
             if latest_round is None:
-                logging.error("최신 회차 번호를 가져오지 못했습니다.")
-                return
+                logging.error("최신 회차 번호를 가져오지 못했습니다. "
+                              "(동행복권 API 응답 없음/형식 변경 의심 - 수집을 건너뜁니다)")
+                return False
 
             # 마지막으로 저장된 회차 확인
             last_saved_round = self.db_manager.get_last_round()
             logging.info(f"- 웹사이트 최신 회차: {latest_round}")
             logging.info(f"- DB 저장된 마지막 회차: {last_saved_round}")
-            
+
             if last_saved_round >= latest_round:
                 logging.info("\n[작업 완료] 데이터가 이미 최신 상태입니다.")
                 logging.info("="*60)
-                return
-                
+                return False
+
             start_round = (last_saved_round + 1) if last_saved_round else 1
             remaining_rounds = latest_round - start_round + 1
             logging.info(f"- 수집 필요 회차: {remaining_rounds}회 ({start_round}회 → {latest_round}회)")
@@ -76,42 +87,59 @@ class DataCollector:
             logging.info(f"- 실패: {error_count}회차")
             logging.info("="*60)
 
+            if success_count == 0:
+                # 수집 대상이 있었는데 한 건도 못 가져왔다면 '조용한 성공'으로 넘기지 않는다.
+                logging.error(f"수집 대상 {remaining_rounds}회차 중 저장에 성공한 회차가 없습니다.")
+            return success_count > 0
+
         except Exception as e:
             logging.error(f"데이터 수집 중 오류 발생: {str(e)}")
             logging.info("="*60)
             raise
 
-    def get_latest_round(self):
-        """새 API를 통해 가장 최신 회차 번호를 가져옴"""
-        try:
-            # 새 API 사용 (2025년 개편)
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://www.dhlottery.co.kr/lt645/result'
-            }
-            response = requests.get(
-                f'{self.api_url}?srchLtEpsd=all',
-                headers=headers,
-                timeout=15
-            )
+    def get_latest_round(self, max_retries: int = 3):
+        """새 API를 통해 가장 최신 회차 번호를 가져옴
 
-            if response.status_code == 200:
-                data = response.json()
-                lst = data.get('data', {}).get('list', [])
-                if lst:
-                    # 리스트의 마지막 항목이 최신 회차
-                    latest = max(item.get('ltEpsd', 0) for item in lst)
-                    logging.info(f"[DataCollector] 새 API로 최신 회차 확인: {latest}회")
-                    return latest
+        NOTE (2026-08-06): 이 조회는 재시도가 0회였다. 여기서 실패하면 수집 전체가
+        조용히 중단되고 낡은 회차로 예측이 만들어지므로, 일시적 네트워크 오류에
+        견디도록 지수 백오프 재시도를 넣었다. 레거시 HTML 폴백은 동행복권 페이지에서
+        meta[name=description]이 사라져 이미 동작하지 않으므로(2026-08-05 실측)
+        신 API가 사실상 단일 경로다 - 그만큼 재시도가 중요하다.
+        """
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.dhlottery.co.kr/lt645/result'
+        }
+        for attempt in range(1, max_retries + 1):
+            try:
+                # 새 API 사용 (2025년 개편)
+                response = requests.get(
+                    f'{self.api_url}?srchLtEpsd=all',
+                    headers=headers,
+                    timeout=15
+                )
 
-            # 폴백: 레거시 방식 시도
-            logging.warning("[DataCollector] 새 API 실패, 레거시 방식 시도...")
-            return self._get_latest_round_legacy()
+                if response.status_code == 200:
+                    data = response.json()
+                    lst = data.get('data', {}).get('list', [])
+                    if lst:
+                        # 리스트의 마지막 항목이 최신 회차
+                        latest = max(item.get('ltEpsd', 0) for item in lst)
+                        logging.info(f"[DataCollector] 새 API로 최신 회차 확인: {latest}회")
+                        return latest
 
-        except Exception as e:
-            logging.error(f"최신 회차 번호 가져오기 중 에러 발생: {e}")
-            # 폴백: 레거시 방식 시도
-            return self._get_latest_round_legacy()
+                logging.warning(f"[DataCollector] 최신 회차 조회 응답 이상"
+                                f"(status={response.status_code}, {attempt}/{max_retries})")
+            except Exception as e:
+                logging.warning(f"[DataCollector] 최신 회차 조회 실패 "
+                                f"({type(e).__name__}: {e}, {attempt}/{max_retries})")
+
+            if attempt < max_retries:
+                time.sleep(2 ** (attempt - 1))  # 1s, 2s
+
+        # 폴백: 레거시 방식 시도 (현재는 사실상 동작하지 않음 - 마지막 안전망)
+        logging.warning("[DataCollector] 새 API 재시도 소진, 레거시 방식 시도...")
+        return self._get_latest_round_legacy()
 
     def _get_latest_round_legacy(self):
         """레거시 방식으로 최신 회차 번호를 가져옴 (폴백용)"""

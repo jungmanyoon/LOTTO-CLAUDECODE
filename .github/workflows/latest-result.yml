@@ -1,0 +1,130 @@
+name: 당첨번호 즉시 반영 (폴링)
+
+# [2026-08-06 재설계] 추첨 직후 당첨번호만 가볍게 수집해 화면에 최대한 빨리 반영한다.
+#
+# ■ 왜 '폴링'인가 (실측 근거)
+#   GitHub Actions의 schedule은 이 저장소에서 정시 발사가 674회 중 0회였다.
+#   지연 중앙값 99분, 최소 51.9분, 최대 218분. 즉 "21시에 켜라"고 예약해도 그 시각에 안 켜진다.
+#   기존 방식(주간 예측 워크플로우에만 수집을 얹음)의 실측 지연:
+#     추첨 20:35 -> 동행복권 게시 20:46 -> GitHub 반영 23:11 KST (145분)
+#     내역: cron을 게시보다 44분 뒤로 잡음(+44) + schedule 디스패치 지연(+94) + 실행(+7)
+#     정작 수집 코드 자체는 11초밖에 안 걸린다. 병목은 전적으로 '언제 켜지느냐'였다.
+#
+#   그래서 발사 시각을 통제하려 하지 않고, **일찍 켜서 게시될 때까지 기다린다**.
+#   미게시 응답은 59바이트/0.06초라 45초 간격 폴링의 부하가 사실상 없다.
+#
+# ■ 기대 효과: 23:11 -> 약 21:00 KST (약 2시간 단축)
+#   단, schedule 지연 분포상 약 13%(7주에 1번)는 21:15~22:20으로 밀릴 수 있다. 그때는 백업 런이 받는다.
+#
+# ■ 이 워크플로우가 하지 않는 것
+#   예측 생성은 하지 않는다(무겁다). 다음 회차 예측 갱신은 weekly-predict(21:30 예약)가 담당한다.
+
+on:
+  schedule:
+    # 주 런: 토 18:40 KST(09:40 UTC)에 예약 -> 실측 지연을 얹어도 대개 게시(20:46) 전에 켜져서 대기한다.
+    - cron: '40 9 * * 6'
+    # 백업 런: 토 21:20 KST(12:20 UTC). 주 런이 지연 tail에 걸려 놓친 경우를 받는다.
+    # (주 런이 이미 수집했다면 DB에 변화가 없어 아무것도 안 하고 끝난다)
+    - cron: '20 12 * * 6'
+  workflow_dispatch:
+    inputs:
+      max_wait_minutes:
+        description: '최대 대기(분). 리허설은 3 정도로'
+        required: false
+        default: '175'
+      rebuild_hf:
+        description: 'HF 화면 재빌드 여부(true/false)'
+        required: false
+        default: 'true'
+
+# 주 런과 백업 런을 서로 다른 그룹으로 둔다.
+# 같은 그룹이면 백업이 '폴링 중인 주 런' 뒤에서 대기하다가 정작 필요한 순간에 역할을 못 한다.
+concurrency:
+  group: latest-result-${{ github.event.schedule || 'manual' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-result:
+    runs-on: ubuntu-latest
+    # 폴링 최대 175분 + 설치/커밋 여유
+    timeout-minutes: 190
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Python 3.11 (+ pip 캐시)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 경량 의존성 설치 (수집=requests/bs4, TF/ML 불필요)
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy pandas pyyaml requests beautifulsoup4 tqdm pytz psutil
+
+      - name: 게시될 때까지 폴링 후 수집
+        id: poll
+        env:
+          TF_CPP_MIN_LOG_LEVEL: '3'
+          MPLBACKEND: 'Agg'
+        run: |
+          python src/scripts/poll_and_fetch_result.py \
+            --max-wait "${{ github.event.inputs.max_wait_minutes || 175 }}" \
+            --interval 45
+
+      - name: 새 회차면 커밋 + 푸시
+        id: commit
+        if: steps.poll.outputs.updated == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f data/lotto_numbers.db
+          if git diff --cached --quiet; then
+            echo "DB 변화 없음(이미 반영됨) - 커밋 생략"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "auto(actions): ${{ steps.poll.outputs.round }}회 당첨번호 반영 [skip ci]"
+          # bulk/weekly 커밋과 경합할 수 있으므로 rebase 후 재시도
+          for i in 1 2 3; do
+            if git pull --rebase --autostash && git push; then
+              echo "pushed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "push $i회 실패 - 재시도"
+            sleep 5
+          done
+          echo "::error::push 3회 실패 - 백업 런 또는 weekly-predict가 재시도합니다"
+          exit 1
+
+      - name: HF 화면 즉시 재빌드
+        if: steps.commit.outputs.pushed == 'true' && github.event.inputs.rebuild_hf != 'false'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::warning::HF_TOKEN 미설정 - 화면 재빌드 스킵(21:30 weekly-predict가 재시도)"
+            exit 0
+          fi
+          pip install -q "huggingface_hub>=0.20"
+          # 토큰을 셸로 보간하면 프로세스 인자에 노출되고 특수문자로 깨진다. 환경변수로만 읽는다.
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+          HfApi(token=os.environ["HF_TOKEN"]).restart_space(
+              "jungman-yoon/lotto-dashboard", factory_reboot=True)
+          print("[OK] HF 재빌드 트리거 완료 (화면 반영까지 약 4분)")
+          PY
+
+      - name: 결과 요약
+        if: always()
+        run: |
+          echo "### 당첨번호 수집 결과" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 수집 여부: ${{ steps.poll.outputs.updated }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 사유/회차: ${{ steps.poll.outputs.reason }}${{ steps.poll.outputs.round }}" >> "$GITHUB_STEP_SUMMARY"
