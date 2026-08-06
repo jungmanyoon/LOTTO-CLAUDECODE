@@ -604,6 +604,107 @@ class EnhancedLottoDashboard:
             self.logger.error(f"정직 성적표 집계 실패: {e}")
             return empty
 
+    def get_real_buyer_comparison(self, recent_limit: int = 10) -> Dict:
+        """실제로 로또를 산 사람들의 실적 vs 우리 예측 실적 비교.
+
+        [왜 이 비교인가 - 사용자 제안 2026-08-06]
+        동행복권은 회차마다 '총 판매 게임 수'와 '등수별 당첨자 수'를 공개한다.
+        그래서 "전국에서 N장이 팔렸고 3개 이상 당첨이 M건 나왔다"를 정확히 알 수 있고,
+        이를 100장 단위로 환산하면 '보통 사람이 100장 사면 평균 몇 개 맞나'가 된다.
+        우리 예측도 같은 방식(100장당 3개 이상 몇 건)으로 환산하면 직접 비교가 가능하다.
+
+        이론 확률(1/42)과 비교하는 것보다 직관적이다. 실제로 돈을 주고 산 수백만 명의
+        결과가 기준선이 되기 때문이다. (실측 확인: 실제 구매자 적중률은 이론값과 거의
+        일치한다 - 1235회 2.376% vs 이론 2.383%. 즉 실제 구매자는 사실상 무작위 기준선이다.)
+
+        주의: '3개 이상'으로 정의를 통일했다. 공식 통계의 1~5등 당첨자 수 합계가 곧
+        '3개 이상 맞은 건수'이고, 우리 쪽도 match_count >= 3 으로 센다.
+        """
+        empty = {'available': False, 'rounds': [], 'summary': {}}
+        try:
+            if not os.path.exists(self.predictions_db_path):
+                return empty
+
+            # 우리 예측 실적 (회차별)
+            with sqlite3.connect(self.predictions_db_path) as conn:
+                ours = {
+                    int(r): (int(c or 0), int(h or 0))
+                    for r, c, h in conn.execute("""
+                        SELECT round, COUNT(*),
+                               SUM(CASE WHEN match_count >= 3 THEN 1 ELSE 0 END)
+                        FROM prediction_results GROUP BY round
+                    """).fetchall()
+                }
+            if not ours:
+                return empty
+
+            # 실제 구매자 실적 (공식 통계). self.db_path는 레거시 combinations.db 이므로
+            # 당첨번호/공식통계가 들어 있는 lotto_db_path 를 써야 한다.
+            with sqlite3.connect(self.lotto_db_path) as conn:
+                official = {
+                    int(r): (int(ts or 0), int((w1 or 0) + (w2 or 0) + (w3 or 0) + (w4 or 0) + (w5 or 0)))
+                    for r, ts, w1, w2, w3, w4, w5 in conn.execute("""
+                        SELECT round, total_sales, first_winners, second_winners,
+                               third_winners, fourth_winners, fifth_winners
+                        FROM lotto_statistics WHERE total_sales > 0
+                    """).fetchall()
+                }
+
+            per_round = []
+            sum_ours_n = sum_ours_h = 0
+            sum_real_games = sum_real_wins = 0
+            for rnd in sorted(ours, reverse=True):
+                if rnd not in official:
+                    continue
+                checked, hits = ours[rnd]
+                sales, wins = official[rnd]
+                games = sales // 1000  # 1게임 1,000원
+                if checked <= 0 or games <= 0:
+                    continue
+                ours_per100 = hits / checked * 100
+                real_per100 = wins / games * 100
+                per_round.append({
+                    'round': rnd,
+                    'our_tickets': checked,
+                    'our_hits': hits,
+                    'our_per100': round(ours_per100, 2),
+                    'real_games': games,
+                    'real_wins': wins,
+                    'real_per100': round(real_per100, 2),
+                    'ratio': round(ours_per100 / real_per100, 2) if real_per100 > 0 else None,
+                })
+                sum_ours_n += checked
+                sum_ours_h += hits
+                sum_real_games += games
+                sum_real_wins += wins
+
+            if not per_round:
+                return empty
+
+            ours_all = sum_ours_h / sum_ours_n * 100
+            real_all = sum_real_wins / sum_real_games * 100
+            # 회차별 승패(우리가 실제 구매자보다 잘한 회차 수)
+            better = sum(1 for x in per_round if x['ratio'] is not None and x['ratio'] > 1)
+
+            return {
+                'available': True,
+                'rounds': per_round[:recent_limit],
+                'summary': {
+                    'rounds': len(per_round),
+                    'our_tickets': sum_ours_n,
+                    'our_hits': sum_ours_h,
+                    'our_per100': round(ours_all, 2),
+                    'real_games': sum_real_games,
+                    'real_wins': sum_real_wins,
+                    'real_per100': round(real_all, 2),
+                    'ratio': round(ours_all / real_all, 2) if real_all > 0 else None,
+                    'better_rounds': better,
+                },
+            }
+        except Exception as e:
+            self.logger.error(f"실구매자 비교 집계 실패: {e}")
+            return empty
+
     def get_statistics(self) -> Dict:
         """전체 통계"""
         try:
@@ -1689,6 +1790,41 @@ HTML_TEMPLATE_V2 = """
         .ball { width: 40px; height: 40px; font-size: 14px; }
         .nav-controls { width: 100%; }
         select { flex: 1; }
+
+        /* [모바일 레이아웃 수정 2026-08-06]
+           좁은 화면에서 8열 표를 그대로 그리면 '예측 번호' 칸이 눌려 공 6개가 세로로 쌓였다.
+           표를 행 단위 카드로 바꾸고, 번호는 한 줄에 가로로 들어가도록 공을 줄인다.
+           (6 x 26px + 간격 = 약 190px 이라 320px 화면에도 들어간다) */
+        .data-table.rwd thead { display: none; }
+        .data-table.rwd tbody tr {
+          display: block; padding: 12px 2px; border-bottom: 1px solid var(--border);
+        }
+        .data-table.rwd tbody tr:last-child { border-bottom: none; }
+        .data-table.rwd tbody td {
+          display: flex; align-items: center; justify-content: space-between;
+          gap: 10px; padding: 3px 0; border: none; max-width: none !important;
+        }
+        .data-table.rwd tbody td::before {
+          content: attr(data-label);
+          font: 700 10.5px/1 var(--font-mono); letter-spacing: .05em;
+          color: var(--muted); text-transform: uppercase; flex-shrink: 0;
+        }
+        /* 번호 줄은 라벨 없이 전체 폭을 쓴다 */
+        .data-table.rwd tbody td.c-nums { display: block; padding: 6px 0 8px; }
+        .data-table.rwd tbody td.c-nums::before { display: none; }
+        .data-table.rwd tbody td.c-nums > div {
+          flex-wrap: nowrap !important; justify-content: flex-start; gap: 5px !important;
+        }
+        .data-table.rwd .ball.sm { width: 26px; height: 26px; font-size: 11px; }
+        .data-table.rwd tbody td.c-src { font-size: 11px; color: var(--muted); }
+        .data-table.rwd tbody td.c-src span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* 추첨 전이라 값이 없는 줄은 모바일에서 숨겨 카드 높이를 줄인다 */
+        .data-table.rwd tbody td.pre-draw { display: none; }
+        .table-scroll { max-height: 60vh; }
+        /* 숫자만 있는 좁은 표(성적표/실구매자 비교)는 카드화하지 않고 폰트만 줄인다.
+           단 칸이 눌려 글자가 세로로 깨지지 않도록 줄바꿈을 막는다. */
+        .data-table.compact { font-size: 11.5px; }
+        .data-table.compact th, .data-table.compact td { padding: 7px 5px; white-space: nowrap; }
       }
     </style>
 </head>
@@ -1781,6 +1917,14 @@ HTML_TEMPLATE_V2 = """
             <div class="card span-12" id="scoreCard">
                 <div class="card-h"><span class="dot"></span>성적표 (실제 대조)<span class="sub" id="scoreSub"></span></div>
                 <div id="scoreBody"><div class="state">데이터 대기 중</div></div>
+            </div>
+
+            <!-- [실제 구매자 비교 2026-08-06] 동행복권 공식 통계(총 판매 게임 수 + 등수별 당첨자 수)로
+                 "실제로 산 사람들은 100장당 몇 개 맞았나"를 계산해 우리 예측과 같은 단위로 비교한다.
+                 이론 확률보다 직관적이고, 실제 구매자 적중률은 이론값과 거의 일치해 기준선으로 타당하다. -->
+            <div class="card span-12" id="vsRealCard">
+                <div class="card-h"><span class="dot"></span>실제로 산 사람들과 비교<span class="sub" id="vsRealSub"></span></div>
+                <div id="vsRealBody"><div class="state">데이터 대기 중</div></div>
             </div>
 
             <!-- [지속학습 가시화 2026-07-04] 회차별 실측 추이 - "회차가 쌓일수록 좋아지는가" 확인용 -->
@@ -1887,6 +2031,23 @@ HTML_TEMPLATE_V2 = """
 
         // 공 색상대(1-10,11-20,...) 클래스
         function ballZone(n) { return n <= 10 ? 1 : n <= 20 ? 2 : n <= 30 ? 3 : n <= 40 ? 4 : 5; }
+        // [2026-08-06] 내부 코드명을 사람이 읽을 수 있는 말로 바꾼다.
+        // 'ExtremePool-Diversity(K=1500K, cover=30/45)' 같은 문자열은 DB에 저장된 기록용 값이라
+        // 그대로 두고, 화면에 보일 때만 변환한다(과거 데이터와의 정합성 유지).
+        function prettySource(src) {
+            if (!src) return '-';
+            const m = String(src).match(/K=(\\d+)K/);
+            const pool = m ? (parseInt(m[1], 10) / 10).toFixed(0) + '만' : '';
+            if (/ExtremePool/i.test(src)) {
+                return '극단 제외 ' + (pool ? pool + ' 조합' : '풀') + '에서 분산 선택';
+            }
+            if (/monte/i.test(src)) return '시뮬레이션(몬테카를로)';
+            if (/lstm/i.test(src)) return 'AI 시계열(LSTM)';
+            if (/ensemble/i.test(src)) return 'AI 앙상블';
+            if (/^ML/i.test(src)) return 'AI 보조신호';
+            return src;
+        }
+
         function ballHtml(n, opts) {
             opts = opts || {};
             let cls = 'ball lb-' + ballZone(n);
@@ -2145,19 +2306,24 @@ HTML_TEMPLATE_V2 = """
                     balls += ballHtml(n, { sm: true, hit: hit });
                 });
                 const conf = ((p.confidence || 0) * 100).toFixed(1);
+                // data-label: 모바일에서 표가 카드로 바뀔 때 각 줄 앞에 붙는 이름표.
+                // 추첨 전 회차는 '일치/등수'가 전부 '-'라 줄만 차지하므로 아예 그리지 않는다.
+                const cMatch = win
+                    ? '<td data-label="일치">' + (p.matches || 0) + '개</td>' +
+                      '<td data-label="등수">' + (p.rank ? '<span class="rank-badge rk-' + p.rank + '">' + p.rank + '등</span>' : '미당첨') + '</td>'
+                    : '<td data-label="일치" class="pre-draw">-</td><td data-label="등수" class="pre-draw">-</td>';
                 rows +=
-                    '<tr><td style="white-space:nowrap;">' + escapeHtml(p.date || '') + '</td>' +
-                    '<td style="text-align:center;">' + escapeHtml(p.round) + '</td>' +
-                    '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">' + balls + '</div></td>' +
-                    '<td style="font-family:var(--font-mono);">' + conf + '%</td>' +
-                    '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(p.source) + '">' + escapeHtml(p.source) + '</td>' +
-                    '<td>' + (win ? (p.matches || 0) + '개' : '-') + '</td>' +
-                    '<td>' + (win && p.rank ? '<span class="rank-badge rk-' + p.rank + '">' + p.rank + '등</span>' : '-') + '</td>' +
-                    '<td>' + filterChip(p.numbers, p.source || '') + '</td></tr>';
+                    '<tr><td data-label="날짜" style="white-space:nowrap;">' + escapeHtml(p.date || '') + '</td>' +
+                    '<td data-label="회차" style="text-align:center;">' + escapeHtml(p.round) + '</td>' +
+                    '<td data-label="예측 번호" class="c-nums"><div style="display:flex;gap:4px;flex-wrap:wrap;">' + balls + '</div></td>' +
+                    '<td data-label="전형성" style="font-family:var(--font-mono);" title="역대 당첨번호 분포에 얼마나 가까운지(=극단 회피도)의 백분위. 당첨 확률이 아닙니다.">' + conf + '%</td>' +
+                    '<td data-label="방식" class="c-src" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(p.source) + '"><span>' + escapeHtml(prettySource(p.source)) + '</span></td>' +
+                    cMatch +
+                    '<td data-label="필터">' + filterChip(p.numbers, p.source || '') + '</td></tr>';
             });
             body.innerHTML =
-                '<div class="table-scroll"><table class="data-table"><thead><tr>' +
-                '<th>날짜</th><th>회차</th><th>예측 번호</th><th>AI 점수</th><th>출처</th><th>일치</th><th>등수</th><th>필터</th>' +
+                '<div class="table-scroll"><table class="data-table rwd"><thead><tr>' +
+                '<th>날짜</th><th>회차</th><th>예측 번호</th><th>전형성</th><th>방식</th><th>일치</th><th>등수</th><th>필터</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table></div>';
         }
 
@@ -2310,18 +2476,104 @@ HTML_TEMPLATE_V2 = """
             loadOptimizerStatus();
             setState('backtestGrid', 'loading', '백테스트 로딩 중...');
 
-            const [s, b, w, t, sc] = await Promise.all([
+            const [s, b, w, t, sc, vr] = await Promise.all([
                 fetchJson('/api/stats'),
                 fetchJson('/api/backtest-performance'),
                 fetchJson('/api/winning-statistics'),
                 fetchJson('/api/performance-trend'),
-                fetchJson('/api/honest-scorecard')
+                fetchJson('/api/honest-scorecard'),
+                fetchJson('/api/vs-real-buyers')
             ]);
             displayBacktestPerformance(b.ok ? b.data : (b.data || {}));
             displayBasicStats(s.ok ? s.data : {});
             displayDistribution(s.ok ? s.data : {}, b.ok ? b.data : null);
             displayTrend(t.ok ? t.data : {});
             displayScorecard(sc.ok ? sc.data : {});
+            displayVsReal(vr.ok ? vr.data : {});
+        }
+
+        // [실제 구매자 비교 2026-08-06]
+        // 동행복권은 회차마다 '총 판매 게임 수'와 '등수별 당첨자 수'를 공개한다.
+        // 그래서 "전국 사람들이 100장 사면 평균 몇 개 맞나"를 정확히 알 수 있고,
+        // 우리 예측도 같은 단위(100장당 3개 이상 몇 건)로 환산하면 사과 대 사과 비교가 된다.
+        function displayVsReal(vr) {
+            vr = vr || {};
+            const wrap = document.getElementById('vsRealBody');
+            if (!vr.available || !vr.rounds || !vr.rounds.length) {
+                setState('vsRealBody', 'empty', '비교할 회차가 아직 없습니다. 새 회차 대조 후 자동 집계됩니다.');
+                return;
+            }
+            const s = vr.summary || {};
+            const last = vr.rounds[0];
+            document.getElementById('vsRealSub').textContent = '누적 ' + (s.rounds || 0) + '개 회차 비교';
+
+            const cmp = (a, b) => (a > b ? 'var(--good)' : (a < b ? 'var(--text-2)' : 'var(--text)'));
+
+            // 한 줄 요약 (제일 크게)
+            let html = '<div style="padding:14px 16px; border-radius:10px; background:var(--accent-weak); ' +
+                'margin-bottom:16px; line-height:1.85; font-size:14px;">' +
+                '<div style="font-size:12px; color:var(--muted); margin-bottom:6px;">' + last.round + '회 · 100장 샀다고 치면</div>' +
+                '<div>전국에서 실제로 산 사람들 &nbsp;<b style="font-family:var(--font-mono); font-size:17px;">' +
+                last.real_per100 + '개</b> <span style="color:var(--muted); font-size:12px;">맞음</span></div>' +
+                '<div>우리 예측 &nbsp;<b style="font-family:var(--font-mono); font-size:17px; color:' +
+                cmp(last.our_per100, last.real_per100) + ';">' + last.our_per100 + '개</b> ' +
+                '<span style="color:var(--muted); font-size:12px;">맞음 (' +
+                (last.ratio == null ? '-' : last.ratio + '배') + ')</span></div>' +
+                '</div>';
+
+            // 무슨 뜻인지 쉬운 설명
+            html += '<div style="font-size:12.5px; color:var(--text-2); line-height:1.8; margin-bottom:14px;">' +
+                '<b style="color:var(--text);">이게 무슨 뜻이냐면</b><br>' +
+                last.round + '회에 전국에서 <b>' + last.real_games.toLocaleString() + '장</b>이 팔렸고, ' +
+                '그중 3개 이상 맞은 게 <b>' + last.real_wins.toLocaleString() + '건</b>이었습니다. ' +
+                '100장으로 환산하면 <b>' + last.real_per100 + '개</b>입니다.<br>' +
+                '우리는 같은 회차에 <b>' + last.our_tickets.toLocaleString() + '장</b>을 냈고 ' +
+                '3개 이상이 <b>' + last.our_hits + '건</b>이었습니다. 100장으로 환산하면 <b>' + last.our_per100 + '개</b>입니다.' +
+                '</div>';
+
+            // 누적
+            html += '<div style="font-size:13px; line-height:1.9; padding-top:12px; border-top:1px solid var(--border);">' +
+                '<b style="color:var(--text);">누적 ' + (s.rounds || 0) + '개 회차</b><br>' +
+                '실제로 산 사람들 &nbsp;<b style="font-family:var(--font-mono);">' + s.real_per100 + '개</b>' +
+                ' <span style="color:var(--muted); font-size:12px;">(' + (s.real_games || 0).toLocaleString() + '장 기준)</span><br>' +
+                '우리 예측 &nbsp;<b style="font-family:var(--font-mono); color:' + cmp(s.our_per100, s.real_per100) + ';">' +
+                s.our_per100 + '개</b> <span style="color:var(--muted); font-size:12px;">(' +
+                (s.our_tickets || 0).toLocaleString() + '장 기준) = ' + (s.ratio == null ? '-' : s.ratio + '배') + '</span><br>' +
+                '<span style="color:var(--muted); font-size:12px;">우리가 더 나았던 회차: ' +
+                (s.better_rounds || 0) + ' / ' + (s.rounds || 0) + '회</span>' +
+                '</div>';
+
+            // 회차별 표
+            let rows = '';
+            vr.rounds.forEach(r => {
+                rows += '<tr>' +
+                    '<td>' + r.round + '</td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono);">' + r.real_per100 + '</td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono); color:' +
+                    cmp(r.our_per100, r.real_per100) + ';">' + r.our_per100 +
+                    '<span style="color:var(--muted); font-size:10.5px; font-family:var(--font-sans);"> (' +
+                    r.our_tickets + '장)</span></td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono); color:' +
+                    cmp(r.our_per100, r.real_per100) + ';">' +
+                    (r.ratio == null ? '-' : r.ratio) + '</td></tr>';
+            });
+            // 이 표는 짧은 숫자만 있어 모바일에서도 4열이 들어간다.
+            // (rwd로 카드화하면 회차당 4줄이 되어 오히려 스크롤이 길어진다 - 일부러 적용하지 않음)
+            html += '<div class="table-scroll" style="margin-top:12px; max-height:none;">' +
+                '<table class="data-table compact"><thead><tr>' +
+                '<th>회차</th><th style="text-align:right;">실제 구매자</th>' +
+                '<th style="text-align:right;">우리 예측</th><th style="text-align:right;">배수</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+
+            html += '<div style="margin-top:12px; font-size:12px; color:var(--muted); line-height:1.75;">' +
+                '실제 구매자들의 성적은 이론상 무작위 확률(100장당 2.38개)과 거의 같습니다. ' +
+                '수백만 명이 제각기 다른 번호를 사기 때문입니다. ' +
+                '따라서 이 비교는 곧 "무작위로 사는 것보다 나은가"를 뜻합니다.<br>' +
+                '<b>단, 한 회차 값은 운의 영향이 매우 큽니다.</b> 우리 쪽 장수(수백 장)가 ' +
+                '전국 판매량(1억 장 이상)보다 훨씬 적어 들쭉날쭉합니다. 회차가 쌓여야 판단할 수 있습니다.' +
+                '</div>';
+
+            wrap.innerHTML = html;
         }
 
         // [정직 성적표 2026-08-06] 발행분을 실제 당첨번호와 대조한 결과 + 무작위 기대치.
@@ -2377,17 +2629,28 @@ HTML_TEMPLATE_V2 = """
             html += '</div>';
 
             // 회차별 표
+            // [2026-08-06] 모바일(412px)에서 6열은 칸이 눌려 '무 작 위 / 기 대'처럼 글자가 세로로
+            // 깨졌다. 열을 4개로 줄이고 모든 칸에 nowrap을 걸어 한 줄에 들어가게 한다.
             let rows = '';
             sc.rounds.forEach(r => {
-                rows += '<tr><td>' + r.round + '회</td><td>' + r.checked.toLocaleString() + '</td>' +
-                    '<td style="color:' + (r.hits3 > 0 ? 'var(--good)' : 'var(--muted)') + '">' + r.hits3 + '</td>' +
-                    '<td style="color:var(--muted)">' + r.expected3 + '</td>' +
-                    '<td style="color:' + ratioColor(r.ratio) + '">' + (r.ratio == null ? '-' : r.ratio + '배') + '</td>' +
-                    '<td>' + r.best + '개</td></tr>';
+                rows += '<tr><td style="white-space:nowrap;">' + r.round + '</td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap;">' +
+                    r.checked.toLocaleString() + '</td>' +
+                    '<td style="text-align:right; white-space:nowrap; font-family:var(--font-mono);">' +
+                    '<b style="color:' + (r.hits3 > 0 ? 'var(--good)' : 'var(--muted)') + '">' + r.hits3 + '</b>' +
+                    '<span style="color:var(--muted);"> / ' + r.expected3 + '</span></td>' +
+                    '<td style="text-align:right; white-space:nowrap; font-family:var(--font-mono); color:' +
+                    ratioColor(r.ratio) + '">' + (r.ratio == null ? '-' : r.ratio) + '</td></tr>';
             });
-            html += '<div class="table-scroll" style="margin-top:12px;"><table class="data-table"><thead><tr>' +
-                '<th>회차</th><th>발행</th><th>3개+</th><th>무작위 기대</th><th>비율</th><th>최고 일치</th>' +
-                '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+            html += '<div class="table-scroll" style="margin-top:12px;">' +
+                '<table class="data-table compact"><thead><tr>' +
+                '<th style="white-space:nowrap;">회차</th>' +
+                '<th style="text-align:right; white-space:nowrap;">발행</th>' +
+                '<th style="text-align:right; white-space:nowrap;">3개+ / 기대</th>' +
+                '<th style="text-align:right; white-space:nowrap;">배수</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+                '<div style="margin-top:6px; font-size:11.5px; color:var(--muted);">' +
+                '"3개+ / 기대" = 실제로 3개 이상 맞은 건수 / 무작위로 같은 장수를 샀을 때 기대 건수</div>';
 
             html += '<div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.7;">' +
                 '이 시스템은 역사적으로 거의 나오지 않은 극단 패턴을 제외한 풀에서 조합을 고릅니다. ' +
@@ -2744,6 +3007,15 @@ def get_honest_scorecard():
     """
     fresh_dashboard = EnhancedLottoDashboard()
     return jsonify(fresh_dashboard.get_honest_scorecard())
+
+@app.route('/api/vs-real-buyers')
+def get_vs_real_buyers():
+    """실제 구매자 비교 API: 동행복권 공식 통계(총 판매 게임 수 + 등수별 당첨자 수) 대비 우리 성적.
+
+    '100장당 3개 이상 몇 건'이라는 같은 단위로 환산해 직접 비교한다.
+    """
+    fresh_dashboard = EnhancedLottoDashboard()
+    return jsonify(fresh_dashboard.get_real_buyer_comparison())
 
 @app.route('/api/filter-criteria')
 def get_filter_criteria():

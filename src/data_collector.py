@@ -240,8 +240,20 @@ class DataCollector:
             return False
 
     def _parse_statistics_from_api(self, item: Dict) -> Optional[Dict[str, Any]]:
-        """새 API 응답에서 통계 데이터 추출"""
+        """새 API 응답에서 통계 데이터 추출
+
+        NOTE (2026-08-06 필드명 수정): total_sales를 'totSelAmt'에서 읽고 있었는데
+        현행 API 응답에 그 필드가 없어 항상 0으로 저장됐다(1203회 이후 통계 공백의 원인 중 하나).
+        실제 필드는 다음과 같다(1235회 실측으로 확인):
+          wholEpsdSumNtslAmt = 총 판매액 (115,445,069,000원 -> /1000 = 총 판매 게임 수)
+          rlvtEpsdSumNtslAmt = 총 당첨금 (= rnk1~5SumWnAmt 합계와 정확히 일치, 판매액의 50%)
+        총 판매 게임 수를 알아야 "실제로 산 사람들의 적중률"을 계산할 수 있다.
+        """
         try:
+            # 총 판매액: 현행 필드 우선, 구 필드는 하위호환으로 남긴다
+            total_sales = (item.get('wholEpsdSumNtslAmt')
+                           or item.get('totSelAmt')
+                           or 0)
             statistics = {
                 'first_winners': item.get('rnk1WnNope', 0),
                 'first_prize': item.get('rnk1WnAmt', 0),
@@ -253,7 +265,7 @@ class DataCollector:
                 'fourth_prize': item.get('rnk4WnAmt', 0),
                 'fifth_winners': item.get('rnk5WnNope', 0),
                 'fifth_prize': item.get('rnk5WnAmt', 0),
-                'total_sales': item.get('totSelAmt', 0)
+                'total_sales': total_sales
             }
             return statistics
         except Exception as e:
