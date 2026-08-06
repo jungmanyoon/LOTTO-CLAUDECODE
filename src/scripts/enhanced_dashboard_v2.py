@@ -518,6 +518,26 @@ class EnhancedLottoDashboard:
     P3_PLUS = 0.023834079
     P4_PLUS = 0.001450379
 
+    # 자유도별 양측 95% t 임계값.
+    # [2026-08-06 수정] 이전에는 표본 30 미만이면 일괄 2.2를 썼는데, 표본이 4개면
+    # 실제 임계값은 3.182다. 2.2를 쓰면 신뢰구간이 실제보다 좁아져 "무작위보다 확실히 낫다"는
+    # 과대 확신을 만든다(회차를 잘라내 표본이 작아지면 바로 드러나는 오류).
+    _T95_TABLE = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
+                  7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179,
+                  13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101,
+                  19: 2.093, 20: 2.086, 22: 2.074, 24: 2.064, 26: 2.056, 28: 2.048,
+                  30: 2.042, 40: 2.021, 60: 2.000, 120: 1.980}
+
+    @classmethod
+    def _t95(cls, df: int) -> float:
+        """자유도 df의 양측 95% t 임계값. 표에 없으면 보수적으로(더 큰 값) 고른다."""
+        if df <= 0:
+            return 12.706
+        if df in cls._T95_TABLE:
+            return cls._T95_TABLE[df]
+        smaller = [d for d in cls._T95_TABLE if d < df]
+        return cls._T95_TABLE[max(smaller)] if smaller else 1.96
+
     def get_honest_scorecard(self, recent_limit: int = 12) -> Dict:
         """실제 발행분을 실제 당첨번호와 대조한 '정직한 성적표'.
 
@@ -578,10 +598,8 @@ class EnhancedLottoDashboard:
                 mean = sum(diffs) / k
                 var = sum((d - mean) ** 2 for d in diffs) / (k - 1)
                 se = (var / k) ** 0.5
-                # t 근사(자유도 충분 시 1.96, 소표본은 보수적으로 2.2)
-                tcrit = 1.96 if k >= 30 else 2.2
-                lo = (self.P3_PLUS + mean - tcrit * se) / self.P3_PLUS
-                hi = (self.P3_PLUS + mean + tcrit * se) / self.P3_PLUS
+                lo = (self.P3_PLUS + mean - self._t95(k - 1) * se) / self.P3_PLUS
+                hi = (self.P3_PLUS + mean + self._t95(k - 1) * se) / self.P3_PLUS
                 ci_low, ci_high = round(max(lo, 0.0), 2), round(hi, 2)
 
             return {
@@ -2653,6 +2671,8 @@ HTML_TEMPLATE_V2 = """
                 '"3개+ / 기대" = 실제로 3개 이상 맞은 건수 / 무작위로 같은 장수를 샀을 때 기대 건수</div>';
 
             html += '<div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.7;">' +
+                '집계 기준: <b>1232회(2026-07-04) 서버 자동 발행 시작 이후</b>. 그 이전 기록은 ' +
+                '지금과 다른 방식(로컬 수동 실행, 예측 경로 혼재)으로 만들어져 성적에서 제외했습니다.<br>' +
                 '이 시스템은 역사적으로 거의 나오지 않은 극단 패턴을 제외한 풀에서 조합을 고릅니다. ' +
                 '위 숫자는 그 결과의 실측 기록이며, 앞으로의 당첨을 보장하거나 예측하지 않습니다.</div>';
 
