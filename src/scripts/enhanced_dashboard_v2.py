@@ -528,15 +528,33 @@ class EnhancedLottoDashboard:
                   19: 2.093, 20: 2.086, 22: 2.074, 24: 2.064, 26: 2.056, 28: 2.048,
                   30: 2.042, 40: 2.021, 60: 2.000, 120: 1.980}
 
+    # 자유도별 양측 99% t 임계값. 판정(confirmed)에만 쓴다.
+    # 매주 반복 검정하는 구조라 95%로는 진짜 효과가 0이어도 1년 내 15.7% 확률로 통과한다.
+    # 99%로 올리면 같은 조건에서 약 2.3%로 떨어진다(시뮬레이션 실측).
+    _T99_TABLE = {1: 63.657, 2: 9.925, 3: 5.841, 4: 4.604, 5: 4.032, 6: 3.707,
+                  7: 3.499, 8: 3.355, 9: 3.250, 10: 3.169, 11: 3.106, 12: 3.055,
+                  13: 3.012, 14: 2.977, 15: 2.947, 16: 2.921, 17: 2.898, 18: 2.878,
+                  19: 2.861, 20: 2.845, 22: 2.819, 24: 2.797, 26: 2.779, 28: 2.763,
+                  30: 2.750, 40: 2.704, 60: 2.660, 120: 2.617}
+
     @classmethod
     def _t95(cls, df: int) -> float:
         """자유도 df의 양측 95% t 임계값. 표에 없으면 보수적으로(더 큰 값) 고른다."""
+        return cls._t_from(cls._T95_TABLE, df, 12.706, 1.96)
+
+    @classmethod
+    def _t99(cls, df: int) -> float:
+        """자유도 df의 양측 99% t 임계값(판정용)."""
+        return cls._t_from(cls._T99_TABLE, df, 63.657, 2.576)
+
+    @staticmethod
+    def _t_from(table: dict, df: int, tiny: float, floor: float) -> float:
         if df <= 0:
-            return 12.706
-        if df in cls._T95_TABLE:
-            return cls._T95_TABLE[df]
-        smaller = [d for d in cls._T95_TABLE if d < df]
-        return cls._T95_TABLE[max(smaller)] if smaller else 1.96
+            return tiny
+        if df in table:
+            return table[df]
+        smaller = [d for d in table if d < df]
+        return table[max(smaller)] if smaller else floor
 
     def get_honest_scorecard(self, recent_limit: int = 12) -> Dict:
         """실제 발행분을 실제 당첨번호와 대조한 '정직한 성적표'.
@@ -622,15 +640,29 @@ class EnhancedLottoDashboard:
             self.logger.error(f"정직 성적표 집계 실패: {e}")
             return empty
 
+    # 판정에 요구하는 최소 회차 수. 표본이 적으면 우연히 좋은 구간이 나오기 쉬우므로
+    # 아무리 숫자가 좋아도 이 수치 아래에서는 판정을 내리지 않는다.
+    VERDICT_MIN_ROUNDS = 20
+
     def _verdict(self, per_round: List[Dict]) -> Dict:
         """"이 차이가 실력인가 운인가"를 판정하고, 아직 이르면 몇 회차가 더 필요한지 추정한다.
 
         회차를 독립 단위로 본다(같은 회차의 조합들은 같은 당첨번호를 대상으로 하므로 독립이 아니다).
         화면에는 신뢰구간 같은 용어 대신 "아직 알 수 없음 / 확인됨"으로 풀어 쓴다.
+
+        [2026-08-06 수정 - 반복 검정 문제]
+        이 판정은 새 회차가 쌓일 때마다 다시 계산된다(사실상 매주 재검정). 매번 95% 기준으로
+        검사하면 "진짜 차이가 0이어도" 언젠가는 우연히 통과한다. 시뮬레이션 실측:
+          - 효과가 정확히 0이어도 4회차 시점에서 1회차만 더 쌓이면 통과 확률 37.2%
+          - 1년(52회차) 안에 한 번이라도 통과할 확률 15.7% (명목 5%의 3배)
+        게다가 관측된 회차별 표준편차(0.00774)는 400여 장 표본의 순수 이항잡음(0.00736)과
+        거의 같아, 현재 편차는 우연만으로 설명된다.
+        그래서 두 가지를 건다: (1) 최소 회차 수 하한 (2) 기준을 t95 -> t99로 강화.
+        (Bonferroni는 검사 횟수가 무한히 늘어나는 주간 반복 검정에서 성립하지 않아 쓰지 않는다.)
         """
         k = len(per_round)
         out = {'status': 'too_few', 'rounds': k, 'need_rounds': None,
-               'low': None, 'high': None}
+               'low': None, 'high': None, 'min_rounds': self.VERDICT_MIN_ROUNDS}
         if k < 3:
             return out
         diffs = [x['our_per100'] / 100.0 - x['real_per100'] / 100.0 for x in per_round]
@@ -640,17 +672,27 @@ class EnhancedLottoDashboard:
         if sd <= 0:
             return out
         base = sum(x['real_per100'] for x in per_round) / k / 100.0
-        lo = mean - self._t95(k - 1) * (sd / (k ** 0.5))
-        hi = mean + self._t95(k - 1) * (sd / (k ** 0.5))
+        # 참고용 구간은 기존대로 95%로 보여주되, 판정은 아래 99% 기준으로만 내린다.
+        lo95 = mean - self._t95(k - 1) * (sd / (k ** 0.5))
+        hi95 = mean + self._t95(k - 1) * (sd / (k ** 0.5))
         if base > 0:
-            out['low'] = round((base + lo) / base, 2)
-            out['high'] = round((base + hi) / base, 2)
-        out['status'] = 'confirmed' if lo > 0 else ('worse' if hi < 0 else 'unknown')
+            out['low'] = round((base + lo95) / base, 2)
+            out['high'] = round((base + hi95) / base, 2)
 
-        # 아직 판정이 안 났다면, 현재 흐름이 그대로 이어질 때 몇 회차에서 판정이 나는지 추정
+        lo99 = mean - self._t99(k - 1) * (sd / (k ** 0.5))
+        hi99 = mean + self._t99(k - 1) * (sd / (k ** 0.5))
+        if k < self.VERDICT_MIN_ROUNDS:
+            # 표본이 부족하면 숫자가 아무리 좋아도 판정하지 않는다.
+            out['status'] = 'unknown'
+        else:
+            out['status'] = 'confirmed' if lo99 > 0 else ('worse' if hi99 < 0 else 'unknown')
+
+        # 아직 판정이 안 났다면, 현재 흐름이 그대로 이어질 때 몇 회차에서 판정이 나는지 추정.
+        # 판정과 동일한 기준(t99 + 최소 회차)을 써야 "다음 주면 판정 난다"고 해놓고
+        # 판정을 안 내리는 모순이 생기지 않는다.
         if out['status'] == 'unknown' and mean > 0:
-            for kk in range(k + 1, 201):
-                if mean - self._t95(kk - 1) * (sd / (kk ** 0.5)) > 0:
+            for kk in range(max(k + 1, self.VERDICT_MIN_ROUNDS), 401):
+                if mean - self._t99(kk - 1) * (sd / (kk ** 0.5)) > 0:
                     out['need_rounds'] = kk - k
                     break
         return out
@@ -1462,7 +1504,14 @@ HTML_TEMPLATE_V2 = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>로또 오라클 — AI 예측 분석</title>
+    <title>로또 오라클 — 극단 조합 제외 번호 추천</title>
+    <!-- [2026-08-06] 검색/공유 시 보이는 설명. 'AI가 당첨번호를 맞힌다'로 읽히지 않게 쓴다. -->
+    <meta name="description" content="역대 로또 기록에서 거의 나온 적 없는 극단 조합을 걸러내고, 남은 조합에서 겹치지 않게 뽑은 추천 번호. 실제 구매자 대비 성적을 그대로 공개합니다. 당첨을 보장하지 않습니다.">
+    <meta property="og:title" content="로또 오라클 — 극단 조합 제외 번호 추천">
+    <meta property="og:description" content="거의 나온 적 없는 조합을 걸러내고 남은 조합에서 추천. 실제 구매자 대비 성적 공개. 당첨을 보장하지 않습니다.">
+    <meta property="og:type" content="website">
+    <!-- 파일 추가 없이 동작하도록 인라인 SVG 파비콘을 쓴다(외부 요청 0). -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f7cff'/%3E%3Ctext x='16' y='23' font-size='19' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -1482,7 +1531,10 @@ HTML_TEMPLATE_V2 = """
       /* ========== 디자인 토큰 ========== */
       :root {
         --font-sans: 'Pretendard Variable','Pretendard',-apple-system,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;
-        --font-mono: 'JetBrains Mono','SFMono-Regular',Consolas,monospace;
+        /* [2026-08-06] JetBrains Mono에는 한글 글리프가 없어, 한글이 섞이면 시스템 고정폭으로
+           떨어지면서 '추 첨 예 정', '산 사 람 들'처럼 낱글자가 벌어져 보였다.
+           폴백 끝에 Pretendard를 끼워 한글만 본문 서체로 떨어지게 한다. */
+        --font-mono: 'JetBrains Mono','SFMono-Regular',Consolas,'Pretendard Variable',Pretendard,monospace;
         --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
         --gap: 16px;
         /* 로또 공 공식 색상대 */
@@ -1493,9 +1545,12 @@ HTML_TEMPLATE_V2 = """
         --bg: #F4F6F9; --bg-grad1: #EAF0FB; --bg-grad2: #F4F6F9;
         --elev: #FFFFFF; --elev-2: #FBFCFE; --inset: #EEF1F5;
         --border: rgba(17,24,39,.08); --border-strong: rgba(17,24,39,.16);
-        --text: #14161B; --text-2: #3A4250; --muted: #7B8492;
+        /* [접근성 2026-08-06] 라이트 모드 대비 보정(WCAG AA 4.5:1).
+           기존 --good #06B6A8은 2.39:1로 크게 미달했고, 하필 성적 숫자에 쓰여 잘 안 읽혔다.
+           --muted #7B8492도 3.56:1이라 본문 기준 미달 -> 둘 다 어둡게 조정. */
+        --text: #14161B; --text-2: #3A4250; --muted: #5F6875;
         --accent: #2F6BF6; --accent-2: #6E9BFF; --accent-weak: rgba(47,107,246,.10);
-        --good: #06B6A8; --good-weak: rgba(6,182,168,.12);
+        --good: #0A7D73; --good-weak: rgba(10,125,115,.12);
         --warn: #E8910B; --warn-weak: rgba(232,145,11,.12);
         --bad: #EC3B53; --bad-weak: rgba(236,59,83,.10);
         --shadow-1: 0 1px 3px rgba(20,30,55,.06), 0 1px 2px rgba(20,30,55,.04);
@@ -1642,7 +1697,8 @@ HTML_TEMPLATE_V2 = """
       .hero-top { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; }
       .hero-round { font: 800 22px/1 var(--font-sans); letter-spacing: -.4px; }
       .hero-round b { color: var(--accent); font-family: var(--font-mono); }
-      .hero-date { margin-left: auto; font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+      /* '추첨 예정 · 토 20:45'처럼 한글이 섞여 mono를 쓰지 않는다 */
+      .hero-date { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
       .hero-balls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
       .hero-plus { font: 700 22px/1 var(--font-mono); color: var(--muted); margin: 0 2px; }
       .hero-note { color: var(--text-2); font-size: 14px; line-height: 1.7; }
@@ -1713,8 +1769,9 @@ HTML_TEMPLATE_V2 = """
       @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       .pc-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
       .pc-set { font: 800 13px/1 var(--font-mono); letter-spacing: .06em; color: var(--text); }
+      /* '극단 제거 풀 (30/45)'처럼 한글 배지라 mono/자간을 쓰지 않는다 */
       .pc-src {
-        font: 700 10px/1 var(--font-mono); letter-spacing: .03em;
+        font: 700 10.5px/1 var(--font-sans);
         padding: 5px 9px; border-radius: var(--r-pill);
         background: var(--accent-weak); color: var(--accent);
       }
@@ -1734,7 +1791,7 @@ HTML_TEMPLATE_V2 = """
       .pc-wait { font-size: 12px; color: var(--muted); }
 
       /* 칩/배지 */
-      .chip { font: 700 11px/1 var(--font-mono); padding: 5px 9px; border-radius: var(--r-pill); }
+      .chip { font: 700 11.5px/1 var(--font-sans); padding: 5px 9px; border-radius: var(--r-pill); }
       .chip-ok { background: var(--good-weak); color: var(--good); }
       .chip-warn { background: var(--warn-weak); color: var(--warn); }
       .chip-bad { background: var(--bad-weak); color: var(--bad); }
@@ -1776,8 +1833,9 @@ HTML_TEMPLATE_V2 = """
 
       /* 데이터 테이블(로그) */
       .data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-      .data-table th { text-align: left; padding: 9px 11px; font: 700 11px/1 var(--font-mono); letter-spacing: .04em;
-        text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--elev); }
+      /* [2026-08-06] 표 헤더는 한글이라 mono/대문자변환/넓은자간이 '회 차'처럼 글자를 흩뜨렸다. */
+      .data-table th { text-align: left; padding: 9px 11px; font: 700 11.5px/1 var(--font-sans);
+        color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--elev); }
       .data-table td { padding: 9px 11px; border-bottom: 1px solid var(--border); color: var(--text-2); vertical-align: middle; }
       .data-table tr:last-child td { border-bottom: none; }
       .data-table tbody tr:hover td { background: var(--accent-weak); }
@@ -1830,6 +1888,41 @@ HTML_TEMPLATE_V2 = """
       .save-msg .spinner { width: 30px; height: 30px; margin: 0 auto 12px; border-radius: 50%; border: 3px solid var(--inset); border-top-color: var(--accent); animation: spin .85s linear infinite; }
 
       /* ========== 반응형 ========== */
+      /* ========== 고지 푸터 (2026-08-06) ========== */
+      .app-footer {
+        max-width: 1440px; margin: 8px auto 0; padding: 28px 24px 40px;
+        border-top: 1px solid var(--border);
+        font-size: 12px; line-height: 1.85; color: var(--muted);
+      }
+      .app-footer p { margin: 0 0 8px; max-width: 78ch; }
+      .app-footer b { color: var(--text-2); font-weight: 600; }
+      .app-footer .ft-strong { font-size: 13px; font-weight: 700; color: var(--text-2); margin-bottom: 10px; }
+      .app-footer .ft-em { font-family: var(--font-mono); color: var(--text-2); }
+      .app-footer .ft-mini { font-size: 11px; opacity: .85; margin-top: 12px; }
+
+      /* ========== 서비스 소개 (첫 화면) ========== */
+      .site-intro {
+        margin: 0 0 4px; font-size: 13.5px; line-height: 1.75; color: var(--text-2);
+        max-width: 62ch;
+      }
+      .site-intro b { color: var(--text); font-weight: 600; }
+      .site-intro .si-disc { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+
+      /* ========== 키보드 포커스 표시 (접근성) ==========
+         마우스 클릭 때는 안 보이고 키보드 이동(Tab) 때만 보인다. */
+      :where(button, select, a, summary, [tabindex]):focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        border-radius: 6px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+          transition-duration: .01ms !important; scroll-behavior: auto !important;
+        }
+      }
+
       @media (max-width: 1100px) {
         .span-7, .span-8 { grid-column: span 12; }
         .span-5 { grid-column: span 12; }
@@ -1897,7 +1990,7 @@ HTML_TEMPLATE_V2 = """
         <div class="brand">
             <div class="brand-mark">L</div>
             <span class="brand-name">로또 오라클</span>
-            <span class="brand-badge">AI ANALYTICS</span>
+            <span class="brand-badge">극단 조합 제외</span>
         </div>
         <div class="nav-spacer"></div>
         <div class="nav-controls">
@@ -1915,6 +2008,18 @@ HTML_TEMPLATE_V2 = """
 
     <!-- 벤토 본문 -->
     <main class="bento" id="dashboardContainer">
+
+        <!-- [서비스 소개 2026-08-06] 처음 온 사람이 3초 안에 "여기가 뭐 하는 곳인지" 알 수 있어야 한다.
+             회차 카드(winningSection) 안에 넣으면 JS가 innerHTML로 통째 교체할 때 지워지므로
+             일부러 그 바깥(bento 최상단)에 둔다. h1이 없던 문제도 여기서 함께 해결한다. -->
+        <header class="span-12">
+            <h1 class="site-intro">
+                역대 로또 기록을 뒤져 <b>거의 나온 적 없는 극단적인 번호 조합을 걸러내고</b>,
+                남은 조합에서 서로 겹치지 않게 뽑은 추천 번호입니다.
+                실제로 산 사람들과 비교한 성적도 아래에 그대로 공개합니다.
+                <span class="si-disc">당첨을 보장하지 않습니다. 로또는 매 회차 독립 추첨입니다.</span>
+            </h1>
+        </header>
 
         <!-- 필터 경고 (필요 시) -->
         <div class="span-12" id="filterWarningWrap" style="display:none;">
@@ -1942,7 +2047,7 @@ HTML_TEMPLATE_V2 = """
 
         <!-- Row 2: 예측 카드 (주인공) -->
         <section class="card span-12" id="predictionsSection">
-            <div class="card-h"><span class="dot"></span><span id="predictionsTitle">이번 회차 AI 예측</span><span class="sub" id="predictionsSummary"></span></div>
+            <div class="card-h"><span class="dot"></span><span id="predictionsTitle">이번 회차 추천 번호</span><span class="sub" id="predictionsSummary"></span></div>
             <div id="predictionsContent">
                 <div class="state"><div class="spinner"></div><p>예측을 불러오는 중...</p></div>
             </div>
@@ -2001,6 +2106,25 @@ HTML_TEMPLATE_V2 = """
         </section>
 
     </main>
+
+    <!-- [고지 푸터 2026-08-06] 공개 배포 감사 결과 반영.
+         페이지에 footer 태그 자체가 없어 운영주체/책임한계/연령/상담처가 전부 빠져 있었다.
+         복권법상 경고문구 의무 주체는 복권사업자이므로 이 사이트에 법적 의무는 없지만,
+         로또 구매와 맞닿은 정보를 공개하는 이상 오인과 책임 소재를 분명히 해 둔다.
+         전화번호는 동행복권 공식 사이트 표기(080-800-0501)를 그대로 따른다. -->
+    <footer class="app-footer">
+        <p class="ft-strong">이 사이트는 당첨을 보장하지 않습니다.</p>
+        <p>로또 1등 확률은 1장당 1/8,145,060이며, 여기서 추천하는 번호도 똑같습니다.
+           화면의 모든 수치는 지나간 회차의 실제 기록이며 앞으로의 당첨을 예측하지 않습니다.
+           구매 여부와 그 결과에 대한 책임은 이용자 본인에게 있습니다.</p>
+        <p>개인이 만든 <b>비공식·비영리 분석 도구</b>로, 기획재정부 복권위원회 및 동행복권과 아무런 관련이 없습니다.
+           당첨번호와 판매 통계는 동행복권 공개 자료를 인용했으며,
+           공식 확인은 <span class="ft-em">dhlottery.co.kr</span>에서 하시기 바랍니다.</p>
+        <p><b>19세 미만은 복권을 구매할 수 없습니다.</b>
+           도박문제 전문상담 <b>080-800-0501</b></p>
+        <p class="ft-mini">회원가입·로그인이 없고 개인정보를 수집하지 않습니다.
+           브라우저 저장소는 화면 테마(다크/라이트) 기억에만 사용합니다.</p>
+    </footer>
 
     <script>
         let currentRound = null;
@@ -2165,12 +2289,27 @@ HTML_TEMPLATE_V2 = """
         }
 
         // 회차 목록
+        // [2026-08-06] 첫 로딩이 한 번 실패하면 그 뒤 모든 카드가 '불러오는 중'으로 영구 정지했다.
+        // (loadRounds 실패 -> allRounds 비어 있음 -> loadWeekData 미호출 -> 스피너가 영원히 돔)
+        // 접속이 몰리거나 서버가 잠에서 깨는 중이면 흔히 생긴다. 실패를 눈에 보이게 알린다.
+        function showLoadFailure(msg) {
+            const ids = ['predictionsContent', 'scoreBody', 'trendChart', 'distChart',
+                         'backtestGrid', 'optimizerStatusGrid', 'kpiGrid', 'winningSection'];
+            ids.forEach(id => setState(id, 'error', msg));
+            const host = document.getElementById('predictionsContent');
+            if (host) {
+                host.innerHTML += '<div style="text-align:center; margin-top:12px;">' +
+                    '<button class="btn" onclick="location.reload()">다시 시도</button></div>';
+            }
+        }
+
         async function loadRounds() {
             const r = await fetchJson('/api/rounds');
             const select = document.getElementById('roundSelect');
             if (!r.ok || !Array.isArray(r.data)) {
                 setStatus('error', '서버 연결 실패');
                 toast('회차 목록 로드 실패', r.error || '서버 연결을 확인해주세요.', 'err');
+                showLoadFailure('데이터를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.');
                 return;
             }
             allRounds = r.data;
@@ -2188,6 +2327,7 @@ HTML_TEMPLATE_V2 = """
                 await loadWeekData();
             } else {
                 setStatus('error', '회차 데이터 없음');
+                showLoadFailure('표시할 회차가 없습니다. 잠시 후 새로고침해 주세요.');
             }
         }
 
@@ -2244,7 +2384,9 @@ HTML_TEMPLATE_V2 = """
                 sec.innerHTML =
                     '<div class="hero-top"><div class="hero-round">제 <b>' + escapeHtml(roundNum) + '</b>회</div>' +
                     '<div class="hero-date">추첨 예정 · 토 20:45</div></div>' +
-                    '<div class="hero-note">아직 추첨되지 않은 회차입니다.<br>아래 AI 예측 5세트를 미리 확인하세요.</div>';
+                    // [2026-08-06] '5세트'는 하드코딩이라 실제 표시 개수(4개)와 어긋났다.
+                    // 같은 화면에 세트 수가 5 / 280 / 4로 세 종류가 떠 혼란을 줬으므로 개수를 뺀다.
+                    '<div class="hero-note">아직 추첨되지 않은 회차입니다.<br>아래에서 이번 회차 추천 번호를 확인하세요.</div>';
                 return;
             }
             let balls = '';
@@ -2273,7 +2415,7 @@ HTML_TEMPLATE_V2 = """
             // [재설계 2026-07-04] 섹션 제목을 회차 상태에 맞춰 동적으로: 추첨 후엔 '예측 성적'(성적이
             //   주인공), 추첨 전엔 'AI 예측'(예측이 주인공). 아래 카드 정렬/성적요약과 맥락 일치.
             const _title = document.getElementById('predictionsTitle');
-            if (_title) _title.textContent = win ? '이번 회차 예측 성적' : '이번 회차 AI 예측';
+            if (_title) _title.textContent = win ? '이번 회차 예측 성적' : '이번 회차 추천 번호';
             summary.innerHTML = win
                 ? ('총 <b>' + (data.total_predictions || preds.length) + '</b>세트 · 잘 맞은 순')
                 : ('예측기간 <b>' + (data.date_count || 0) + '</b>일 · 총 <b>' + (data.total_predictions || preds.length) + '</b>세트');
@@ -2295,7 +2437,11 @@ HTML_TEMPLATE_V2 = """
             // 예측 카드
             let cards = '';
             featuredCards.slice(0, 12).forEach((pred, i) => {
-                const conf = Math.round((pred.confidence || 0) * 100);
+                // [2026-08-06] 저장값 confidence는 0.5 + 0.45*백분위 형태라 어떤 조합도 50 미만이
+                // 나올 수 없었다(최악의 조합도 화면엔 50). 표시할 때 진짜 백분위(0~100)로 되돌린다.
+                // DB 저장값은 기록 호환을 위해 그대로 둔다.
+                const _raw = pred.confidence || 0;
+                const conf = Math.max(0, Math.min(100, Math.round((_raw - 0.5) / 0.45 * 100)));
                 let balls = '';
                 (pred.numbers || []).forEach(n => {
                     const hit = win && win.numbers && win.numbers.includes(n);
@@ -2331,11 +2477,17 @@ HTML_TEMPLATE_V2 = """
                     '<div class="pred-card" style="animation-delay:' + (i * 0.04) + 's">' +
                     '<div class="pc-top"><span class="pc-set">SET ' + (i + 1) + '</span>' +
                     '<span class="pc-src ' + (srcKind === 'pool' ? 's-pool' : srcKind) + '" title="' + escapeHtml(srcRaw) + '">' + srcLabel + '</span>' +
-                    '<span class="pc-ring" title="AI 점수 (당첨 확률 아님 · 패턴 적합도+ML 혼합 점수)"><span class="ring" style="--p:' + conf + '"><span>' + conf + '</span></span></span></div>' +
+                    '<span class="pc-ring" title="전형성: 이 조합이 역대 당첨번호 분포에 얼마나 가까운가(=극단적이지 않은가)의 백분위. 당첨 확률이 아닙니다."><span class="ring" style="--p:' + conf + '"><span>' + conf + '</span></span></span></div>' +
                     '<div class="pc-balls">' + balls + '</div>' +
                     '<div class="pc-foot">' + foot + '</div></div>';
             });
-            content.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-bottom:12px;">각 카드 우측 원형 수치 = <b style="color:var(--text-2);">AI 점수</b> (패턴 적합도 + ML 혼합 · 당첨 확률 아님)</div><div class="pred-grid">' + cards + '</div>';
+            // [2026-08-06] 'AI 점수'는 사실과 달랐다. 이 값의 계산에 ML 기여는 0%이고,
+            // 순수하게 '역대 당첨번호 분포에서 얼마나 극단적이지 않은가'만 본다. 이름을 '전형성'으로
+            // 통일한다(아래 예측 로그 표와 같은 이름). 당첨 확률로 오인되지 않도록 문구를 앞세운다.
+            content.innerHTML = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;line-height:1.6;">' +
+                '각 카드 우측 원형 수치 = <b style="color:var(--text-2);">전형성</b> — ' +
+                '역대 당첨번호 분포에 얼마나 가까운지(극단적이지 않은지)를 백분위로 나타낸 값입니다. ' +
+                '<b>당첨 확률이 아닙니다.</b></div><div class="pred-grid">' + cards + '</div>';
 
             // 전체 로그 테이블(진행적 공개)
             renderLogTable(preds, win);
@@ -2474,8 +2626,10 @@ HTML_TEMPLATE_V2 = """
             const inc = m.inclusion;
             const inclPct = inc ? (inc.inclusion_rate * 100).toFixed(1) : null;
             const inclSub = inc ? (inc.passed + '/' + (inc.passed + inc.failed) + '회 · 16필터 기준') : '측정 데이터 없음';
+            // [2026-08-06] '필터 통과율'은 지금 예측에 쓰지 않는 옛 필터의 참고값이라
+            // 첫 화면 큰 숫자 자리를 차지할 이유가 없다. 아래 '시스템 분석' 서랍으로 내린다.
             const c1 = '<div class="kpi"><div class="v">' + (inclPct != null ? inclPct + '<small>%</small>' : '—') + '</div>' +
-                '<div class="l" title="역사적 당첨번호가 (구)16필터를 통과하는 비율. 참고 지표이며 실제 예측 풀(극단성 풀)과는 별개다.">필터 통과율 <span style="color:var(--muted);font-weight:600;">(참고)</span></div>' +
+                '<div class="l">옛 필터 보존율 <span style="color:var(--muted);font-weight:600;">(참고)</span></div>' +
                 '<div class="trk"><i style="width:' + (inclPct || 0) + '%"></i></div>' +
                 '<div style="font-size:10px;color:var(--muted);margin-top:6px;">' + inclSub + '</div></div>';
 
@@ -2483,18 +2637,35 @@ HTML_TEMPLATE_V2 = """
             const pool = m.pool;
             const K = pool ? pool.target_K : null;
             const ratio = pool && pool.pool_ratio != null ? (pool.pool_ratio * 100).toFixed(1) : null;
-            const c2 = '<div class="kpi accent"><div class="v">' + fmtK(K) + '</div>' +
-                '<div class="l" title="815만 조합 중 역사적 극단 패턴을 제거하고 남긴, 실제 예측에 쓰이는 풀 크기">극단성 풀 크기</div>' +
+            // 사용자 언어로: '극단성 풀 크기 1.5M' -> '추천 후보 150만 조합'
+            const Kman = K != null ? Math.round(K / 10000) : null;
+            const c2 = '<div class="kpi accent"><div class="v">' + (Kman != null ? Kman + '<small>만</small>' : '—') + '</div>' +
+                '<div class="l">추천 후보 조합</div>' +
                 '<div class="trk"><i style="width:' + (ratio || 0) + '%"></i></div>' +
-                '<div style="font-size:10px;color:var(--muted);margin-top:6px;">전체 8.14M의 ' + (ratio != null ? ratio + '%' : '—') + '</div></div>';
+                '<div style="font-size:10px;color:var(--muted);margin-top:6px;">전체 815만 중 ' +
+                (ratio != null ? ratio + '%만 남김' : '—') + '</div></div>';
 
             // 3) 무작위 대비 적합도(lift): 이 풀이 무작위보다 당첨번호를 얼마나 더 담는가
             const lift = pool && pool.lift != null ? pool.lift.toFixed(2) : null;
             const cov = pool && pool.coverage != null ? (pool.coverage * 100).toFixed(1) : null;
             const liftGood = lift != null && parseFloat(lift) >= 1;
-            const c3 = '<div class="kpi"><div class="v" style="color:' + (liftGood ? 'var(--good)' : 'var(--text)') + ';">' + (lift != null ? '&times;' + lift : '—') + '</div>' +
-                '<div class="l" title="이 풀이 무작위 대비 당첨번호를 얼마나 더 잘 담는가 (1.0=무작위, 1 초과=우수)">무작위 대비 적합도</div>' +
-                '<div style="font-size:10px;color:var(--muted);margin-top:9px;">당첨 포함률 ' + (cov != null ? cov + '%' : '—') + (pool && pool.reliable === false ? ' · 참고' : '') + '</div></div>';
+            // [2026-08-06] 기존 표기 '×1.09 무작위 대비 적합도 / 당첨 포함률 20.1%'는 두 가지 문제가 있었다.
+            //  (1) 일반인은 '당첨 포함률 20.1%'를 '당첨 확률 20%'로 읽는다. 실제 뜻은 정반대에 가깝다
+            //      — 역대 당첨번호의 20.1%만 이 후보 안에 있고 79.9%는 없다는 뜻이다.
+            //  (2) lift 1.09는 신뢰 하한(lift_lcb)이 1.0 미만이라 통계적으로 무작위와 구분되지 않는데
+            //      초록색 성과처럼 표시됐다.
+            // 그래서 주 수치를 '들어있던 비율'로 바꾸고, 유의하지 않으면 초록을 쓰지 않는다.
+            const lcb = pool && pool.lift_lcb != null ? pool.lift_lcb : null;
+            const liftSolid = (lcb != null && lcb > 1);
+            const c3 = '<div class="kpi"><div class="v" style="color:' + (liftSolid ? 'var(--good)' : 'var(--text)') + ';">' +
+                (cov != null ? cov + '<small>%</small>' : '—') + '</div>' +
+                '<div class="l">역대 당첨번호가 후보에 들어있던 비율</div>' +
+                '<div style="font-size:10px;color:var(--muted);margin-top:9px;line-height:1.5;">' +
+                (lift != null
+                    ? '같은 크기를 무작위로 뽑을 때보다 ' + lift + '배' +
+                      (liftSolid ? '' : ' · <b>아직 무작위와 구분 안 됨</b>')
+                    : '측정 데이터 없음') +
+                '</div></div>';
 
             // 4) 이번 회차: 추첨됐으면 평균 일치, 아니면 예측 세트 수
             let c4;
@@ -2601,18 +2772,25 @@ HTML_TEMPLATE_V2 = """
                           s.real_per100, s.our_per100, s.ratio);
 
             // 판정: 통계 용어(신뢰구간 등) 대신 풀어서 쓴다
+            // [2026-08-06] '실력'이라는 단정을 쓰지 않는다. 매주 재검정되는 구조라
+            // 진짜 차이가 0이어도 언젠가 통과할 수 있고, 무엇보다 로또는 매 회차 독립이라
+            // 과거 기록이 앞으로의 당첨을 뜻하지 않는다.
+            const minR = v.min_rounds || 20;
             let verdictHtml;
             if (v.status === 'confirmed') {
-                verdictHtml = '<b style="color:var(--good);">실력으로 확인됐습니다.</b> ' +
-                    '회차가 충분히 쌓여, 이 차이가 운 때문일 가능성은 낮습니다.';
+                verdictHtml = '<b>지금까지의 기록은 우연만으로 설명하기 어렵습니다</b>' +
+                    ' (' + (v.rounds || 0) + '개 회차 기준). ' +
+                    '다만 로또는 매 회차 독립 추첨이라, 이것이 앞으로의 당첨을 보장하지는 않습니다.';
             } else if (v.status === 'worse') {
-                verdictHtml = '<b>실제로 산 사람들보다 낮습니다.</b> 개선이 필요합니다.';
+                verdictHtml = '<b>지금까지는 실제로 산 사람들보다 낮습니다.</b> ' +
+                    '회차가 더 쌓이면 달라질 수 있습니다.';
             } else {
                 verdictHtml = '<b>아직은 실력인지 운인지 알 수 없습니다.</b> ' +
                     '지금은 ' + (v.rounds || 0) + '개 회차뿐이라, 운만으로도 이 정도 차이는 납니다.' +
                     (v.need_rounds
-                        ? ' 지금 흐름이 이어진다면 <b>' + v.need_rounds + '회차</b>만 더 쌓여도 판단할 수 있습니다.'
-                        : ' 회차가 더 쌓여야 합니다.');
+                        ? ' 지금 흐름이 그대로 이어진다고 가정하면 <b>' + v.need_rounds + '회차</b>쯤 더 쌓여야 ' +
+                          '판단해볼 수 있습니다(최소 ' + minR + '회차 필요).'
+                        : ' 최소 ' + minR + '개 회차는 쌓여야 판단할 수 있습니다.');
             }
             html += '<div style="padding:12px 14px; border-radius:10px; background:rgba(127,127,127,.10); ' +
                 'font-size:13px; line-height:1.75; margin-bottom:14px;">' + verdictHtml + '</div>';
@@ -2680,13 +2858,21 @@ HTML_TEMPLATE_V2 = """
                     '<span class="bar-v">' + r.best_match + (hit ? '*' : '') + '</span></div>' +
                     '<span class="bar-l">' + r.round + '</span></div>';
             });
+            // [2026-08-06] 기존에는 우리 값만 초록 굵게 칠했는데, 바로 옆 '무작위 기대'도 같은
+            // 100.0%인 경우가 있어(회차당 400장 이상 내면 5등 1건은 거의 확실) 우위가 0인데도
+            // 성과처럼 보였다. 두 값을 비교해 실제로 앞설 때만 초록으로 칠한다.
+            const _ours = tr.rank_hit_rate * 100, _rand = tr.random_expect * 100;
+            const _oursColor = (_ours > _rand + 0.05) ? 'var(--good)' : 'var(--text)';
             wrap.innerHTML = '<div class="bar-chart">' + bars + '</div>' +
                 '<div style="display:flex; gap:16px; margin-top:8px; font-size:12px; color:var(--text-2); flex-wrap:wrap;">' +
-                '<span>등수적중(5등+) <b style="font-family:var(--font-mono);color:var(--good);">' + tr.rank_hit_rounds + '/' + tr.rounds_checked +
-                '회 (' + (tr.rank_hit_rate * 100).toFixed(1) + '%)</b></span>' +
-                '<span>무작위 기대 <b style="font-family:var(--font-mono);color:var(--text);">' + (tr.random_expect * 100).toFixed(1) + '%</b></span>' +
-                '<span>평균 best-match <b style="font-family:var(--font-mono);color:var(--text);">' + tr.avg_best_match.toFixed(2) + '</b></span>' +
-                '<span style="color:var(--muted);">실측 기록 (당첨확률 예측 아님)</span></div>';
+                '<span>등수적중(5등+) <b style="font-family:var(--font-mono);color:' + _oursColor + ';">' +
+                tr.rank_hit_rounds + '/' + tr.rounds_checked + '회 (' + _ours.toFixed(1) + '%)</b></span>' +
+                '<span>무작위 기대 <b style="font-family:var(--font-mono);color:var(--text);">' + _rand.toFixed(1) + '%</b></span>' +
+                '<span>회차별 최고 일치 평균 <b style="font-family:var(--font-mono);color:var(--text);">' + tr.avg_best_match.toFixed(2) + '개</b></span>' +
+                '</div>' +
+                '<div style="margin-top:8px; font-size:11.5px; color:var(--muted); line-height:1.6;">' +
+                '한 회차에 400장 이상 내면 5등 1건 정도는 거의 확실히 나옵니다. ' +
+                '위 비율은 성과 지표가 아니라 실측 기록이며, 옆의 무작위 기대와 비교해서 보셔야 합니다.</div>';
         }
 
         function displayBacktestPerformance(bt) {
@@ -2871,12 +3057,15 @@ HTML_TEMPLATE_V2 = """
         }
 
         // ===== 새 예측 생성 (AI-네이티브 로딩) =====
+        // [2026-08-06] 실제 실행 경로와 맞췄다. 기존 문구는 '8.14M → ~304K'라고 했는데
+        // 같은 화면의 지표는 '150만'을 표시해 서로 모순이었고(304K는 지금 쓰지 않는 옛 필터 값),
+        // 이 버튼 경로에서는 ML/몬테카를로 단계도 실행되지 않는다.
         const GEN_STEPS = [
-            '전체 조합 8,145,060개 로드',
-            '역사적 극단 패턴 제거 중',
-            '필터 풀 축소 8.14M → ~304K',
-            'ML/몬테카를로 시뮬레이션',
-            '최종 5세트 선별 중'
+            '전체 조합 8,145,060개 확인',
+            '역사적으로 거의 없던 극단 패턴 제외',
+            '남은 약 150만 조합으로 후보 구성',
+            '이미 발행한 번호와 겹치지 않게 선별',
+            '최종 세트 정리 중'
         ];
         function startGenSkeleton() {
             const content = document.getElementById('predictionsContent');
