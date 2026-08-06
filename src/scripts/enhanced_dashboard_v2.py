@@ -513,6 +513,97 @@ class EnhancedLottoDashboard:
             'best_match': max((p.get('matches', 0) for p in predictions), default=0)
         }
     
+    # 무작위 1장이 3개 이상 / 4개 이상 맞을 확률 (조합론적 상수)
+    #   P(3+) = [C(6,3)C(39,3) + C(6,4)C(39,2) + C(6,5)C(39,1) + C(6,6)] / C(45,6)
+    P3_PLUS = 0.023834079
+    P4_PLUS = 0.001450379
+
+    def get_honest_scorecard(self, recent_limit: int = 12) -> Dict:
+        """실제 발행분을 실제 당첨번호와 대조한 '정직한 성적표'.
+
+        [왜 필요한가 - 2026-08-06]
+        누적 3개이상 일치 116건이 DB에 정확히 들어 있는데도 화면에서는 볼 수 없었다.
+        (성적 요약은 미추첨 회차에서 렌더되지 않고, 누적 수치는 접힌 아코디언 안에 있었다)
+        추가 측정 없이, 이미 저장된 prediction_results 를 그대로 집계해 내려준다.
+
+        무작위 기대치를 항상 함께 준다. 단일 회차 값은 변동이 크므로 화면에서
+        '참고용'임을 함께 표시해야 한다.
+        """
+        empty = {'available': False, 'rounds': [], 'cumulative': {}}
+        try:
+            if not os.path.exists(self.predictions_db_path):
+                return empty
+            with sqlite3.connect(self.predictions_db_path) as conn:
+                rows = conn.execute("""
+                    SELECT round,
+                           COUNT(*)                                        AS checked,
+                           SUM(CASE WHEN match_count >= 3 THEN 1 ELSE 0 END) AS m3,
+                           SUM(CASE WHEN match_count >= 4 THEN 1 ELSE 0 END) AS m4,
+                           MAX(match_count)                                AS best
+                    FROM prediction_results
+                    GROUP BY round
+                    ORDER BY round DESC
+                """).fetchall()
+            if not rows:
+                return empty
+
+            per_round = []
+            for r, checked, m3, m4, best in rows:
+                checked = int(checked or 0)
+                if checked <= 0:
+                    continue
+                exp3 = checked * self.P3_PLUS
+                per_round.append({
+                    'round': int(r),
+                    'checked': checked,
+                    'hits3': int(m3 or 0),
+                    'hits4': int(m4 or 0),
+                    'best': int(best or 0),
+                    'expected3': round(exp3, 2),
+                    'ratio': round((m3 or 0) / exp3, 2) if exp3 > 0 else None,
+                })
+
+            tot_checked = sum(x['checked'] for x in per_round)
+            tot3 = sum(x['hits3'] for x in per_round)
+            tot4 = sum(x['hits4'] for x in per_round)
+            exp3 = tot_checked * self.P3_PLUS
+            exp4 = tot_checked * self.P4_PLUS
+
+            # 신뢰구간: 회차 안의 조합들은 같은 당첨번호를 대상으로 하므로 서로 독립이 아니다.
+            # 조합을 독립으로 보면 구간이 과도하게 좁아진다(과대 확신). 회차를 독립 단위로 본다.
+            ci_low = ci_high = None
+            k = len(per_round)
+            if k >= 3 and exp3 > 0:
+                diffs = [x['hits3'] / x['checked'] - self.P3_PLUS for x in per_round]
+                mean = sum(diffs) / k
+                var = sum((d - mean) ** 2 for d in diffs) / (k - 1)
+                se = (var / k) ** 0.5
+                # t 근사(자유도 충분 시 1.96, 소표본은 보수적으로 2.2)
+                tcrit = 1.96 if k >= 30 else 2.2
+                lo = (self.P3_PLUS + mean - tcrit * se) / self.P3_PLUS
+                hi = (self.P3_PLUS + mean + tcrit * se) / self.P3_PLUS
+                ci_low, ci_high = round(max(lo, 0.0), 2), round(hi, 2)
+
+            return {
+                'available': True,
+                'rounds': per_round[:recent_limit],
+                'cumulative': {
+                    'rounds': k,
+                    'checked': tot_checked,
+                    'hits3': tot3,
+                    'expected3': round(exp3, 1),
+                    'ratio3': round(tot3 / exp3, 2) if exp3 > 0 else None,
+                    'ci_low': ci_low,
+                    'ci_high': ci_high,
+                    'hits4': tot4,
+                    'expected4': round(exp4, 2),
+                    'one_in': round(1 / self.P3_PLUS, 1),
+                },
+            }
+        except Exception as e:
+            self.logger.error(f"정직 성적표 집계 실패: {e}")
+            return empty
+
     def get_statistics(self) -> Dict:
         """전체 통계"""
         try:
@@ -1684,6 +1775,14 @@ HTML_TEMPLATE_V2 = """
                 <div id="optimizerStatusGrid"><div class="state"><div class="spinner"></div></div></div>
             </div>
 
+            <!-- [정직 성적표 2026-08-06] 실제 발행분 x 실제 당첨번호 대조 결과.
+                 이 숫자들은 DB에 이미 있었는데 화면 어디에도 안 보여서(성적 요약은 미추첨 회차에서
+                 렌더 안 됨, 누적치는 접힌 서랍 안) 사용자가 실적을 알 수 없었다. 항상 보이게 승격. -->
+            <div class="card span-12" id="scoreCard">
+                <div class="card-h"><span class="dot"></span>성적표 (실제 대조)<span class="sub" id="scoreSub"></span></div>
+                <div id="scoreBody"><div class="state">데이터 대기 중</div></div>
+            </div>
+
             <!-- [지속학습 가시화 2026-07-04] 회차별 실측 추이 - "회차가 쌓일수록 좋아지는가" 확인용 -->
             <div class="card span-12" id="trendCard">
                 <div class="card-h"><span class="dot"></span>회차별 실측 추이<span class="sub" id="trendSub"></span></div>
@@ -1970,17 +2069,20 @@ HTML_TEMPLATE_V2 = """
                 ? ('총 <b>' + (data.total_predictions || preds.length) + '</b>세트 · 잘 맞은 순')
                 : ('예측기간 <b>' + (data.date_count || 0) + '</b>일 · 총 <b>' + (data.total_predictions || preds.length) + '</b>세트');
 
-            // 날짜별 그룹 -> 최신 날짜 세트를 카드로 강조
-            const byDate = {};
-            preds.forEach(p => { const k = p.date || '-'; (byDate[k] = byDate[k] || []).push(p); });
-            const dateKeys = Object.keys(byDate).sort();
-            const featured = byDate[dateKeys[dateKeys.length - 1]] || preds;
-
-            // [재설계 2026-07-04] 추첨 후(win)엔 '잘 맞은 순'으로 정렬해 성적 좋은 세트를 위로.
-            // 추첨 전엔 생성 순서 그대로(예측 대기).
-            const featuredCards = win
-                ? featured.slice().sort((a, b) => (b.matches || 0) - (a.matches || 0))
-                : featured;
+            // [2026-08-06 수정] 기존에는 '마지막 날짜 그룹'으로 먼저 좁힌 뒤 그 안에서만 정렬해서,
+            // 회차 전체의 최고 성적 세트가 구조적으로 화면에 못 올라왔다.
+            // (예: 1233회 498장 중 4개 일치 세트는 7/12 생성분이라 마지막 날짜 그룹에 없어 절대 안 보임)
+            // 추첨이 끝난 회차는 '그 회차 전체'에서 잘 맞은 순으로 뽑는다.
+            let featuredCards;
+            if (win) {
+                featuredCards = preds.slice().sort((a, b) => (b.matches || 0) - (a.matches || 0));
+            } else {
+                // 추첨 전에는 최신 생성분을 보여준다(어떤 번호가 새로 나왔는지가 관심사).
+                const byDate = {};
+                preds.forEach(p => { const k = p.date || '-'; (byDate[k] = byDate[k] || []).push(p); });
+                const dateKeys = Object.keys(byDate).sort();
+                featuredCards = byDate[dateKeys[dateKeys.length - 1]] || preds;
+            }
             // 예측 카드
             let cards = '';
             featuredCards.slice(0, 12).forEach((pred, i) => {
@@ -2208,16 +2310,90 @@ HTML_TEMPLATE_V2 = """
             loadOptimizerStatus();
             setState('backtestGrid', 'loading', '백테스트 로딩 중...');
 
-            const [s, b, w, t] = await Promise.all([
+            const [s, b, w, t, sc] = await Promise.all([
                 fetchJson('/api/stats'),
                 fetchJson('/api/backtest-performance'),
                 fetchJson('/api/winning-statistics'),
-                fetchJson('/api/performance-trend')
+                fetchJson('/api/performance-trend'),
+                fetchJson('/api/honest-scorecard')
             ]);
             displayBacktestPerformance(b.ok ? b.data : (b.data || {}));
             displayBasicStats(s.ok ? s.data : {});
             displayDistribution(s.ok ? s.data : {}, b.ok ? b.data : null);
             displayTrend(t.ok ? t.data : {});
+            displayScorecard(sc.ok ? sc.data : {});
+        }
+
+        // [정직 성적표 2026-08-06] 발행분을 실제 당첨번호와 대조한 결과 + 무작위 기대치.
+        // 과장 금지: 단일 회차 값은 변동이 크고, 누적 신뢰구간이 1.00배를 포함하면
+        // "무작위와 구분되지 않는다"고 그대로 쓴다.
+        function displayScorecard(sc) {
+            sc = sc || {};
+            const wrap = document.getElementById('scoreBody');
+            if (!sc.available || !sc.rounds || !sc.rounds.length) {
+                setState('scoreBody', 'empty', '대조 완료된 회차가 아직 없습니다. 새 회차 발표 후 자동 집계됩니다.');
+                return;
+            }
+            const c = sc.cumulative || {};
+            const last = sc.rounds[0];
+            document.getElementById('scoreSub').textContent =
+                '누적 ' + (c.rounds || 0) + '개 회차 · ' + (c.checked || 0).toLocaleString() + '장 대조';
+
+            const ratioColor = (r) => (r == null ? 'var(--muted)' : (r >= 1 ? 'var(--good)' : 'var(--text)'));
+
+            let html = '<div class="hero-mini" style="margin-bottom:14px;">' +
+                '<div><div class="mv">' + last.checked.toLocaleString() + '</div>' +
+                '<div class="ml">' + last.round + '회 발행 장수</div></div>' +
+                '<div><div class="mv" style="color:var(--good)">' + last.hits3 + '</div>' +
+                '<div class="ml">3개 이상 일치</div></div>' +
+                '<div><div class="mv" style="color:var(--muted)">' + last.expected3 + '</div>' +
+                '<div class="ml">무작위 기대 건수</div></div>' +
+                '<div><div class="mv" style="color:' + ratioColor(last.ratio) + '">' +
+                (last.ratio == null ? '-' : last.ratio + '배') + '</div>' +
+                '<div class="ml">기대 대비 (참고용)</div></div>' +
+                '</div>';
+
+            html += '<div style="font-size:13px; line-height:1.9; color:var(--text-2);">' +
+                '<div><b style="color:var(--text);">누적 성적</b> · ' + (c.rounds || 0) + '개 회차 · ' +
+                (c.checked || 0).toLocaleString() + '장 대조 완료</div>' +
+                '<div>3개 이상 일치 <b style="font-family:var(--font-mono);color:var(--good);">' +
+                (c.hits3 || 0) + '건</b> / 무작위 기대 <b style="font-family:var(--font-mono);">' +
+                (c.expected3 || 0) + '건</b> = <b style="font-family:var(--font-mono);color:' +
+                ratioColor(c.ratio3) + ';">' + (c.ratio3 == null ? '-' : c.ratio3 + '배') + '</b>' +
+                ' <span style="color:var(--muted);">(1장당 무작위 확률 1/' + (c.one_in || '-') + ')</span></div>' +
+                '<div>4개 이상 일치 <b style="font-family:var(--font-mono);">' + (c.hits4 || 0) +
+                '건</b> / 기대 <b style="font-family:var(--font-mono);">' + (c.expected4 || 0) + '건</b></div>';
+
+            if (c.ci_low != null && c.ci_high != null) {
+                const overlapsOne = (c.ci_low <= 1.0 && c.ci_high >= 1.0);
+                html += '<div>95% 신뢰구간 <b style="font-family:var(--font-mono);">' +
+                    c.ci_low + ' ~ ' + c.ci_high + '배</b> <span style="color:var(--muted);">(회차 단위 보정)</span></div>' +
+                    '<div style="margin-top:6px; padding:10px 12px; border-radius:8px; background:rgba(127,127,127,.10);">' +
+                    (overlapsOne
+                        ? '신뢰구간이 1.00배를 포함합니다. <b>현재 데이터로는 무작위와 통계적으로 구분되지 않습니다.</b> 회차가 쌓이면 구간이 좁아집니다.'
+                        : '신뢰구간이 1.00배를 넘어섭니다. 다만 표본이 늘면 달라질 수 있습니다.') +
+                    '</div>';
+            }
+            html += '</div>';
+
+            // 회차별 표
+            let rows = '';
+            sc.rounds.forEach(r => {
+                rows += '<tr><td>' + r.round + '회</td><td>' + r.checked.toLocaleString() + '</td>' +
+                    '<td style="color:' + (r.hits3 > 0 ? 'var(--good)' : 'var(--muted)') + '">' + r.hits3 + '</td>' +
+                    '<td style="color:var(--muted)">' + r.expected3 + '</td>' +
+                    '<td style="color:' + ratioColor(r.ratio) + '">' + (r.ratio == null ? '-' : r.ratio + '배') + '</td>' +
+                    '<td>' + r.best + '개</td></tr>';
+            });
+            html += '<div class="table-scroll" style="margin-top:12px;"><table class="data-table"><thead><tr>' +
+                '<th>회차</th><th>발행</th><th>3개+</th><th>무작위 기대</th><th>비율</th><th>최고 일치</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+
+            html += '<div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.7;">' +
+                '이 시스템은 역사적으로 거의 나오지 않은 극단 패턴을 제외한 풀에서 조합을 고릅니다. ' +
+                '위 숫자는 그 결과의 실측 기록이며, 앞으로의 당첨을 보장하거나 예측하지 않습니다.</div>';
+
+            wrap.innerHTML = html;
         }
 
         // [지속학습 가시화 2026-07-04] 회차별 실측 best-match 추이 패널.
@@ -2295,14 +2471,21 @@ HTML_TEMPLATE_V2 = """
         function displayDistribution(stats, backtest) {
             const wrap = document.getElementById('distChart');
             let dist = {};
-            let hasReal = false;
-            if (backtest && backtest.model_performance) {
+            // [2026-08-06 라벨 반전 수정] 기존에는 백테스트 시뮬레이션을 '실측 데이터'로,
+            // 실제 발행분을 당첨번호와 대조한 라이브 기록을 '추정'으로 표기했다(정확히 반대).
+            // 우선순위도 바로잡는다: 라이브 대조 기록이 있으면 그것을 먼저 보여준다.
+            let srcLabel = '';
+            if (stats && stats.match_distribution &&
+                Object.values(stats.match_distribution).some(v => v > 0)) {
+                dist = stats.match_distribution;
+                srcLabel = '라이브 실측 (발행분 x 실제 당첨번호 대조)';
+            } else if (backtest && backtest.model_performance) {
                 for (const k in backtest.model_performance) {
                     const md = backtest.model_performance[k].match_distribution;
-                    if (md) { hasReal = true; for (let i = 0; i <= 6; i++) dist[i] = (dist[i] || 0) + (md['match_' + i] || 0); }
+                    if (md) { for (let i = 0; i <= 6; i++) dist[i] = (dist[i] || 0) + (md['match_' + i] || 0); }
                 }
+                srcLabel = '백테스트 시뮬레이션 (과거 회차 재현)';
             }
-            if (!hasReal && stats && stats.match_distribution) dist = stats.match_distribution;
             const total = Object.values(dist).reduce((a, b) => a + b, 0);
             if (!total) {
                 // [HF 배포 2026-07-04] 분포 데이터(백테) 없으면 카드 숨김.
@@ -2327,7 +2510,7 @@ HTML_TEMPLATE_V2 = """
                 '<div style="display:flex; gap:16px; margin-top:8px; font-size:12px; color:var(--text-2); flex-wrap:wrap;">' +
                 '<span>평균 <b style="font-family:var(--font-mono);color:var(--text);">' + avg + '</b></span>' +
                 '<span>3개+ <b style="font-family:var(--font-mono);color:var(--good);">' + threePlus + '</b></span>' +
-                '<span style="color:var(--muted);">' + (hasReal ? '실측 데이터' : '추정') + '</span></div>';
+                '<span style="color:var(--muted);">' + srcLabel + '</span></div>';
         }
 
         // Optuna 최적화 상태/이력
@@ -2552,6 +2735,15 @@ def get_stats():
     fresh_dashboard = EnhancedLottoDashboard()
     stats = fresh_dashboard.get_statistics()
     return jsonify(stats)
+
+@app.route('/api/honest-scorecard')
+def get_honest_scorecard():
+    """정직 성적표 API: 실제 발행분 x 실제 당첨번호 대조 결과 + 무작위 기대치.
+
+    추가 측정 없이 이미 저장된 prediction_results 를 집계만 한다.
+    """
+    fresh_dashboard = EnhancedLottoDashboard()
+    return jsonify(fresh_dashboard.get_honest_scorecard())
 
 @app.route('/api/filter-criteria')
 def get_filter_criteria():
