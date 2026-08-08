@@ -744,17 +744,33 @@ class EnhancedLottoDashboard:
                 }
 
             per_round = []
+            # [2026-08-08] 공식 통계가 아직 없는 회차(대개 방금 추첨된 최신 회차)를 담는다.
+            # 예전에는 그런 회차를 통째로 건너뛰어서, 우리 대조는 이미 끝났는데도 성적표가
+            # 지난 회차에 멈춰 있는 것처럼 보였다(1236회 실제 사례: 수집 버그로 통계 누락).
+            # 성적표는 '마지막 회차 기준'이어야 하므로, 비교 상대가 없더라도 우리 성적은 보여준다.
+            pending = []
             sum_ours_n = sum_ours_h = 0
             sum_real_games = sum_real_wins = 0
             for rnd in sorted(ours, reverse=True):
-                if rnd not in official:
-                    continue
                 checked, hits = ours[rnd]
-                sales, wins = official[rnd]
-                games = sales // 1000  # 1게임 1,000원
-                if checked <= 0 or games <= 0:
+                if checked <= 0:
                     continue
+                sales, wins = official.get(rnd, (0, 0))
+                games = sales // 1000  # 1게임 1,000원
                 ours_per100 = hits / checked * 100
+                if games <= 0:
+                    pending.append({
+                        'round': rnd,
+                        'our_tickets': checked,
+                        'our_hits': hits,
+                        'our_per100': round(ours_per100, 2),
+                        'real_games': 0,
+                        'real_wins': 0,
+                        'real_per100': None,
+                        'ratio': None,
+                        'pending': True,  # 전국 판매/당첨자 집계 대기
+                    })
+                    continue
                 real_per100 = wins / games * 100
                 per_round.append({
                     'round': rnd,
@@ -771,17 +787,22 @@ class EnhancedLottoDashboard:
                 sum_real_games += games
                 sum_real_wins += wins
 
-            if not per_round:
+            if not per_round and not pending:
                 return empty
 
-            ours_all = sum_ours_h / sum_ours_n * 100
-            real_all = sum_real_wins / sum_real_games * 100
+            # 누적 수치와 판정은 '비교 가능한 회차'만으로 계산한다(집계 대기 회차를 섞으면 왜곡된다).
+            ours_all = sum_ours_h / sum_ours_n * 100 if sum_ours_n else 0.0
+            real_all = sum_real_wins / sum_real_games * 100 if sum_real_games else 0.0
             # 회차별 승패(우리가 실제 구매자보다 잘한 회차 수)
             better = sum(1 for x in per_round if x['ratio'] is not None and x['ratio'] > 1)
 
+            # 집계 대기 회차가 목록에서 밀려나지 않도록 항상 맨 앞에 둔다(최신 회차 우선).
+            rows = (pending + per_round)[:recent_limit]
+
             return {
                 'available': True,
-                'rounds': per_round[:recent_limit],
+                'rounds': rows,
+                'latest_round': rows[0]['round'] if rows else None,
                 'summary': {
                     'rounds': len(per_round),
                     'our_tickets': sum_ours_n,
@@ -792,6 +813,7 @@ class EnhancedLottoDashboard:
                     'real_per100': round(real_all, 2),
                     'ratio': round(ours_all / real_all, 2) if real_all > 0 else None,
                     'better_rounds': better,
+                    'pending_rounds': [x['round'] for x in pending],
                 },
                 'verdict': self._verdict(per_round),
             }
@@ -2727,7 +2749,9 @@ HTML_TEMPLATE_V2 = """
             const s = vr.summary || {};
             const v = vr.verdict || {};
             const last = vr.rounds[0];
+            // 항상 '마지막 회차 기준'임을 부제에 못박는다(어느 회차까지 반영됐는지가 첫 궁금증이다).
             document.getElementById('scoreSub').textContent =
+                (vr.latest_round ? vr.latest_round + '회까지 · ' : '') +
                 (s.rounds || 0) + '개 회차 · 우리 예측 ' + (s.our_tickets || 0).toLocaleString() + '장';
 
             // 두 줄 비교 블록 (이번 회차 / 전체 공통 모양)
@@ -2765,9 +2789,31 @@ HTML_TEMPLATE_V2 = """
                 '</div>';
             }
 
+            // [2026-08-08] 방금 추첨된 회차는 우리 대조가 먼저 끝나고 전국 공식 집계가 뒤따른다.
+            // 그 회차를 숨기면 성적표가 지난 회차에 멈춘 것처럼 보이므로, 비교 없이 우리 성적만 먼저 띄운다.
+            function pendingBlock(r) {
+                return '' +
+                '<div style="border:1px dashed var(--border); border-radius:12px; padding:14px 16px; margin-bottom:12px;">' +
+                  '<div style="font-size:12px; color:var(--muted); margin-bottom:10px;">이번 회차 (' + r.round + '회) ' +
+                    '<span style="opacity:.8;">우리 ' + r.our_tickets.toLocaleString() + '장</span></div>' +
+                  '<div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px;">' +
+                    '<span style="font-size:13.5px;">우리 예측</span>' +
+                    '<span><b style="font-family:var(--font-mono); font-size:19px;">' + r.our_per100 + '</b>' +
+                      '<span style="font-size:12px; color:var(--muted);">개 / 100장</span></span>' +
+                  '</div>' +
+                  '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); ' +
+                    'font-size:13px; color:var(--text-2);">3개 이상 맞은 것 ' + r.our_hits + '건. ' +
+                    '전국 판매량·당첨자 수 공식 집계가 들어오면 비교가 표시됩니다.</div>' +
+                '</div>';
+            }
+
             let html = '';
-            html += block('이번 회차 (' + last.round + '회)', '우리 ' + last.our_tickets.toLocaleString() + '장',
-                          last.real_per100, last.our_per100, last.ratio);
+            if (last.pending) {
+                html += pendingBlock(last);
+            } else {
+                html += block('이번 회차 (' + last.round + '회)', '우리 ' + last.our_tickets.toLocaleString() + '장',
+                              last.real_per100, last.our_per100, last.ratio);
+            }
             html += block('전체 합계', (s.rounds || 0) + '개 회차 · 우리 ' + (s.our_tickets || 0).toLocaleString() + '장',
                           s.real_per100, s.our_per100, s.ratio);
 
@@ -2798,10 +2844,11 @@ HTML_TEMPLATE_V2 = """
             // 회차별 표
             let rows = '';
             vr.rounds.forEach(r => {
-                const win = r.our_per100 > r.real_per100;
+                const win = !r.pending && r.our_per100 > r.real_per100;
                 rows += '<tr>' +
                     '<td style="white-space:nowrap;">' + r.round + '</td>' +
-                    '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap;">' + r.real_per100 + '</td>' +
+                    '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap;' +
+                      (r.pending ? ' color:var(--muted);">집계 중' : '">' + r.real_per100) + '</td>' +
                     '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap; color:' +
                       (win ? 'var(--good)' : 'var(--text)') + ';">' + r.our_per100 + '</td>' +
                     '<td style="text-align:right; font-family:var(--font-mono); white-space:nowrap; color:var(--muted);">' +
@@ -2818,14 +2865,19 @@ HTML_TEMPLATE_V2 = """
                 '숫자는 모두 "100장 샀을 때 3개 이상 맞은 개수"입니다.</div>';
 
             // 자세한 설명은 접어둔다 (기본 화면은 간결하게)
+            // 예시로 드는 회차는 '비교가 가능한 가장 최근 회차'다(집계 대기 회차는 상대 숫자가 없다).
+            const ex = vr.rounds.find(r => !r.pending) || last;
             html += '<details style="margin-top:14px;"><summary style="cursor:pointer; font-size:12.5px; color:var(--text-2);">' +
                 '이 숫자가 어떻게 나왔나</summary>' +
                 '<div style="font-size:12.5px; color:var(--text-2); line-height:1.8; padding-top:10px;">' +
-                '<b>실제로 산 사람들</b>: ' + last.round + '회에 전국에서 <b>' + last.real_games.toLocaleString() + '장</b>이 ' +
-                '팔렸고, 그중 3개 이상 맞은 게 <b>' + last.real_wins.toLocaleString() + '건</b>이었습니다(동행복권 공식 발표). ' +
-                '100장으로 환산하면 <b>' + last.real_per100 + '개</b>입니다.<br>' +
-                '<b>우리 예측</b>: 같은 회차에 <b>' + last.our_tickets.toLocaleString() + '장</b>을 냈고 ' +
-                '3개 이상이 <b>' + last.our_hits + '건</b>이었습니다. 100장으로 환산하면 <b>' + last.our_per100 + '개</b>입니다.<br><br>' +
+                (ex.pending ? '' :
+                '<b>실제로 산 사람들</b>: ' + ex.round + '회에 전국에서 <b>' + ex.real_games.toLocaleString() + '장</b>이 ' +
+                '팔렸고, 그중 3개 이상 맞은 게 <b>' + ex.real_wins.toLocaleString() + '건</b>이었습니다(동행복권 공식 발표). ' +
+                '100장으로 환산하면 <b>' + ex.real_per100 + '개</b>입니다.<br>') +
+                '<b>우리 예측</b>: ' + ex.round + '회에 <b>' + ex.our_tickets.toLocaleString() + '장</b>을 냈고 ' +
+                '3개 이상이 <b>' + ex.our_hits + '건</b>이었습니다. 100장으로 환산하면 <b>' + ex.our_per100 + '개</b>입니다.<br><br>' +
+                '방금 추첨된 회차는 우리 대조가 먼저 끝나고, 전국 판매량·당첨자 수 공식 집계가 조금 뒤에 들어옵니다. ' +
+                '그동안은 그 회차를 "집계 중"으로 표시합니다.<br><br>' +
                 '수백만 명이 제각기 다른 번호를 사기 때문에, 실제 구매자들의 성적은 ' +
                 '아무 번호나 찍었을 때와 거의 같습니다. 그래서 이 비교는 곧 ' +
                 '"아무 번호나 사는 것보다 나은가"를 뜻합니다.<br><br>' +

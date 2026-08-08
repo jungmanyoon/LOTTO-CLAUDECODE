@@ -2792,8 +2792,23 @@ def main():
         # 데이터 수집 (선택적 건너뛰기)
         if not args.skip_fetch:
             logging.info("\n[데이터 수집] 로또 당첨 번호 수집 시작...")
-            collector = DataCollector(db_manager=db_manager, meta_manager=meta_manager)
+            # lotto_numbers_db 를 넘겨야 등수별 당첨자수/총판매액(공식 통계)도 함께 저장된다.
+            # 이 통계가 없으면 화면 성적표에서 그 회차가 통째로 빠진다(비교 상대가 없어서).
+            collector = DataCollector(db_manager=db_manager, meta_manager=meta_manager,
+                                      lotto_numbers_db=db_manager.lotto_db)
             collector.fetch_lotto_data()
+
+            # [2026-08-08] 공식 통계 누락 자동 복구.
+            # 당첨번호는 폴링 워크플로우가 먼저 넣는 경우가 많은데, 그때 통계가 빠지면
+            # 여기(주간 실행)는 '새 회차 없음'으로 판단해 재수집하지 않아 영구 공백이 된다.
+            # 실제로 1236회가 그렇게 성적표에서 누락됐다. 매 사이클 누락분을 확인해 채운다.
+            try:
+                from src.scripts.backfill_winning_statistics import backfill_missing
+                filled = backfill_missing(quiet=True)
+                if filled:
+                    logging.info(f"[데이터 수집] 공식 통계 누락 {filled}개 회차 자동 복구 완료")
+            except Exception as _be:
+                logging.warning(f"[데이터 수집] 공식 통계 자동 복구 실패(성적표 표시에만 영향): {_be}")
 
             # [NR-P0-2 FIX] 데이터 수집 직후 상태 재동기화 안전망.
             # 근본원인: 시작 동기화(위쪽 블록)는 데이터 수집 '전' DB 회차로 판단하므로, 수집으로 새로

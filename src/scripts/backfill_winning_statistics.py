@@ -84,14 +84,20 @@ def fetch_all_stats():
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--limit', type=int, default=None)
-    args = ap.parse_args()
+def backfill_missing(limit=None, quiet=False) -> int:
+    """누락된 회차의 공식 통계를 채우고, 채운 개수를 돌려준다.
 
-    todo = missing_rounds(args.limit)
+    스크립트 실행(main)과 main.py 사이클 양쪽에서 같은 로직을 쓰기 위해 함수로 분리했다.
+    (2026-08-08: 수집 경로가 통계를 빠뜨려도 다음 실행이 스스로 복구하도록 자동 호출 추가)
+
+    Args:
+        limit: 최근 N개만 처리(None이면 전체)
+        quiet: True면 누락이 없을 때 조용히 넘어간다(정기 실행용)
+    """
+    todo = missing_rounds(limit)
     if not todo:
-        log.info("채울 통계가 없습니다(모든 회차 보유).")
+        if not quiet:
+            log.info("채울 통계가 없습니다(모든 회차 보유).")
         return 0
     log.info(f"통계 누락 {len(todo)}개 회차: {todo[:6]}{' ...' if len(todo) > 6 else ''}")
 
@@ -124,6 +130,14 @@ def main():
             skipped += 1
 
     log.info(f"완료: 저장 {ok}개 / 건너뜀 {skipped}개")
+    return ok
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--limit', type=int, default=None)
+    args = ap.parse_args()
+    backfill_missing(args.limit)
     return 0
 
 

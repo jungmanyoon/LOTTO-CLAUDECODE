@@ -88,6 +88,51 @@ def probe(round_num: int, timeout: int = 15):
     return item
 
 
+def ensure_statistics(round_num: int) -> bool:
+    """해당 회차의 공식 통계(총 판매량 + 등수별 당첨자 수)가 저장됐는지 확인하고, 비었으면 채운다.
+
+    [왜 필요한가 - 2026-08-08]
+    화면 성적표는 '우리 성적'과 '전국 구매자 성적'을 같은 단위로 비교한다. 후자는 이 통계에서
+    나오므로, 통계가 없으면 그 회차는 성적표에서 통째로 빠진다(1236회가 실제로 그랬다).
+    수집이 조용히 반쪽만 성공하는 일을 막기 위해 저장 결과를 눈으로 확인하고, 비면 복구한다.
+
+    통계가 당첨번호보다 늦게 게시되는 경우도 있으므로, 실패해도 워크플로우를 죽이지 않고
+    경고만 남긴다(주간 예측 실행이 같은 복구를 한 번 더 시도한다).
+    """
+    import sqlite3
+
+    from src.scripts.backfill_winning_statistics import DB as STATS_DB, fetch_all_stats
+
+    def saved() -> bool:
+        with sqlite3.connect(STATS_DB) as conn:
+            row = conn.execute(
+                "SELECT total_sales FROM lotto_statistics WHERE round = ?", (round_num,)
+            ).fetchone()
+        return bool(row and row[0])
+
+    if saved():
+        log.info(f"{round_num}회 공식 통계 저장 확인 (성적표 반영 가능)")
+        return True
+
+    log.warning(f"{round_num}회 공식 통계가 비어 있습니다 - 즉시 재수집합니다")
+    try:
+        stats = fetch_all_stats().get(round_num)
+        if not stats or not stats.get('total_sales'):
+            log.warning(f"{round_num}회 통계가 아직 게시되지 않았습니다 - 주간 실행에서 재시도")
+            return False
+        from src.core.specialized_databases import LottoNumbersDB
+        LottoNumbersDB(STATS_DB).insert_statistics(round_num, stats)
+    except Exception as e:
+        log.warning(f"{round_num}회 통계 재수집 실패({type(e).__name__}: {e}) - 주간 실행에서 재시도")
+        return False
+
+    if saved():
+        log.info(f"{round_num}회 공식 통계 복구 완료")
+        return True
+    log.warning(f"{round_num}회 공식 통계 저장이 확인되지 않습니다 - 주간 실행에서 재시도")
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--max-wait', type=int, default=175, help='최대 대기(분). 이 시간까지 기다렸다 미게시면 종료')
@@ -149,15 +194,15 @@ def main() -> int:
 
     # 게시 확인됨 -> 실제 수집(밀린 회차가 여러 개일 수 있으므로 전체 동기화 경로를 쓴다)
     from src.data_collector import DataCollector
-    from src.core.specialized_databases import LottoNumbersDB
 
-    try:
-        # lotto_numbers_db 를 넘겨야 1~5등 당첨자수/판매액 통계도 함께 저장된다.
-        # (기존 main.py 경로는 이 인자를 넘기지 않아 통계가 1203회 이후 끊겨 있었다)
-        collector = DataCollector(db_manager=db, lotto_numbers_db=LottoNumbersDB())
-    except Exception as e:
-        log.warning(f"통계 DB 초기화 생략({type(e).__name__}: {e}) - 당첨번호만 수집합니다")
-        collector = DataCollector(db_manager=db)
+    # lotto_numbers_db 를 넘겨야 1~5등 당첨자수/판매액 통계도 함께 저장된다.
+    # 이 통계가 없으면 화면 성적표에서 그 회차가 통째로 빠진다(비교 상대가 없어서).
+    #
+    # [2026-08-08 버그 수정] 여기서 LottoNumbersDB() 를 인자 없이 만들다가
+    # TypeError(db_path 필수)로 실패했고, except 가 그걸 삼켜 "당첨번호만 수집"으로 넘어갔다.
+    # 그 결과 1236회 통계가 비었고 성적표가 1235회에서 멈춰 보였다.
+    # DatabaseManager 가 이미 올바른 경로로 만들어 둔 인스턴스를 그대로 쓴다(경로 중복 정의 제거).
+    collector = DataCollector(db_manager=db, lotto_numbers_db=db.lotto_db)
 
     collector.fetch_lotto_data()
 
@@ -169,6 +214,9 @@ def main() -> int:
         _emit('error', 'save_failed')
         return 1
 
+    # 당첨번호만 들어가고 통계가 빠지면 성적표에서 이 회차가 사라진다. 여기서 확인/복구한다.
+    stats_ok = ensure_statistics(int(after))
+
     nums = db.get_numbers_with_bonus()
     latest = [row for row in nums if int(row[0]) == int(after)]
     detail = ''
@@ -179,8 +227,10 @@ def main() -> int:
 
     _emit('updated', 'true')
     _emit('round', str(after))
+    _emit('stats', 'true' if stats_ok else 'false')
     waited_min = (time.monotonic() - started) / 60
     _summary(f"- {after}회 수집 완료 (대기 {waited_min:.1f}분 / 조회 {attempts}회).{detail}")
+    _summary(f"- 공식 통계(성적표 비교용): {'저장됨' if stats_ok else '미저장 - 주간 실행에서 재시도'}")
     return 0
 
 
