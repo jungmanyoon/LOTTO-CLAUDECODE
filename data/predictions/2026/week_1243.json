@@ -1,0 +1,86 @@
+{
+  "round": 1243,
+  "prediction_date": "2026-09-19T23:30:28.462775+09:00",
+  "model_version": "2.0",
+  "predictions": [
+    {
+      "set": 1,
+      "numbers": [
+        10,
+        13,
+        18,
+        28,
+        31,
+        45
+      ],
+      "confidence": 0.9491,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 2,
+      "numbers": [
+        7,
+        14,
+        19,
+        33,
+        34,
+        38
+      ],
+      "confidence": 0.9492,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 3,
+      "numbers": [
+        8,
+        15,
+        17,
+        24,
+        37,
+        42
+      ],
+      "confidence": 0.9497,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 4,
+      "numbers": [
+        3,
+        11,
+        12,
+        27,
+        30,
+        40
+      ],
+      "confidence": 0.9355,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 5,
+      "numbers": [
+        5,
+        20,
+        22,
+        29,
+        35,
+        36
+      ],
+      "confidence": 0.9428,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    }
+  ],
+  "result": {
+    "checked": false,
+    "check_date": null,
+    "actual_numbers": null,
+    "bonus_number": null,
+    "matches": [],
+    "best_rank": null,
+    "total_prize": 0
+  }
+}
