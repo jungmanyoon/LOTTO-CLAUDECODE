@@ -72,6 +72,136 @@
       "confidence": 0.9428,
       "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
       "characteristics": {}
+    },
+    {
+      "set": 6,
+      "numbers": [
+        7,
+        13,
+        18,
+        27,
+        34,
+        40
+      ],
+      "confidence": 0.9383,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 139,
+        "average": 23.2,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          2,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "set": 7,
+      "numbers": [
+        12,
+        15,
+        26,
+        31,
+        37,
+        45
+      ],
+      "confidence": 0.9304,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 166,
+        "average": 27.7,
+        "consecutive_count": 0,
+        "section_distribution": [
+          0,
+          2,
+          1,
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "set": 8,
+      "numbers": [
+        3,
+        17,
+        21,
+        30,
+        33,
+        36
+      ],
+      "confidence": 0.9478,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "4:2",
+        "sum_total": 140,
+        "average": 23.3,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          1,
+          3,
+          0
+        ]
+      }
+    },
+    {
+      "set": 9,
+      "numbers": [
+        6,
+        8,
+        11,
+        19,
+        24,
+        39
+      ],
+      "confidence": 0.9448,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 107,
+        "average": 17.8,
+        "consecutive_count": 0,
+        "section_distribution": [
+          2,
+          2,
+          1,
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "set": 10,
+      "numbers": [
+        5,
+        16,
+        22,
+        25,
+        38,
+        41
+      ],
+      "confidence": 0.945,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {
+        "odd_even_ratio": "3:3",
+        "sum_total": 147,
+        "average": 24.5,
+        "consecutive_count": 0,
+        "section_distribution": [
+          1,
+          1,
+          2,
+          1,
+          1
+        ]
+      }
     }
   ],
   "result": {
