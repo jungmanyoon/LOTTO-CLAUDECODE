@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "round": 1242,
-  "selected_at": "2026-09-19T16:03:24",
+  "round": 1243,
+  "selected_at": "2026-09-26T16:38:22",
   "policy": "walk_forward_wilson_lcb_min_k",
   "raw_target_K": 1500000,
   "effective_target_K": 1500000,
   "previous_target_K": 1500000,
-  "evidence": "weak",
+  "evidence": "confirmed",
   "hysteresis": "kept_previous_ci_overlap",
   "holdout_n": 750,
   "folds": 5,
@@ -30,11 +30,11 @@
     6000000
   ],
   "selected_metrics": {
-    "coverage": 0.21066666666666667,
+    "coverage": 0.212,
     "pool_ratio": 0.1841607059984825,
-    "lift": 1.1439284266666667,
-    "lift_lcb": 0.9936629500863862,
-    "observed_hits": 158,
+    "lift": 1.1511684800000002,
+    "lift_lcb": 1.0005029853842156,
+    "observed_hits": 159,
     "expected_random_hits": 138.12052949886188
   },
   "scorer": "weighted"
