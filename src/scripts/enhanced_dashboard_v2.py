@@ -1929,6 +1929,8 @@ HTML_TEMPLATE_V2 = """
       }
       .site-intro b { color: var(--text); font-weight: 600; }
       .site-intro .si-disc { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+      .site-intro .si-watch { display: block; margin-top: 4px; font-size: 12px; color: var(--text-2); }
+      .site-intro .si-watch:empty { display: none; }
 
       /* ========== 키보드 포커스 표시 (접근성) ==========
          마우스 클릭 때는 안 보이고 키보드 이동(Tab) 때만 보인다. */
@@ -2040,6 +2042,7 @@ HTML_TEMPLATE_V2 = """
                 남은 조합에서 서로 겹치지 않게 뽑은 추천 번호입니다.
                 실제로 산 사람들과 비교한 성적도 아래에 그대로 공개합니다.
                 <span class="si-disc">당첨을 보장하지 않습니다. 로또는 매 회차 독립 추첨입니다.</span>
+                <span class="si-watch" id="watchNote" aria-live="polite"></span>
             </h1>
         </header>
 
@@ -2297,7 +2300,45 @@ HTML_TEMPLATE_V2 = """
                 if (s && s.style.display !== 'none') loadOptimizerStatus();
             }, 30000);
             setInterval(loadQuickPredictionStatus, 60000);
+            refreshWatch();
+            setInterval(() => { if (document.visibilityState === 'visible') refreshWatch(); }, 60000);
         };
+
+        // [2026-09-27] 추첨 감시 상태. 서버가 새 당첨번호를 반영하면 열려 있는 화면도 바로 최신 회차로 바꾼다.
+        let watchLastRound = null;
+        function fmtWatchTime(iso, withDay) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            const days = ['일', '월', '화', '수', '목', '금', '토'];
+            const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+            return withDay ? (d.getMonth() + 1) + '/' + d.getDate() + '(' + days[d.getDay()] + ') ' + hm : hm;
+        }
+        function watchText(s) {
+            if (!s || !s.target_round) return '';
+            const t = s.target_round + '회';
+            const when = fmtWatchTime(s.draw_at, true);
+            if (!s.enabled) return '다음 추첨: ' + t + ' ' + when;
+            if (s.phase === 'polling') {
+                return t + ' 당첨번호 확인 중 · 게시되는 즉시 반영합니다 (마지막 확인 ' + fmtWatchTime(s.last_check, false) + ')';
+            }
+            if (s.phase === 'processing') return t + ' 당첨번호 반영 중...';
+            if (s.phase === 'error') return '다음 추첨: ' + t + ' ' + when + ' · 자동 확인에 문제가 있어 예약 작업이 대신 반영합니다';
+            return '다음 추첨: ' + t + ' ' + when + ' · 추첨 직후 자동으로 결과를 반영합니다';
+        }
+        async function refreshWatch() {
+            const r = await fetchJson('/api/draw-watch-status', { timeout: 8000 });
+            if (!r.ok || !r.data) return;
+            const s = r.data;
+            const note = document.getElementById('watchNote');
+            if (note) note.textContent = watchText(s);
+            if (watchLastRound !== null && s.last_round && s.last_round > watchLastRound) {
+                toast(s.last_round + '회 당첨번호가 반영됐습니다', '이번 주 결과를 불러옵니다.', 'ok');
+                await loadRounds();
+                await loadLatestRound();
+            }
+            if (s.last_round) watchLastRound = s.last_round;
+        }
 
         // 빠른 예측 상태 -> 상태 pill 보강
         async function loadQuickPredictionStatus() {
@@ -2405,7 +2446,7 @@ HTML_TEMPLATE_V2 = """
             if (!winning) {
                 sec.innerHTML =
                     '<div class="hero-top"><div class="hero-round">제 <b>' + escapeHtml(roundNum) + '</b>회</div>' +
-                    '<div class="hero-date">추첨 예정 · 토 20:45</div></div>' +
+                    '<div class="hero-date">추첨 예정 · 토 20:35</div></div>' +
                     // [2026-08-06] '5세트'는 하드코딩이라 실제 표시 개수(4개)와 어긋났다.
                     // 같은 화면에 세트 수가 5 / 280 / 4로 세 종류가 떠 혼란을 줬으므로 개수를 뺀다.
                     '<div class="hero-note">아직 추첨되지 않은 회차입니다.<br>아래에서 이번 회차 추천 번호를 확인하세요.</div>';
@@ -2717,12 +2758,13 @@ HTML_TEMPLATE_V2 = """
             loadOptimizerStatus();
             setState('backtestGrid', 'loading', '백테스트 로딩 중...');
 
-            const [s, b, w, t, vr] = await Promise.all([
+            const [s, b, w, t, vr, inc] = await Promise.all([
                 fetchJson('/api/stats'),
                 fetchJson('/api/backtest-performance'),
                 fetchJson('/api/winning-statistics'),
                 fetchJson('/api/performance-trend'),
-                fetchJson('/api/vs-real-buyers')
+                fetchJson('/api/vs-real-buyers'),
+                fetchJson('/api/pool-inclusion')
             ]);
             displayBacktestPerformance(b.ok ? b.data : (b.data || {}));
             displayBasicStats(s.ok ? s.data : {});
@@ -2730,7 +2772,39 @@ HTML_TEMPLATE_V2 = """
             displayTrend(t.ok ? t.data : {});
             // 성적표는 '실제 구매자 대비' 하나로 통합됐다(무작위 기대 대비와 사실상 같은 값이라
             // 배수가 여러 개 뜨면 헷갈린다는 사용자 피드백 반영).
-            displayScorecard(vr.ok ? vr.data : {});
+            displayScorecard(vr.ok ? vr.data : {}, inc.ok ? inc.data : null);
+        }
+
+        // [2026-09-27] 전략의 1차 성적: 1등 조합이 당시 추천 풀에 들어 있었나.
+        // '3개 이상 맞은 장수'는 어떤 번호를 사도 평균이 같아 전략 효과를 재지 못하므로 맨 위에 따로 보여준다.
+        function inclusionBlock(inc) {
+            if (!inc || !inc.available || !inc.rounds || !inc.rounds.length) return '';
+            const latest = inc.rounds[0];
+            const sm = inc.summary || {};
+            const frac = sm.pool_fraction || latest.pool_fraction || 0;
+            const poolText = latest.pool_size ? (Math.round(latest.pool_size / 10000) + '만 개') : '';
+            const expected = (sm.expected_if_random || 0).toFixed(1);
+            return '' +
+            '<div style="border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:12px;">' +
+              '<div style="font-size:12px; color:var(--muted); margin-bottom:10px;">1등 조합이 우리 추천 풀에 들었나 ' +
+                '<span style="opacity:.8;">이 시스템이 노리는 목표</span></div>' +
+              '<div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:6px;">' +
+                '<span style="font-size:13.5px;">이번 회차 (' + latest.round + '회)</span>' +
+                '<b style="font-size:15px; color:' + (latest.in_pool ? 'var(--good)' : 'var(--text)') + ';">' +
+                  (latest.in_pool ? '들어 있었음' : '없었음') + '</b>' +
+              '</div>' +
+              '<div style="display:flex; align-items:baseline; justify-content:space-between;">' +
+                '<span style="font-size:13.5px;">누적 (' + (inc.start_round || '') + '회부터)</span>' +
+                '<span><b style="font-family:var(--font-mono); font-size:17px;">' + (sm.in_pool || 0) + '</b>' +
+                  '<span style="font-size:12px; color:var(--muted);"> / ' + (sm.weeks || 0) + '주</span></span>' +
+              '</div>' +
+              '<div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); ' +
+                'font-size:12.5px; color:var(--text-2); line-height:1.7;">' +
+                '추천 풀은 800만 조합 중 ' + poolText + '(' + (100 * frac).toFixed(1) + '%)입니다. ' +
+                '아무렇게나 고른 같은 크기의 풀이라도 평균 ' + expected + '주는 들어갑니다. ' +
+                '이보다 꾸준히 많아야 거의 안 나온 조합을 뺀 효과가 있다는 뜻입니다.' +
+              '</div>' +
+            '</div>';
         }
 
         // [성적표 통합 2026-08-06]
@@ -2739,7 +2813,7 @@ HTML_TEMPLATE_V2 = """
         // (실제 구매자 100장당 2.38개 vs 이론 무작위 2.38개). 그래서 어려운 '무작위 기대'라는
         // 말을 없애고 '실제로 산 사람들' 하나로 통일하고, 카드도 하나로 합쳤다.
         // 단위도 '배' 대신 '100장에 몇 개'를 앞세운다(사용자 피드백: "말이 너무 어렵다").
-        function displayScorecard(vr) {
+        function displayScorecard(vr, inc) {
             vr = vr || {};
             const wrap = document.getElementById('scoreBody');
             if (!vr.available || !vr.rounds || !vr.rounds.length) {
@@ -2807,7 +2881,7 @@ HTML_TEMPLATE_V2 = """
                 '</div>';
             }
 
-            let html = '';
+            let html = inclusionBlock(inc);
             if (last.pending) {
                 html += pendingBlock(last);
             } else {
@@ -2862,7 +2936,9 @@ HTML_TEMPLATE_V2 = """
                 '<th style="text-align:right; white-space:nowrap;">우리 장수</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
                 '<div style="margin-top:6px; font-size:11.5px; color:var(--muted);">' +
-                '숫자는 모두 "100장 샀을 때 3개 이상 맞은 개수"입니다.</div>';
+                '숫자는 모두 "100장 샀을 때 3개 이상 맞은 개수"입니다. ' +
+                '이 숫자는 어떤 번호를 사도 평균 2.38개라 회차마다 운에 따라 크게 출렁입니다. ' +
+                '이 시스템의 목표는 위의 "1등 조합이 우리 추천 풀에 들었나"입니다.</div>';
 
             // 자세한 설명은 접어둔다 (기본 화면은 간결하게)
             // 예시로 드는 회차는 '비교가 가능한 가장 최근 회차'다(집계 대기 회차는 상대 숫자가 없다).
@@ -3148,6 +3224,13 @@ HTML_TEMPLATE_V2 = """
                 });
                 let result = null;
                 try { result = await res.json(); } catch (e) {}
+                if (res.status === 409) {
+                    // [2026-09-27] 판매 마감 뒤(당첨번호 반영 전)에는 만들지 않는다. 보던 화면은 그대로 둔다.
+                    stopGenSkeleton();
+                    toast('지금은 새 예측을 만들지 않습니다', (result && result.error) || '판매가 마감됐습니다.', 'warn');
+                    await loadWeekData();
+                    return;
+                }
                 if (!res.ok) {
                     let msg = '서버 오류가 발생했습니다.';
                     if (result && result.error) msg = result.error;
@@ -3260,6 +3343,53 @@ def get_vs_real_buyers():
     """
     fresh_dashboard = EnhancedLottoDashboard()
     return jsonify(fresh_dashboard.get_real_buyer_comparison())
+
+@app.route('/api/pool-inclusion')
+@limiter.limit("300 per hour")
+def get_pool_inclusion():
+    """[2026-09-27] 전략의 1차 성적: 회차마다 1등 조합이 당시 추천 풀(극단성 풀)에 들어 있었는지.
+
+    '3개 이상 맞은 장수'는 어떤 번호를 사도 평균이 한 장당 2.383%로 같아 전략 효과를 재지 못한다.
+    이 시스템이 노리는 것은 1등 조합이 풀 안에 남는 것이므로 이것을 따로 보여준다.
+    기록은 이번 주 결과 보고(src/automation/weekly_report.py)가 회차마다 남긴다.
+    """
+    from src.automation.weekly_report import INCLUSION_START_ROUND, inclusion_summary, load_inclusion
+    data = load_inclusion()
+    rows = []
+    for key, value in data.get('rounds', {}).items():
+        if isinstance(value, dict) and 'in_pool' in value:
+            rows.append({'round': int(key), 'in_pool': bool(value['in_pool']),
+                         'pool_size': value.get('pool_size'), 'pool_fraction': value.get('pool_fraction')})
+    rows.sort(key=lambda r: r['round'], reverse=True)
+    return jsonify({'available': bool(rows), 'rounds': rows, 'summary': inclusion_summary(data),
+                    'start_round': INCLUSION_START_ROUND})
+
+@app.route('/api/draw-watch-status')
+@limiter.exempt  # 화면이 1분마다 묻는 가벼운 상태(메모리 값)라 요청 제한에서 뺀다
+def get_draw_watch_status():
+    """[2026-09-27] 추첨 감시 상태: 다음 추첨 시각, 확인 중 여부, 마지막 반영 결과. 토큰 값은 내보내지 않는다."""
+    from src.automation.draw_clock import draw_at, latest_round_info
+    from src.automation.draw_watcher import watcher_status
+    status = watcher_status()
+    last = status.pop('last_result', None) or {}
+    if last:
+        status['last_result'] = {
+            'round': last.get('round'),
+            'dispatch': (last.get('dispatch') or {}).get('status'),
+            'stats': last.get('stats'),
+            'in_pool': (last.get('inclusion') or {}).get('in_pool'),
+            'error': last.get('error'),
+        }
+    if 'target_round' not in status:
+        try:
+            last_round, last_date = latest_round_info()
+            if last_round:
+                status['last_round'] = last_round
+                status['target_round'] = last_round + 1
+                status['draw_at'] = draw_at(last_round + 1, last_round, last_date).isoformat(timespec='minutes')
+        except (OSError, ValueError, sqlite3.Error):
+            pass
+    return jsonify(status)
 
 @app.route('/api/filter-criteria')
 def get_filter_criteria():
@@ -3459,6 +3589,17 @@ def generate_new_predictions():
         from datetime import datetime
         latest_round = db_manager.get_last_round()
         next_round = latest_round + 1
+
+        # [2026-09-27] 판매가 마감된 회차 번호로는 만들지 않는다(토 20:00 이후 새 당첨번호 반영 전).
+        from src.automation.draw_clock import sales_closed_for
+        _closed, _close_at = sales_closed_for(next_round)
+        if _closed:
+            return jsonify({
+                'success': False,
+                'error': f'{next_round}회 판매가 마감됐습니다({_close_at:%m-%d %H:%M}). '
+                         f'당첨번호가 반영되면 다음 회차 예측을 만들 수 있습니다.',
+                'round': int(next_round)
+            }), 409
 
         final_predictions = []
 
@@ -3940,6 +4081,15 @@ def run_enhanced_dashboard_v2(host='127.0.0.1', port=5001):
     print("  - Enhanced UI/UX")
     print("  - Match distribution chart")
     print("="*60 + "\n")
+
+    # [2026-09-27] 추첨 감시: HF 서버(SPACE_ID)에서 토요일 추첨 직후 당첨번호를 직접 확인해 즉시 반영한다.
+    # GitHub 예약 실행이 3~5시간씩 늦게 켜지는 문제를 피한다. 실패해도 대시보드는 그대로 뜬다.
+    try:
+        from src.automation.draw_watcher import start_draw_watcher_if_enabled
+        _watcher = start_draw_watcher_if_enabled()
+        print(f"[INFO] Draw watcher: {'on' if _watcher else 'off'}")
+    except Exception as _we:
+        print(f"[WARN] Draw watcher start failed: {type(_we).__name__}: {_we}")
 
     # SECURITY: debug=False hardcoded to prevent RCE attacks
     # Flask reloader 비활성화 (재시작 방지)

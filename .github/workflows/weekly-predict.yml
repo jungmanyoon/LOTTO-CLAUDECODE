@@ -11,7 +11,28 @@ on:
     # [2026-07-04 개선] 토요일 12:30 UTC = 21:30 KST. 추첨(20:35 KST) + 동행복권 결과 반영
     # (~21:00)을 지나 여유(55분) 두고 최대한 빨리 수집 -> 기존 22:00보다 30분 앞당김.
     - cron: '30 12 * * 6'
-  workflow_dispatch:  # 수동 실행 버튼 (Actions 탭에서 언제든 눌러 테스트)
+  # 수동 실행 버튼 + [2026-09-27] HF 서버 추첨 감시의 즉시 호출.
+  # 예약(schedule)은 8월 말부터 3~5시간씩 늦게 켜져, HF 서버가 당첨번호 게시를 확인한 순간
+  # 이 작업을 직접 호출한다(호출은 예약과 달리 바로 켜진다). 당첨번호를 함께 넘겨, GitHub 서버에서
+  # 동행복권 접속이 막혀도 재분석이 이어지게 한다. 입력이 비어 있으면 기존과 똑같이 동작한다.
+  workflow_dispatch:
+    inputs:
+      round:
+        description: '추첨 감시가 확인한 회차(비워 두면 직접 수집)'
+        required: false
+        default: ''
+      numbers:
+        description: '당첨번호 6개(쉼표 구분)'
+        required: false
+        default: ''
+      bonus:
+        description: '보너스 번호'
+        required: false
+        default: ''
+      draw_date:
+        description: '추첨일 YYYY-MM-DD'
+        required: false
+        default: ''
 
 # 동시 실행 방지: 이전 run이 안 끝났으면 겹치지 않게
 concurrency:
@@ -41,7 +62,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 예측 사이클 1회 실행 (수집 -> 학습 -> 백테 -> 예측)
+      - name: 추첨 감시가 넘긴 당첨번호 선반영 (GitHub에서 동행복권 접속이 막혀도 이어서 진행)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.round != '' }}
+        env:
+          # 입력값은 명령줄에 직접 끼워 넣지 않고 환경변수로만 넘긴다(명령 주입 방지)
+          DRAW_ROUND: ${{ github.event.inputs.round }}
+          DRAW_NUMBERS: ${{ github.event.inputs.numbers }}
+          DRAW_BONUS: ${{ github.event.inputs.bonus }}
+          DRAW_DATE: ${{ github.event.inputs.draw_date }}
+        run: |
+          python src/scripts/apply_dispatched_result.py \
+            --round "$DRAW_ROUND" --numbers "$DRAW_NUMBERS" --bonus "$DRAW_BONUS" --draw-date "$DRAW_DATE"
+
+      - name: 예측 사이클 1회 실행 (수집 -> 이번 주 결과 보고 -> 학습 -> 백테 -> 예측)
         env:
           # 헤드리스/비대화 환경 안정화
           TF_CPP_MIN_LOG_LEVEL: '3'

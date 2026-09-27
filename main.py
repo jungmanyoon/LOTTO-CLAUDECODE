@@ -2836,7 +2836,16 @@ def main():
             # 데이터 수집 후에는 백테스팅 기반 자동 조정이 실행됨
         else:
             logging.info("\n[데이터 수집] 건너뛰기")
-        
+
+        # [2026-09-27] 이번 주 결과 보고를 재분석보다 먼저 한다(사용자 요청 순서: 결과 보고 -> 재분석).
+        # 새 당첨번호가 들어왔으면 우리 발행분을 곧바로 대조해 저장하고(화면 성적표가 읽는 값),
+        # 그 회차 1등 조합이 당시 추천 풀에 있었는지 기록한다. 이후 단계가 실패해도 성적은 남는다.
+        try:
+            from src.automation.weekly_report import run_weekly_report
+            run_weekly_report(db_manager)
+        except Exception as _wr:
+            logging.error(f"[이번 주 결과 보고] 실패: {type(_wr).__name__}: {_wr}")
+
         # --fetch-only 옵션 처리
         if args.fetch_only:
             logging.info("\n[자동화] 데이터 수집만 수행 (--fetch-only)")
@@ -4179,13 +4188,24 @@ def main():
                     prediction_tracker = PredictionTracker()
                     logging.info("예측 저장을 위해 PredictionTracker를 초기화했습니다.")
                 
-                success = prediction_tracker.save_predictions(next_round, predictions_to_save)
-                if success:
-                    logging.info(f"\n[OK] {next_round}회차 예측이 저장되었습니다.")
-                    logging.info(f"   저장 위치: data/predictions/predictions.db")
-                    logging.info(f"   JSON 백업: data/predictions/{datetime.now().year}/week_{next_round}.json")
+                # [2026-09-27] 판매가 이미 마감된 회차 번호로는 저장하지 않는다.
+                # 새 당첨번호가 DB에 들어오기 전에는 next_round(=DB 마지막+1)가 방금 추첨이 끝난 회차를
+                # 가리킨다. 그 번호로 저장하면 살 수 없던 시각의 예측이 그 회차 성적에 섞인다.
+                from src.automation.draw_clock import sales_closed_for
+                _closed, _close_at = sales_closed_for(next_round)
+                if _closed:
+                    logging.error(
+                        f"[예측 저장 보류] {next_round}회 판매가 이미 마감됐습니다"
+                        f"({_close_at:%m-%d %H:%M} KST). 새 당첨번호가 DB에 아직 없어 저장하지 않습니다. "
+                        f"수집이 끝난 뒤 다시 실행하면 다음 회차로 저장됩니다.")
                 else:
-                    logging.warning(f"{next_round}회차 예측 저장 실패 (이미 존재할 수 있음)")
+                    success = prediction_tracker.save_predictions(next_round, predictions_to_save)
+                    if success:
+                        logging.info(f"\n[OK] {next_round}회차 예측이 저장되었습니다.")
+                        logging.info(f"   저장 위치: data/predictions/predictions.db")
+                        logging.info(f"   JSON 백업: data/predictions/{datetime.now().year}/week_{next_round}.json")
+                    else:
+                        logging.warning(f"{next_round}회차 예측 저장 실패 (이미 존재할 수 있음)")
             except Exception as e:
                 logging.error(f"예측 저장 중 내부 오류: {e}")
         except Exception as e:

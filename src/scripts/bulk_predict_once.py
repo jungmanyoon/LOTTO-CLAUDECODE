@@ -36,6 +36,15 @@ def main():
     latest = db.get_last_round()
     next_round = int(latest) + 1
 
+    # [2026-09-27] 판매가 마감된 회차 번호로는 발행하지 않는다. 토 20:00 이후 새 당첨번호가 DB에
+    # 들어오기 전에는 next_round 가 방금 추첨이 끝난 회차를 가리킨다(1243회: 추첨 뒤 22시대 발행분이 섞였다).
+    from src.automation.draw_clock import sales_closed_for
+    closed, close_at = sales_closed_for(next_round)
+    if closed:
+        print(f"[bulk] {next_round}회 판매 마감({close_at:%m-%d %H:%M} KST) 뒤라 발행하지 않습니다 "
+              f"- 새 당첨번호 반영 후 다음 회차로 발행")
+        return
+
     epp = ExtremenessPoolPredictor(db)
     epp.build_pool()  # 캐시(회차+K+가중치 동일) 있으면 즉시, 없으면 8.14M 채점(clean 약 1-2분)
 

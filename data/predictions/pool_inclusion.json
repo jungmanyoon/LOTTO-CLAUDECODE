@@ -1,0 +1,222 @@
+{
+ "note": "회차별로 그 회차 1등 조합이 당시 추천 후보 풀(그 회차 직전까지의 당첨번호로 만든 극단성 풀)에 들어 있었는지 기록한다. 풀 비율만큼은 무작위로도 들어간다(예: 150만/815만 = 18.4%).",
+ "rounds": {
+  "1232": {
+   "computed_at": "2026-09-27T22:24:18+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1232,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1231,
+   "winner": [
+    12,
+    15,
+    19,
+    22,
+    24,
+    36
+   ]
+  },
+  "1233": {
+   "computed_at": "2026-09-27T22:24:31+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1233,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1232,
+   "winner": [
+    2,
+    7,
+    20,
+    25,
+    37,
+    40
+   ]
+  },
+  "1234": {
+   "computed_at": "2026-09-27T22:24:43+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1234,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1233,
+   "winner": [
+    1,
+    15,
+    19,
+    31,
+    35,
+    43
+   ]
+  },
+  "1235": {
+   "computed_at": "2026-09-27T22:24:56+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1235,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1234,
+   "winner": [
+    6,
+    7,
+    11,
+    15,
+    39,
+    43
+   ]
+  },
+  "1236": {
+   "computed_at": "2026-09-27T22:25:09+09:00",
+   "in_pool": true,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1236,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1235,
+   "winner": [
+    12,
+    18,
+    21,
+    29,
+    34,
+    38
+   ]
+  },
+  "1237": {
+   "computed_at": "2026-09-27T22:25:22+09:00",
+   "in_pool": true,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1237,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1236,
+   "winner": [
+    10,
+    20,
+    23,
+    34,
+    37,
+    40
+   ]
+  },
+  "1238": {
+   "computed_at": "2026-09-27T22:25:35+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1238,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1237,
+   "winner": [
+    2,
+    13,
+    18,
+    32,
+    38,
+    42
+   ]
+  },
+  "1239": {
+   "computed_at": "2026-09-27T22:25:49+09:00",
+   "in_pool": true,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1239,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1238,
+   "winner": [
+    11,
+    13,
+    22,
+    32,
+    33,
+    36
+   ]
+  },
+  "1240": {
+   "computed_at": "2026-09-27T22:26:01+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1240,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1239,
+   "winner": [
+    11,
+    13,
+    19,
+    20,
+    31,
+    44
+   ]
+  },
+  "1241": {
+   "computed_at": "2026-09-27T22:26:14+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1241,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1240,
+   "winner": [
+    7,
+    13,
+    16,
+    23,
+    24,
+    43
+   ]
+  },
+  "1242": {
+   "computed_at": "2026-09-27T22:26:27+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1242,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1241,
+   "winner": [
+    2,
+    4,
+    10,
+    16,
+    31,
+    41
+   ]
+  },
+  "1243": {
+   "computed_at": "2026-09-27T22:26:40+09:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1243,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1242,
+   "winner": [
+    9,
+    18,
+    24,
+    38,
+    43,
+    44
+   ]
+  }
+ },
+ "version": 1
+}
