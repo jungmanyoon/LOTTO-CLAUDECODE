@@ -403,3 +403,37 @@ def test_generate_predictions_refuses_after_sales_close(monkeypatch):
 def test_status_timestamps_are_kst():
     now = draw_clock.now_kst()
     assert now.utcoffset() == timedelta(hours=9)
+
+
+# ---------------------------------------------------------------- 가벼운 의존성 환경
+LIGHT_ENV_PROBE = """
+import sys, importlib.abc
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        if name.split('.')[0] in {'schedule', 'watchdog'}:
+            raise ModuleNotFoundError('blocked: ' + name)
+        return None
+sys.meta_path.insert(0, Block())
+import src.automation.draw_clock, src.automation.draw_watcher, src.automation.weekly_report
+print('auto_scheduler' in ' '.join(sys.modules))
+"""
+
+
+def test_automation_modules_import_without_heavy_packages():
+    """매시 발행 작업은 가벼운 패키지만 설치한다. 새 모듈이 schedule/watchdog 없이 불러와져야 한다."""
+    import subprocess
+    import sys
+
+    result = subprocess.run([sys.executable, "-c", LIGHT_ENV_PROBE], capture_output=True, text=True,
+                            encoding="utf-8", timeout=120)
+    assert result.returncode == 0, result.stderr[-800:]
+    assert result.stdout.strip() == "False"
+
+
+def test_package_level_names_still_import_lazily():
+    import src.automation as automation
+
+    assert automation.AutomationCoordinator.__name__ == "AutomationCoordinator"
+    assert "AutoScheduler" in dir(automation)
+    with pytest.raises(AttributeError):
+        automation.NotAThing  # noqa: B018
