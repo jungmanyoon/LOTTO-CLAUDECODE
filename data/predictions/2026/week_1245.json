@@ -8812,6 +8812,76 @@
       "confidence": 0.9469,
       "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
       "characteristics": {}
+    },
+    {
+      "set": 626,
+      "numbers": [
+        11,
+        12,
+        21,
+        23,
+        34,
+        40
+      ],
+      "confidence": 0.9484,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 627,
+      "numbers": [
+        10,
+        13,
+        27,
+        31,
+        33,
+        45
+      ],
+      "confidence": 0.8701,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 628,
+      "numbers": [
+        3,
+        17,
+        18,
+        24,
+        35,
+        38
+      ],
+      "confidence": 0.9494,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 629,
+      "numbers": [
+        4,
+        7,
+        22,
+        26,
+        29,
+        39
+      ],
+      "confidence": 0.9493,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
+    },
+    {
+      "set": 630,
+      "numbers": [
+        5,
+        9,
+        16,
+        25,
+        28,
+        37
+      ],
+      "confidence": 0.888,
+      "source": "ExtremePool-Diversity(K=1500K, cover=30/45)",
+      "characteristics": {}
     }
   ],
   "result": {
