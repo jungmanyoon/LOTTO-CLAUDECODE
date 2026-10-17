@@ -252,6 +252,24 @@
     32,
     42
    ]
+  },
+  "1246": {
+   "computed_at": "2026-10-17T11:45:25+00:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1246,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1245,
+   "winner": [
+    16,
+    22,
+    23,
+    24,
+    27,
+    28
+   ]
   }
  },
  "version": 1
