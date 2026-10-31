@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "round": 1247,
-  "selected_at": "2026-10-24T11:47:32",
+  "round": 1248,
+  "selected_at": "2026-10-31T11:49:03",
   "policy": "walk_forward_wilson_lcb_min_k",
   "raw_target_K": 1750000,
   "effective_target_K": 1500000,
@@ -30,11 +30,11 @@
     6000000
   ],
   "selected_metrics": {
-    "coverage": 0.21066666666666667,
+    "coverage": 0.20933333333333334,
     "pool_ratio": 0.1841607059984825,
-    "lift": 1.1439284266666667,
-    "lift_lcb": 0.9936629500863862,
-    "observed_hits": 158,
+    "lift": 1.1366883733333335,
+    "lift_lcb": 0.9868254328608145,
+    "observed_hits": 157,
     "expected_random_hits": 138.12052949886188
   },
   "scorer": "weighted"
