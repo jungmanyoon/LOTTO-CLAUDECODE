@@ -324,6 +324,24 @@
     34,
     35
    ]
+  },
+  "1250": {
+   "computed_at": "2026-11-14T11:44:26+00:00",
+   "in_pool": false,
+   "pool_fraction": 0.18416070599848253,
+   "pool_size": 1500000,
+   "round": 1250,
+   "scoring_method": "hybrid",
+   "target_K": 1500000,
+   "train_until": 1249,
+   "winner": [
+    1,
+    5,
+    18,
+    23,
+    27,
+    28
+   ]
   }
  },
  "version": 1
